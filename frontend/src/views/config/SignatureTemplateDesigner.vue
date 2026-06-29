@@ -740,11 +740,11 @@ function scrollBoxIntoView(box) {
 
 function requestBackNavigation() {
     if (!dirty.value) {
-        goBackToConfig();
+        goBackToTemplateList();
         return;
     }
     confirm.require({
-        message: 'มีการแก้ไขกรอบลายเซ็นที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้และทิ้งการแก้ไขหรือไม่?',
+        message: 'มีการแก้ไขกรอบลายเซ็นที่ยังไม่ได้บันทึก ต้องการกลับไปหน้ารายการ Template และทิ้งการแก้ไขหรือไม่?',
         header: 'ยังไม่ได้บันทึก',
         icon: 'pi pi-exclamation-triangle',
         rejectProps: {
@@ -756,13 +756,13 @@ function requestBackNavigation() {
             label: 'ออกโดยไม่บันทึก',
             severity: 'danger'
         },
-        accept: () => goBackToConfig({ discard: true })
+        accept: () => goBackToTemplateList({ discard: true })
     });
 }
 
-function goBackToConfig(options = {}) {
+function goBackToTemplateList(options = {}) {
     if (options.discard) discardNavigationConfirmed = true;
-    router.push({ name: 'document-config' });
+    router.push({ name: 'signature-templates' });
 }
 
 function handleBeforeUnload(event) {

@@ -21,21 +21,44 @@ const rows = computed(() => {
         if (!groups.has(code)) {
             groups.set(code, {
                 docFormatCode: code,
-                positions: [],
-                state: null
+                positions: []
             });
         }
         groups.get(code).positions.push(config);
     });
 
     return [...groups.values()]
-        .map((row) => ({
-            ...row,
-            format: formatDetail(row.docFormatCode),
-            state: templateStates.value[row.docFormatCode] || null
-        }))
+        .map((row) => {
+            const positions = [...row.positions].sort((left, right) => Number(left.sequenceNo || 0) - Number(right.sequenceNo || 0));
+            const state = templateStates.value[row.docFormatCode] || null;
+            const template = state?.active || state?.draft || null;
+            const issues = state?.active ? state.activeIssues || [] : state?.draft ? state.draftIssues || [] : [];
+            const requiredBoxCount = positions.reduce((total, step) => total + requiredBoxesForStep(step), 0);
+            const boxCount = template?.boxes?.length || 0;
+            const progressPercent = requiredBoxCount ? Math.min(100, Math.round((Math.min(boxCount, requiredBoxCount) / requiredBoxCount) * 100)) : 0;
+            const enriched = {
+                ...row,
+                positions,
+                state,
+                template,
+                issues,
+                format: formatDetail(row.docFormatCode),
+                requiredBoxCount,
+                boxCount,
+                progressPercent
+            };
+            return {
+                ...enriched,
+                status: resolveTemplateStatus(enriched),
+                firstIssue: issues[0] || null
+            };
+        })
         .sort((left, right) => left.docFormatCode.localeCompare(right.docFormatCode, 'th'));
 });
+
+const readyCount = computed(() => rows.value.filter((row) => row.status.severity === 'success').length);
+const needsWorkCount = computed(() => rows.value.filter((row) => ['warn', 'danger'].includes(row.status.severity)).length);
+const noPdfCount = computed(() => rows.value.filter((row) => !row.template?.sampleFileId).length);
 
 onMounted(loadPage);
 
@@ -83,22 +106,64 @@ function formatName(row) {
     return row.format?.name_1 || row.format?.name_2 || row.format?.format || '-';
 }
 
-function statusLabel(row) {
-    if (row.state?.draft) return `draft v${row.state.draft.version}`;
-    if (row.state?.active) return `active v${row.state.active.version}`;
-    if (row.state?.error) return 'โหลดสถานะไม่ได้';
-    return 'ยังไม่ได้ตั้งค่า';
+function formatPattern(row) {
+    return row.format?.format || '';
 }
 
-function statusSeverity(row) {
-    if (row.state?.draft) return 'warn';
-    if (row.state?.active) return 'success';
-    if (row.state?.error) return 'danger';
-    return 'secondary';
+function resolveTemplateStatus(row) {
+    if (row.state?.error) return { label: 'โหลดสถานะไม่ได้', severity: 'danger' };
+    if (!row.template) return { label: 'ยังไม่ได้เริ่ม', severity: 'secondary' };
+    if (!row.template.sampleFileId) return { label: 'รออัปโหลด PDF', severity: 'warn' };
+    if (row.issues.length > 0) return { label: 'ต้องแก้ไข', severity: 'warn' };
+    if (row.requiredBoxCount > 0 && row.boxCount === row.requiredBoxCount) return { label: 'พร้อมใช้งาน', severity: 'success' };
+    return { label: 'กำลังตั้งค่า', severity: 'info' };
+}
+
+function statusHelper(row) {
+    if (row.state?.error) return row.state.error;
+    if (!row.template) return 'เปิดเข้าไปอัปโหลด PDF และวางกรอบลายเซ็น';
+    if (!row.template.sampleFileId) return 'ยังไม่มี PDF ตัวอย่าง';
+    if (row.firstIssue) return issueLabel(row.firstIssue);
+    if (row.boxCount !== row.requiredBoxCount) return `ต้องมี ${row.requiredBoxCount} กรอบตาม config`;
+    return 'กรอบครบตามเงื่อนไขปัจจุบัน';
+}
+
+function issueLabel(issue) {
+    const labels = {
+        sample_pdf_required: 'ต้องอัปโหลด PDF ตัวอย่าง',
+        pdf_too_many_pages: 'PDF มีจำนวนหน้าเกินกำหนด',
+        document_config_required: 'ต้องมี Config เอกสารก่อน',
+        condition_any_box_required: 'ยังขาดกรอบสำหรับเงื่อนไขคนใดคนหนึ่ง',
+        condition_any_box_count_invalid: 'จำนวนกรอบเกินเงื่อนไขคนใดคนหนึ่ง',
+        condition_any_type_invalid: 'ประเภทกรอบไม่ตรงกับเงื่อนไข',
+        condition_all_users_required: 'ต้องกำหนด user ใน position นี้',
+        condition_all_box_count_invalid: 'จำนวนกรอบไม่ตรงกับจำนวน user',
+        condition_all_missing_user_box: 'ยังขาดกรอบของ user บางคน',
+        condition_all_duplicate_user_box: 'มีกรอบ user ซ้ำ',
+        condition_all_unknown_user_box: 'มี user นอก config',
+        condition_external_box_required: 'ยังขาดกรอบบุคคลภายนอก',
+        condition_external_box_count_invalid: 'จำนวนกรอบบุคคลภายนอกเกินเงื่อนไข',
+        condition_external_type_invalid: 'ประเภทกรอบไม่ตรงกับบุคคลภายนอก',
+        box_position_unknown: 'มีกรอบที่ไม่ตรงกับ position config',
+        box_bounds_invalid: 'มีกรอบอยู่นอกหน้า PDF'
+    };
+    const prefix = issue.positionCode ? `Position ${issue.positionCode}: ` : '';
+    return `${prefix}${labels[issue.code] || issue.message || 'ต้องตรวจสอบ Template'}`;
+}
+
+function pdfLabel(row) {
+    if (!row.template) return 'ยังไม่มี Template';
+    if (!row.template.sampleFileId) return 'ยังไม่มี PDF';
+    const pageCount = Number(row.template.sampleFile?.pageCount || 0);
+    return pageCount > 0 ? `${pageCount} หน้า` : 'มี PDF แล้ว';
+}
+
+function pdfFileName(row) {
+    return row.template?.sampleFile?.originalName || '';
 }
 
 function lastUpdated(row) {
-    const value = row.state?.draft?.updatedAt || row.state?.active?.updatedAt;
+    const value = row.template?.updatedAt;
     if (!value) return '-';
     return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
@@ -120,104 +185,296 @@ function conditionSeverity(value) {
     return 'secondary';
 }
 
+function requiredBoxesForStep(step) {
+    if (Number(step.conditionType) === 2) return stepUsers(step).length;
+    return 1;
+}
+
+function stepUsers(step) {
+    return [step.user01, step.user02, step.user03].map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function positionPreview(row) {
+    return row.positions.map((item) => `${item.positionCode}:${item.positionName}`).join(', ');
+}
+
 function sameCode(left, right) {
     return String(left || '').toLowerCase() === String(right || '').toLowerCase();
 }
 </script>
 
 <template>
-    <div class="card">
-        <div class="flex flex-col xl:flex-row xl:items-start justify-between gap-4 mb-6">
+    <div class="card signature-template-page">
+        <div class="page-header">
             <div>
                 <div class="font-semibold text-xl mb-1">ตั้งค่ากรอบลายเซ็น</div>
-                <p class="text-muted-color m-0">เลือกเอกสารจาก Config ที่สร้างไว้ แล้วเปิด PDF Designer เพื่อวางกรอบลายเซ็น</p>
+                <p class="text-muted-color m-0">เลือกเอกสารที่ตั้งค่า Position แล้ว เพื่ออัปโหลด PDF และวางกรอบลายเซ็นของเอกสารนั้น</p>
             </div>
-            <div class="flex flex-wrap gap-2">
+            <div class="header-actions">
                 <Button icon="pi pi-refresh" severity="secondary" outlined :loading="loading" aria-label="โหลดใหม่" @click="loadPage" />
-                <Button label="Config เอกสาร" icon="pi pi-file-edit" severity="secondary" outlined @click="openDocumentConfig" />
+                <Button label="แก้ Config เอกสาร" icon="pi pi-file-edit" severity="secondary" outlined @click="openDocumentConfig" />
             </div>
         </div>
 
         <Message v-if="error" severity="error" class="mb-4">{{ error }}</Message>
 
-        <div v-if="loading" class="py-6 text-muted-color">กำลังโหลดรายการ Template</div>
-
-        <div v-else-if="rows.length === 0" class="py-6 text-center text-muted-color">
-            ยังไม่มี Config เอกสาร ให้ไปเพิ่ม Position ก่อน
-            <Button label="ไปที่ Config เอกสาร" link class="ml-2" @click="openDocumentConfig" />
-        </div>
-
-        <div v-else class="template-list">
-            <div v-for="row in rows" :key="row.docFormatCode" class="template-row">
-                <div>
-                    <div class="text-sm text-muted-color">erp_doc_format.code</div>
-                    <div class="font-semibold text-xl text-surface-900 dark:text-surface-0">{{ row.docFormatCode }}</div>
-                    <div class="text-sm text-muted-color">{{ formatName(row) }}</div>
-                </div>
-
-                <div>
-                    <div class="text-sm text-muted-color">Position</div>
-                    <div class="font-medium">{{ row.positions.length }} positions</div>
-                    <div class="text-sm text-muted-color">{{ row.positions.map((item) => `${item.positionCode}:${item.positionName}`).join(', ') }}</div>
-                </div>
-
-                <div>
-                    <div class="text-sm text-muted-color mb-2">เงื่อนไข</div>
-                    <div class="flex flex-wrap gap-2">
-                        <Tag v-for="condition in conditionSummary(row)" :key="condition" :value="`${condition} - ${conditionLabel(condition)}`" :severity="conditionSeverity(condition)" />
-                    </div>
-                </div>
-
-                <div>
-                    <div class="text-sm text-muted-color mb-2">Template</div>
-                    <Tag :value="statusLabel(row)" :severity="statusSeverity(row)" />
-                    <div class="text-sm text-muted-color mt-2">แก้ไขล่าสุด {{ lastUpdated(row) }}</div>
-                </div>
-
-                <div class="template-actions">
-                    <Button label="เปิด Designer" icon="pi pi-pencil" severity="info" @click="openDesigner(row.docFormatCode)" />
-                </div>
+        <div v-if="rows.length > 0" class="summary-strip" aria-label="สรุปรายการ Template">
+            <div class="summary-item">
+                <span class="summary-label">เอกสารทั้งหมด</span>
+                <strong>{{ rows.length }}</strong>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">พร้อมใช้งาน</span>
+                <strong>{{ readyCount }}</strong>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">ต้องตรวจสอบ</span>
+                <strong>{{ needsWorkCount }}</strong>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">ยังไม่มี PDF</span>
+                <strong>{{ noPdfCount }}</strong>
             </div>
         </div>
+
+        <DataTable :value="rows" :loading="loading" dataKey="docFormatCode" responsiveLayout="scroll" stripedRows>
+            <template #empty>
+                <div class="empty-state">
+                    <i class="pi pi-file-edit"></i>
+                    <div class="font-semibold">ยังไม่มีเอกสารสำหรับตั้งค่ากรอบลายเซ็น</div>
+                    <p class="text-muted-color m-0">เพิ่ม Position ใน Config เอกสารก่อน แล้วกลับมาวางกรอบลายเซ็นจากหน้านี้</p>
+                    <Button label="ไปที่ Config เอกสาร" icon="pi pi-file-edit" class="mt-3" @click="openDocumentConfig" />
+                </div>
+            </template>
+
+            <Column header="เอกสาร" style="min-width: 18rem">
+                <template #body="{ data }">
+                    <div class="doc-cell">
+                        <div class="doc-code">{{ data.docFormatCode }}</div>
+                        <div class="font-medium">{{ formatName(data) }}</div>
+                        <div v-if="formatPattern(data)" class="text-sm text-muted-color">{{ formatPattern(data) }}</div>
+                    </div>
+                </template>
+            </Column>
+
+            <Column header="ความพร้อม" style="min-width: 18rem">
+                <template #body="{ data }">
+                    <div class="status-cell">
+                        <div class="status-line">
+                            <Tag :value="data.status.label" :severity="data.status.severity" />
+                            <span class="box-ratio">{{ data.boxCount }}/{{ data.requiredBoxCount }} กรอบ</span>
+                        </div>
+                        <div class="progress-track" :aria-label="`กรอบลายเซ็น ${data.boxCount} จาก ${data.requiredBoxCount}`">
+                            <span class="progress-fill" :class="{ complete: data.status.severity === 'success', invalid: data.issues.length > 0 }" :style="{ width: `${data.progressPercent}%` }"></span>
+                        </div>
+                        <div class="helper-text">{{ statusHelper(data) }}</div>
+                    </div>
+                </template>
+            </Column>
+
+            <Column header="ขั้นตอน" style="min-width: 22rem">
+                <template #body="{ data }">
+                    <div class="font-medium">{{ data.positions.length }} positions</div>
+                    <div class="position-preview">{{ positionPreview(data) }}</div>
+                    <div class="condition-tags">
+                        <Tag v-for="condition in conditionSummary(data)" :key="condition" :value="`${condition} - ${conditionLabel(condition)}`" :severity="conditionSeverity(condition)" />
+                    </div>
+                </template>
+            </Column>
+
+            <Column header="PDF" style="min-width: 14rem">
+                <template #body="{ data }">
+                    <div class="font-medium">{{ pdfLabel(data) }}</div>
+                    <div class="pdf-name">{{ pdfFileName(data) || 'รออัปโหลดจาก Designer' }}</div>
+                </template>
+            </Column>
+
+            <Column header="แก้ไขล่าสุด" style="min-width: 12rem">
+                <template #body="{ data }">
+                    <span class="text-muted-color">{{ lastUpdated(data) }}</span>
+                </template>
+            </Column>
+
+            <Column header="จัดการ" style="min-width: 12rem">
+                <template #body="{ data }">
+                    <div class="row-actions">
+                        <Button label="แก้กรอบลายเซ็น" icon="pi pi-pencil" severity="info" @click="openDesigner(data.docFormatCode)" />
+                    </div>
+                </template>
+            </Column>
+        </DataTable>
     </div>
 </template>
 
 <style scoped>
-.template-list {
+.signature-template-page {
     display: flex;
     flex-direction: column;
+    gap: 1rem;
+}
+
+.page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+.summary-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
     gap: 0.75rem;
 }
 
-.template-row {
-    display: grid;
-    grid-template-columns: minmax(11rem, 1fr) minmax(16rem, 1.3fr) minmax(12rem, 1fr) minmax(12rem, 1fr) auto;
-    gap: 1rem;
-    align-items: center;
+.summary-item {
+    display: flex;
+    min-height: 4rem;
+    flex-direction: column;
+    justify-content: center;
     border: 1px solid var(--surface-border);
     border-radius: 8px;
-    padding: 1rem;
-    background: var(--surface-card);
+    padding: 0.75rem 1rem;
+    background: var(--surface-ground);
 }
 
-.template-actions {
+.summary-label {
+    color: var(--text-color-secondary);
+    font-size: 0.85rem;
+}
+
+.summary-item strong {
+    color: var(--text-color);
+    font-size: 1.35rem;
+    line-height: 1.2;
+}
+
+.empty-state {
+    display: flex;
+    min-height: 14rem;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    text-align: center;
+}
+
+.empty-state i {
+    color: var(--text-color-secondary);
+    font-size: 2rem;
+}
+
+.doc-cell {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.doc-code {
+    color: var(--text-color);
+    font-size: 1.2rem;
+    font-weight: 700;
+}
+
+.status-cell {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.status-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.box-ratio {
+    color: var(--text-color-secondary);
+    font-size: 0.9rem;
+}
+
+.progress-track {
+    position: relative;
+    height: 0.5rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--p-surface-200, var(--surface-border));
+}
+
+.progress-fill {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    border-radius: inherit;
+    background: var(--primary-color);
+    transition: width 180ms ease-out;
+}
+
+.progress-fill.complete {
+    background: var(--p-green-500, #22c55e);
+}
+
+.progress-fill.invalid {
+    background: var(--p-yellow-500, #eab308);
+}
+
+.helper-text,
+.position-preview,
+.pdf-name {
+    color: var(--text-color-secondary);
+    font-size: 0.88rem;
+}
+
+.position-preview {
+    display: -webkit-box;
+    max-width: 36rem;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.condition-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.5rem;
+}
+
+.pdf-name {
+    max-width: 16rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.row-actions {
     display: flex;
     justify-content: flex-end;
 }
 
-@media (max-width: 1200px) {
-    .template-row {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+@media (max-width: 960px) {
+    .page-header {
+        flex-direction: column;
     }
 
-    .template-actions {
+    .header-actions,
+    .row-actions {
         justify-content: flex-start;
     }
 }
 
-@media (max-width: 640px) {
-    .template-row {
-        grid-template-columns: 1fr;
+@media (prefers-reduced-motion: reduce) {
+    .progress-fill {
+        transition: none;
     }
 }
 </style>
