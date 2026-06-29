@@ -2,7 +2,7 @@
 import { api } from '@/services/api';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 
@@ -30,7 +30,7 @@ const selectedBoxKey = ref('');
 const fileInput = ref(null);
 const canvasRef = ref(null);
 const overlayRef = ref(null);
-const pdfDoc = ref(null);
+const pdfDoc = shallowRef(null);
 const currentPage = ref(1);
 const pageCount = ref(0);
 const zoom = ref(1.2);
