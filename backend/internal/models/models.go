@@ -12,6 +12,22 @@ type User struct {
 	PasswordHash string    `json:"-"`
 }
 
+type CreateUserRequest struct {
+	DisplayName string `json:"displayName"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	Role        string `json:"role"`
+	Status      string `json:"status"`
+}
+
+type UpdateUserRequest struct {
+	DisplayName string `json:"displayName"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	Role        string `json:"role"`
+	Status      string `json:"status"`
+}
+
 type SeedUser struct {
 	DisplayName string
 	Username    string

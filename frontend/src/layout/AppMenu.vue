@@ -34,7 +34,7 @@ const model = ref([
             {
                 label: 'Users',
                 icon: 'pi pi-fw pi-users',
-                to: '/pages/empty'
+                to: '/admin/users'
             },
             {
                 label: 'System Status',
@@ -48,10 +48,9 @@ const model = ref([
 
 <template>
     <ul class="layout-menu">
-        <template v-for="(item, i) in model" :key="item.label">
-            <app-menu-item v-if="!item.separator" :item="item" :index="i" />
+        <template v-for="item in model" :key="item.label">
+            <app-menu-item v-if="!item.separator" :item="item" />
             <li v-if="item.separator" class="menu-separator"></li>
         </template>
     </ul>
 </template>
-

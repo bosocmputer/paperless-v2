@@ -1,6 +1,8 @@
 <script setup></script>
 
 <template>
+    <Toast />
+    <ConfirmDialog />
     <router-view />
 </template>
 

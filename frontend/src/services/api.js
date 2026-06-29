@@ -36,6 +36,23 @@ export const api = {
     },
     logout() {
         return request('/api/auth/logout', { method: 'POST' });
+    },
+    listUsers() {
+        return request('/api/users');
+    },
+    createUser(payload) {
+        return request('/api/users', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+    updateUser(id, payload) {
+        return request(`/api/users/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    },
+    deactivateUser(id) {
+        return request(`/api/users/${id}`, { method: 'DELETE' });
     }
 };
-

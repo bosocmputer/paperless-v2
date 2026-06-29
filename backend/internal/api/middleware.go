@@ -44,6 +44,17 @@ func currentUser(r *http.Request) (models.User, bool) {
 	return user, ok
 }
 
+func (s *Server) requireAdmin(next http.Handler) http.Handler {
+	return s.requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := currentUser(r)
+		if user.Role != "admin" {
+			writeError(w, http.StatusForbidden, "forbidden", "Admin permission is required.")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
 func (s *Server) recover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {

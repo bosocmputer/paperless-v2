@@ -26,6 +26,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.me)))
 	mux.Handle("POST /api/auth/logout", s.requireAuth(http.HandlerFunc(s.logout)))
+	mux.Handle("GET /api/users", s.requireAdmin(http.HandlerFunc(s.listUsers)))
+	mux.Handle("POST /api/users", s.requireAdmin(http.HandlerFunc(s.createUser)))
+	mux.Handle("PUT /api/users/{id}", s.requireAdmin(http.HandlerFunc(s.updateUser)))
+	mux.Handle("DELETE /api/users/{id}", s.requireAdmin(http.HandlerFunc(s.deactivateUser)))
 
 	return s.recover(s.cors(mux))
 }

@@ -18,6 +18,12 @@ const router = createRouter({
                     path: '/pages/empty',
                     name: 'empty',
                     component: () => import('@/views/pages/Empty.vue')
+                },
+                {
+                    path: '/admin/users',
+                    name: 'users',
+                    component: () => import('@/views/admin/Users.vue'),
+                    meta: { role: 'admin' }
                 }
             ]
         },
@@ -56,8 +62,11 @@ router.beforeEach(async (to) => {
         }
     }
 
+    if (to.meta.role && authStore.user?.role !== to.meta.role) {
+        return { name: 'dashboard' };
+    }
+
     return true;
 });
 
 export default router;
-

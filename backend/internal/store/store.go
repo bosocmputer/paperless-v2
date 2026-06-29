@@ -16,6 +16,11 @@ type Store struct {
 	pool *pgxpool.Pool
 }
 
+var (
+	ErrUsernameTaken = errors.New("username already exists")
+	ErrUserNotFound  = errors.New("user not found")
+)
+
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -118,6 +123,88 @@ SELECT id::text, display_name, username, password_hash, role, status, created_at
 FROM users
 WHERE id = $1
 `, id))
+}
+
+func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id::text, display_name, username, password_hash, role, status, created_at
+FROM users
+ORDER BY created_at DESC
+`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	users := []models.User{}
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+func (s *Store) CreateUser(ctx context.Context, req models.CreateUserRequest) (models.User, error) {
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		return models.User{}, err
+	}
+
+	user, err := scanUser(s.pool.QueryRow(ctx, `
+INSERT INTO users (display_name, username, password_hash, role, status)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id::text, display_name, username, password_hash, role, status, created_at
+`, req.DisplayName, req.Username, hash, req.Role, req.Status))
+	if err != nil {
+		if strings.Contains(err.Error(), "users_username_lower_idx") {
+			return models.User{}, ErrUsernameTaken
+		}
+		return models.User{}, err
+	}
+	return user, nil
+}
+
+func (s *Store) UpdateUser(ctx context.Context, id string, req models.UpdateUserRequest) (models.User, error) {
+	var user models.User
+	var err error
+	if strings.TrimSpace(req.Password) == "" {
+		user, err = scanUser(s.pool.QueryRow(ctx, `
+UPDATE users
+SET display_name = $1, username = $2, role = $3, status = $4, updated_at = now()
+WHERE id = $5
+RETURNING id::text, display_name, username, password_hash, role, status, created_at
+`, req.DisplayName, req.Username, req.Role, req.Status, id))
+	} else {
+		hash, hashErr := auth.HashPassword(req.Password)
+		if hashErr != nil {
+			return models.User{}, hashErr
+		}
+		user, err = scanUser(s.pool.QueryRow(ctx, `
+UPDATE users
+SET display_name = $1, username = $2, password_hash = $3, role = $4, status = $5, updated_at = now()
+WHERE id = $6
+RETURNING id::text, display_name, username, password_hash, role, status, created_at
+`, req.DisplayName, req.Username, hash, req.Role, req.Status, id))
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.User{}, ErrUserNotFound
+	}
+	if err != nil {
+		if strings.Contains(err.Error(), "users_username_lower_idx") {
+			return models.User{}, ErrUsernameTaken
+		}
+		return models.User{}, err
+	}
+	return user, nil
+}
+
+func (s *Store) CountActiveAdmins(ctx context.Context) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE role = 'admin' AND status = 'active'`).Scan(&count)
+	return count, err
 }
 
 func (s *Store) WriteAudit(ctx context.Context, actorUserID, action, targetType, targetID, ipAddress, userAgent string) error {
