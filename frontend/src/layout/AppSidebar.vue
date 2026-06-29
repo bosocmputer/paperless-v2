@@ -1,31 +1,66 @@
+<script setup>
+import { useLayout } from '@/layout/composables/layout';
+import { onBeforeUnmount, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
+import AppMenu from './AppMenu.vue';
+
+const { layoutState, isDesktop, hasOpenOverlay } = useLayout();
+const route = useRoute();
+const sidebarRef = ref(null);
+let outsideClickListener = null;
+
+watch(
+    () => route.path,
+    (newPath) => {
+        if (isDesktop()) layoutState.activePath = null;
+        else layoutState.activePath = newPath;
+
+        layoutState.overlayMenuActive = false;
+        layoutState.mobileMenuActive = false;
+        layoutState.menuHoverActive = false;
+    },
+    { immediate: true }
+);
+
+watch(hasOpenOverlay, (newVal) => {
+    if (isDesktop()) {
+        if (newVal) bindOutsideClickListener();
+        else unbindOutsideClickListener();
+    }
+});
+
+const bindOutsideClickListener = () => {
+    if (!outsideClickListener) {
+        outsideClickListener = (event) => {
+            if (isOutsideClicked(event)) {
+                layoutState.overlayMenuActive = false;
+            }
+        };
+
+        document.addEventListener('click', outsideClickListener);
+    }
+};
+
+const unbindOutsideClickListener = () => {
+    if (outsideClickListener) {
+        document.removeEventListener('click', outsideClickListener);
+        outsideClickListener = null;
+    }
+};
+
+const isOutsideClicked = (event) => {
+    const topbarButtonEl = document.querySelector('.layout-menu-button');
+
+    return !(sidebarRef.value.isSameNode(event.target) || sidebarRef.value.contains(event.target) || topbarButtonEl?.isSameNode(event.target) || topbarButtonEl?.contains(event.target));
+};
+
+onBeforeUnmount(() => {
+    unbindOutsideClickListener();
+});
+</script>
+
 <template>
-  <aside class="app-sidebar">
-    <router-link to="/" class="brand-lockup" aria-label="PaperLess dashboard">
-      <span class="brand-mark"><i class="pi pi-file-edit"></i></span>
-      <span>
-        <strong>PaperLess</strong>
-        <small>V2</small>
-      </span>
-    </router-link>
-
-    <nav class="side-nav" aria-label="Main menu">
-      <router-link to="/" class="side-link">
-        <i class="pi pi-home"></i>
-        <span>Dashboard</span>
-      </router-link>
-      <span class="side-link is-disabled">
-        <i class="pi pi-inbox"></i>
-        <span>Inbox</span>
-      </span>
-      <span class="side-link is-disabled">
-        <i class="pi pi-sitemap"></i>
-        <span>Workflow</span>
-      </span>
-      <span class="side-link is-disabled">
-        <i class="pi pi-history"></i>
-        <span>Audit</span>
-      </span>
-    </nav>
-  </aside>
+    <div ref="sidebarRef" class="layout-sidebar">
+        <AppMenu />
+    </div>
 </template>
-
