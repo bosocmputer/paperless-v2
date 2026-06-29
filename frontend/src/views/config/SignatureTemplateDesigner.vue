@@ -775,7 +775,7 @@ function recordDesignerEvent(event, extra = {}) {
                     <span class="pdf-meta">{{ pdfMetaLabel }}</span>
                 </div>
 
-                <div v-if="loading" class="signature-empty compact">
+                <div v-if="loading && !template?.sampleFileId" class="signature-empty compact">
                     <i class="pi pi-spin pi-spinner text-3xl text-muted-color"></i>
                     <div class="font-semibold mt-3">กำลังโหลด Template</div>
                 </div>
