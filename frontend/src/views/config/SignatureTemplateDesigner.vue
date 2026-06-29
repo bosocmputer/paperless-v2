@@ -50,13 +50,6 @@ const storedPageCount = computed(() => Number(template.value?.sampleFile?.pageCo
 
 onMounted(loadState);
 
-watch(
-    () => template.value?.id,
-    async (id) => {
-        if (id) await loadPDF();
-    }
-);
-
 watch([currentPage, zoom], async () => {
     if (pdfDoc.value) await renderPage();
 });
@@ -100,7 +93,7 @@ async function loadPDF() {
         }
         await renderPage();
     } catch (err) {
-        error.value = 'Cannot render PDF preview.';
+        error.value = err.message || 'Cannot render PDF preview.';
         toast.add({ severity: 'error', summary: 'แสดง PDF ไม่สำเร็จ', detail: err.message || error.value, life: 4000 });
     } finally {
         rendering.value = false;
