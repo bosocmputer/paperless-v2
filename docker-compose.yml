@@ -29,6 +29,10 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-paperless}:${POSTGRES_PASSWORD:-paperless_dev_password}@postgres:5432/${POSTGRES_DB:-paperless}?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:-change-this-before-production}
       JWT_TTL_HOURS: ${JWT_TTL_HOURS:-12}
+      SML_PAPERLESS_BASE_URL: ${SML_PAPERLESS_BASE_URL:-http://192.168.2.109:8201}
+      SML_PAPERLESS_API_KEY: ${SML_PAPERLESS_API_KEY:-}
+      SML_PAPERLESS_TENANT: ${SML_PAPERLESS_TENANT:-sml1_2026}
+      SML_PAPERLESS_TIMEOUT_SECONDS: ${SML_PAPERLESS_TIMEOUT_SECONDS:-10}
       SEED_SUPERADMIN_NAME: ${SEED_SUPERADMIN_NAME:-System Administrator}
       SEED_SUPERADMIN_USERNAME: ${SEED_SUPERADMIN_USERNAME:-superadmin}
       SEED_SUPERADMIN_PASSWORD: ${SEED_SUPERADMIN_PASSWORD:-superadmin}
@@ -57,4 +61,3 @@ services:
 
 volumes:
   paperless_postgres_data:
-

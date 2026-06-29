@@ -24,6 +24,12 @@ const router = createRouter({
                     name: 'users',
                     component: () => import('@/views/admin/Users.vue'),
                     meta: { role: 'admin' }
+                },
+                {
+                    path: '/config/documents',
+                    name: 'document-config',
+                    component: () => import('@/views/config/DocumentConfig.vue'),
+                    meta: { role: 'admin' }
                 }
             ]
         },

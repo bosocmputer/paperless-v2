@@ -1,0 +1,130 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/bosocmputer/paperless-v2/backend/internal/models"
+)
+
+var (
+	errDocFormatNotFound = errors.New("doc format code was not found in SML")
+	errSMLConfigMissing  = errors.New("sml paperless api config is incomplete")
+)
+
+type smlDocFormatsResponse struct {
+	Success bool                  `json:"success"`
+	Data    []models.SMLDocFormat `json:"data"`
+	Error   *smlAPIError          `json:"error"`
+	Message string                `json:"message"`
+}
+
+type smlAPIError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func (s *Server) listSMLDocFormats(w http.ResponseWriter, r *http.Request) {
+	screenCode := normalizeScreenCode(r.URL.Query().Get("screen_code"))
+	if !isValidScreenCode(screenCode) {
+		writeError(w, http.StatusBadRequest, "invalid_screen_code", "screen_code must be PO, SR, SI, or EE.")
+		return
+	}
+
+	formats, err := s.fetchSMLDocFormats(r.Context(), screenCode)
+	if errors.Is(err, errSMLConfigMissing) {
+		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML Paperless API is not configured.")
+		return
+	}
+	if err != nil {
+		s.logger.Warn("fetch sml doc formats failed", "error", err, "screenCode", screenCode)
+		writeError(w, http.StatusBadGateway, "sml_doc_formats_failed", fmt.Sprintf("Cannot load document formats from SML: %s", err.Error()))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"screenCode":  screenCode,
+		"tenant":      s.cfg.SMLPaperlessTenant,
+		"docFormats":  formats,
+		"source":      "sml-api-bybos-paperless",
+		"sourceTable": "erp_doc_format",
+	})
+}
+
+func (s *Server) fetchSMLDocFormats(ctx context.Context, screenCode string) ([]models.SMLDocFormat, error) {
+	if strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) == "" ||
+		strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) == "" ||
+		strings.TrimSpace(s.cfg.SMLPaperlessTenant) == "" {
+		return nil, errSMLConfigMissing
+	}
+
+	endpoint, err := url.Parse(s.cfg.SMLPaperlessBaseURL + "/api/v1/ic/doc-formats")
+	if err != nil {
+		return nil, fmt.Errorf("invalid SML base URL")
+	}
+	query := endpoint.Query()
+	query.Set("screen_code", screenCode)
+	endpoint.RawQuery = query.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
+	req.Header.Set("X-Tenant", s.cfg.SMLPaperlessTenant)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var payload smlDocFormatsResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("cannot parse SML response")
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, errors.New(smlErrorMessage(payload, resp.Status))
+	}
+	if !payload.Success {
+		return nil, errors.New(smlErrorMessage(payload, "SML request failed"))
+	}
+
+	for i := range payload.Data {
+		if payload.Data[i].ScreenCode == "" {
+			payload.Data[i].ScreenCode = screenCode
+		}
+	}
+	return payload.Data, nil
+}
+
+func (s *Server) ensureSMLDocFormatExists(ctx context.Context, screenCode, docFormatCode string) error {
+	formats, err := s.fetchSMLDocFormats(ctx, screenCode)
+	if err != nil {
+		return err
+	}
+	for _, format := range formats {
+		if strings.EqualFold(format.Code, docFormatCode) {
+			return nil
+		}
+	}
+	return errDocFormatNotFound
+}
+
+func smlErrorMessage(payload smlDocFormatsResponse, fallback string) string {
+	if payload.Error != nil && payload.Error.Message != "" {
+		return payload.Error.Message
+	}
+	if payload.Message != "" {
+		return payload.Message
+	}
+	return fallback
+}

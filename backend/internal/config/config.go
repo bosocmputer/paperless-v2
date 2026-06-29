@@ -11,14 +11,18 @@ import (
 )
 
 type Config struct {
-	AppName        string
-	Env            string
-	Port           string
-	DatabaseURL    string
-	JWTSecret      string
-	JWTTTL         time.Duration
-	CORSOrigins    []string
-	SeedSuperAdmin models.SeedUser
+	AppName             string
+	Env                 string
+	Port                string
+	DatabaseURL         string
+	JWTSecret           string
+	JWTTTL              time.Duration
+	CORSOrigins         []string
+	SMLPaperlessBaseURL string
+	SMLPaperlessAPIKey  string
+	SMLPaperlessTenant  string
+	SMLPaperlessTimeout time.Duration
+	SeedSuperAdmin      models.SeedUser
 }
 
 func Load() (Config, error) {
@@ -29,6 +33,12 @@ func Load() (Config, error) {
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		JWTSecret:   getenv("JWT_SECRET", "change-this-before-production"),
 		CORSOrigins: splitCSV(getenv("APP_CORS_ORIGINS", "http://localhost:5173,http://localhost:3070")),
+		SMLPaperlessBaseURL: strings.TrimRight(
+			getenv("SML_PAPERLESS_BASE_URL", "http://192.168.2.109:8201"),
+			"/",
+		),
+		SMLPaperlessAPIKey: getenv("SML_PAPERLESS_API_KEY", ""),
+		SMLPaperlessTenant: strings.ToLower(getenv("SML_PAPERLESS_TENANT", "sml1_2026")),
 		SeedSuperAdmin: models.SeedUser{
 			DisplayName: getenv("SEED_SUPERADMIN_NAME", "System Administrator"),
 			Username:    getenv("SEED_SUPERADMIN_USERNAME", "superadmin"),
@@ -46,6 +56,12 @@ func Load() (Config, error) {
 		return Config{}, errors.New("JWT_TTL_HOURS must be a positive integer")
 	}
 	cfg.JWTTTL = time.Duration(ttlHours) * time.Hour
+
+	timeoutSeconds, err := strconv.Atoi(getenv("SML_PAPERLESS_TIMEOUT_SECONDS", "10"))
+	if err != nil || timeoutSeconds <= 0 {
+		return Config{}, errors.New("SML_PAPERLESS_TIMEOUT_SECONDS must be a positive integer")
+	}
+	cfg.SMLPaperlessTimeout = time.Duration(timeoutSeconds) * time.Second
 
 	if strings.TrimSpace(cfg.JWTSecret) == "" {
 		return Config{}, errors.New("JWT_SECRET is required")

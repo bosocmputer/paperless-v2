@@ -1,0 +1,378 @@
+<script setup>
+import { api } from '@/services/api';
+import { computed, onMounted, ref } from 'vue';
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
+
+const confirm = useConfirm();
+const toast = useToast();
+
+const screenOptions = [
+    { label: 'PO', value: 'PO', name: 'Purchase Order' },
+    { label: 'SR', value: 'SR', name: 'Sale Reservation' },
+    { label: 'SI', value: 'SI', name: 'Sale Invoice' },
+    { label: 'EE', value: 'EE', name: 'Receipt' }
+];
+
+const conditionOptions = [
+    { label: '1 - คนใดคนหนึ่ง', value: 1, severity: 'info' },
+    { label: '2 - ทุกคน', value: 2, severity: 'warn' },
+    { label: '3 - บุคคลภายนอก', value: 3, severity: 'secondary' }
+];
+
+const selectedScreen = ref('PO');
+const selectedDocFormat = ref('');
+const docFormats = ref([]);
+const configs = ref([]);
+const loadingFormats = ref(false);
+const loadingConfigs = ref(false);
+const saving = ref(false);
+const dialogVisible = ref(false);
+const editingConfig = ref(null);
+const error = ref('');
+const form = ref(emptyForm());
+
+const docFormatOptions = computed(() =>
+    docFormats.value.map((format) => ({
+        label: `${format.code} - ${format.name_1 || format.name_2 || format.format || 'ไม่มีชื่อเอกสาร'}`,
+        value: format.code,
+        format
+    }))
+);
+
+const selectedDocFormatDetail = computed(() => docFormats.value.find((format) => format.code === selectedDocFormat.value));
+const dialogTitle = computed(() => (editingConfig.value ? 'แก้ไข Config เอกสาร' : 'เพิ่ม Config เอกสาร'));
+const canAdd = computed(() => !loadingFormats.value && !!selectedDocFormat.value);
+
+onMounted(refreshScreen);
+
+function emptyForm() {
+    return {
+        screenCode: selectedScreen.value,
+        docFormatCode: selectedDocFormat.value,
+        positionCode: '',
+        positionName: '',
+        user01: '',
+        user02: '',
+        user03: '',
+        sequenceNo: nextSequenceNo(),
+        conditionType: 1
+    };
+}
+
+function nextSequenceNo() {
+    const max = configs.value.reduce((current, item) => Math.max(current, Number(item.sequenceNo || 0)), 0);
+    return max + 1;
+}
+
+async function refreshScreen() {
+    await loadDocFormats();
+    await loadConfigs();
+}
+
+async function loadDocFormats() {
+    loadingFormats.value = true;
+    error.value = '';
+    try {
+        const result = await api.listSMLDocFormats(selectedScreen.value);
+        docFormats.value = result.docFormats || [];
+        const stillAvailable = docFormats.value.some((format) => format.code === selectedDocFormat.value);
+        selectedDocFormat.value = stillAvailable ? selectedDocFormat.value : docFormats.value[0]?.code || '';
+    } catch (err) {
+        docFormats.value = [];
+        selectedDocFormat.value = '';
+        error.value = err.message;
+        toast.add({ severity: 'error', summary: 'โหลด Doc Format ไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        loadingFormats.value = false;
+    }
+}
+
+async function loadConfigs() {
+    if (!selectedDocFormat.value) {
+        configs.value = [];
+        return;
+    }
+
+    loadingConfigs.value = true;
+    error.value = '';
+    try {
+        const result = await api.listDocumentConfigs({
+            screenCode: selectedScreen.value,
+            docFormatCode: selectedDocFormat.value
+        });
+        configs.value = result.configs || [];
+    } catch (err) {
+        error.value = err.message;
+        toast.add({ severity: 'error', summary: 'โหลด Config ไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        loadingConfigs.value = false;
+    }
+}
+
+function openCreate() {
+    editingConfig.value = null;
+    form.value = emptyForm();
+    dialogVisible.value = true;
+}
+
+function openEdit(config) {
+    editingConfig.value = config;
+    form.value = {
+        screenCode: config.screenCode,
+        docFormatCode: config.docFormatCode,
+        positionCode: config.positionCode,
+        positionName: config.positionName,
+        user01: config.user01,
+        user02: config.user02,
+        user03: config.user03,
+        sequenceNo: Number(config.sequenceNo),
+        conditionType: config.conditionType
+    };
+    dialogVisible.value = true;
+}
+
+function closeDialog() {
+    if (saving.value) return;
+    dialogVisible.value = false;
+}
+
+async function saveConfig() {
+    saving.value = true;
+    error.value = '';
+    try {
+        const payload = {
+            ...form.value,
+            sequenceNo: Number(form.value.sequenceNo),
+            conditionType: Number(form.value.conditionType)
+        };
+
+        if (editingConfig.value) {
+            await api.updateDocumentConfig(editingConfig.value.id, payload);
+            toast.add({ severity: 'success', summary: 'บันทึก Config แล้ว', life: 2500 });
+        } else {
+            await api.createDocumentConfig(payload);
+            toast.add({ severity: 'success', summary: 'เพิ่ม Config แล้ว', life: 2500 });
+        }
+
+        dialogVisible.value = false;
+        selectedScreen.value = payload.screenCode;
+        selectedDocFormat.value = payload.docFormatCode;
+        await loadConfigs();
+    } catch (err) {
+        error.value = err.message;
+        toast.add({ severity: 'error', summary: 'บันทึกไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        saving.value = false;
+    }
+}
+
+function confirmDelete(config) {
+    confirm.require({
+        message: `ลบ Position ${config.positionCode} (${config.positionName}) ใช่ไหม?`,
+        header: 'ลบ Config เอกสาร',
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: 'ยกเลิก',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ลบ Config',
+            severity: 'danger'
+        },
+        accept: () => deleteConfig(config)
+    });
+}
+
+async function deleteConfig(config) {
+    try {
+        await api.deleteDocumentConfig(config.id);
+        toast.add({ severity: 'success', summary: 'ลบ Config แล้ว', life: 2500 });
+        await loadConfigs();
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'ลบไม่สำเร็จ', detail: err.message, life: 4000 });
+    }
+}
+
+function conditionLabel(value) {
+    return conditionOptions.find((option) => option.value === Number(value))?.label || value;
+}
+
+function conditionSeverity(value) {
+    return conditionOptions.find((option) => option.value === Number(value))?.severity || 'secondary';
+}
+
+function formatName(code) {
+    const format = docFormats.value.find((item) => item.code === code);
+    return format?.name_1 || format?.name_2 || format?.format || '-';
+}
+</script>
+
+<template>
+    <div class="card">
+        <div class="flex flex-col xl:flex-row xl:items-start justify-between gap-4 mb-6">
+            <div>
+                <div class="font-semibold text-xl mb-1">Config เอกสาร</div>
+                <p class="text-muted-color m-0">กำหนดลำดับ Position และผู้รับเอกสารตาม erp_doc_format จาก SML</p>
+            </div>
+            <Button label="เพิ่ม Position" icon="pi pi-plus" :disabled="!canAdd" @click="openCreate" />
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-4 mb-6">
+            <div class="md:col-span-3 flex flex-col gap-2">
+                <label for="screenCode" class="font-medium">Screen Code</label>
+                <Select id="screenCode" v-model="selectedScreen" :options="screenOptions" optionLabel="label" optionValue="value" @change="refreshScreen">
+                    <template #option="{ option }">
+                        <div>
+                            <div class="font-medium">{{ option.label }}</div>
+                            <div class="text-sm text-muted-color">{{ option.name }}</div>
+                        </div>
+                    </template>
+                </Select>
+            </div>
+
+            <div class="md:col-span-6 flex flex-col gap-2">
+                <label for="docFormat" class="font-medium">erp_doc_format.code</label>
+                <Select
+                    id="docFormat"
+                    v-model="selectedDocFormat"
+                    :options="docFormatOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    :loading="loadingFormats"
+                    :disabled="loadingFormats || docFormatOptions.length === 0"
+                    filter
+                    @change="loadConfigs"
+                >
+                    <template #value="{ value, placeholder }">
+                        <span v-if="value">{{ value }} - {{ formatName(value) }}</span>
+                        <span v-else>{{ placeholder }}</span>
+                    </template>
+                    <template #option="{ option }">
+                        <div class="flex flex-col">
+                            <span class="font-medium">{{ option.format.code }} - {{ option.format.name_1 || option.format.name_2 || '-' }}</span>
+                            <span class="text-sm text-muted-color">{{ option.format.format || 'ไม่มี format' }}</span>
+                        </div>
+                    </template>
+                </Select>
+            </div>
+
+            <div class="md:col-span-3 flex items-end">
+                <Button label="โหลดใหม่" icon="pi pi-refresh" severity="secondary" outlined class="w-full" :loading="loadingFormats || loadingConfigs" @click="refreshScreen" />
+            </div>
+        </div>
+
+        <Message v-if="error && !dialogVisible" severity="error" class="mb-4">{{ error }}</Message>
+
+        <div v-if="selectedDocFormatDetail" class="rounded-lg border border-surface p-4 mb-4">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div>
+                    <div class="font-semibold text-surface-900 dark:text-surface-0">{{ selectedDocFormatDetail.code }} - {{ selectedDocFormatDetail.name_1 || selectedDocFormatDetail.name_2 || '-' }}</div>
+                    <div class="text-sm text-muted-color">{{ selectedDocFormatDetail.format || 'ไม่มี format' }}</div>
+                </div>
+                <Tag :value="selectedScreen" severity="info" class="w-fit" />
+            </div>
+        </div>
+
+        <DataTable :value="configs" :loading="loadingConfigs" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows sortField="sequenceNo" :sortOrder="1">
+            <template #empty>
+                <div class="py-6 text-center text-muted-color">
+                    {{ selectedDocFormat ? 'ยังไม่มี Config สำหรับรูปแบบเอกสารนี้' : 'ไม่พบ Doc Format จาก SML' }}
+                </div>
+            </template>
+            <Column field="docFormatCode" header="erp_doc_format.code" sortable style="min-width: 13rem">
+                <template #body="{ data }">
+                    <div class="font-medium text-surface-900 dark:text-surface-0">{{ data.docFormatCode }}</div>
+                    <div class="text-sm text-muted-color">{{ formatName(data.docFormatCode) }}</div>
+                </template>
+            </Column>
+            <Column field="positionCode" header="รหัส Position" sortable style="min-width: 9rem" />
+            <Column field="positionName" header="ชื่อ Position" sortable style="min-width: 12rem" />
+            <Column field="user01" header="User01" style="min-width: 12rem" />
+            <Column field="user02" header="User02" style="min-width: 12rem">
+                <template #body="{ data }">{{ data.user02 || '-' }}</template>
+            </Column>
+            <Column field="user03" header="User03" style="min-width: 12rem">
+                <template #body="{ data }">{{ data.user03 || '-' }}</template>
+            </Column>
+            <Column field="sequenceNo" header="ลำดับ" sortable style="min-width: 8rem">
+                <template #body="{ data }">{{ Number(data.sequenceNo).toFixed(2) }}</template>
+            </Column>
+            <Column field="conditionType" header="เงื่อนไข" sortable style="min-width: 12rem">
+                <template #body="{ data }">
+                    <Tag :value="conditionLabel(data.conditionType)" :severity="conditionSeverity(data.conditionType)" />
+                </template>
+            </Column>
+            <Column header="จัดการ" style="width: 10rem">
+                <template #body="{ data }">
+                    <div class="flex gap-2">
+                        <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ไข Config เอกสาร" @click="openEdit(data)" />
+                        <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบ Config เอกสาร" @click="confirmDelete(data)" />
+                    </div>
+                </template>
+            </Column>
+        </DataTable>
+    </div>
+
+    <Dialog v-model:visible="dialogVisible" modal :header="dialogTitle" :style="{ width: 'min(54rem, 94vw)' }" @hide="closeDialog">
+        <form class="flex flex-col gap-4" @submit.prevent="saveConfig">
+            <Message v-if="error && dialogVisible" severity="error">{{ error }}</Message>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="flex flex-col gap-2">
+                    <label for="dialogScreenCode" class="font-medium">Screen Code</label>
+                    <Select id="dialogScreenCode" v-model="form.screenCode" :options="screenOptions" optionLabel="label" optionValue="value" disabled />
+                </div>
+                <div class="flex flex-col gap-2">
+                    <label for="dialogDocFormat" class="font-medium">erp_doc_format.code</label>
+                    <Select id="dialogDocFormat" v-model="form.docFormatCode" :options="docFormatOptions" optionLabel="label" optionValue="value" disabled />
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="flex flex-col gap-2">
+                    <label for="positionCode" class="font-medium">รหัส Position</label>
+                    <InputText id="positionCode" v-model="form.positionCode" autocomplete="off" />
+                </div>
+                <div class="flex flex-col gap-2">
+                    <label for="positionName" class="font-medium">ชื่อ Position</label>
+                    <InputText id="positionName" v-model="form.positionName" autocomplete="off" />
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="flex flex-col gap-2">
+                    <label for="user01" class="font-medium">User01</label>
+                    <InputText id="user01" v-model="form.user01" autocomplete="off" placeholder="001:ชื่อผู้รับ" />
+                </div>
+                <div class="flex flex-col gap-2">
+                    <label for="user02" class="font-medium">User02</label>
+                    <InputText id="user02" v-model="form.user02" autocomplete="off" />
+                </div>
+                <div class="flex flex-col gap-2">
+                    <label for="user03" class="font-medium">User03</label>
+                    <InputText id="user03" v-model="form.user03" autocomplete="off" />
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="flex flex-col gap-2">
+                    <label for="sequenceNo" class="font-medium">ลำดับ</label>
+                    <InputNumber id="sequenceNo" v-model="form.sequenceNo" :min="0.01" :minFractionDigits="2" :maxFractionDigits="2" mode="decimal" />
+                </div>
+                <div class="flex flex-col gap-2">
+                    <label for="conditionType" class="font-medium">เงื่อนไข</label>
+                    <Select id="conditionType" v-model="form.conditionType" :options="conditionOptions" optionLabel="label" optionValue="value" />
+                </div>
+            </div>
+
+            <Message v-if="form.conditionType === 3" severity="info">บุคคลภายนอกใช้ User01 เช่น 999:Temp user หรือชื่อผู้รับภายนอก</Message>
+
+            <div class="flex justify-end gap-2 pt-2">
+                <Button type="button" label="ยกเลิก" severity="secondary" outlined @click="closeDialog" />
+                <Button type="submit" label="บันทึก Config" icon="pi pi-save" :loading="saving" />
+            </div>
+        </form>
+    </Dialog>
+</template>

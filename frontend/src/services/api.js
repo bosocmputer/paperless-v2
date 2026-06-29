@@ -24,6 +24,17 @@ async function request(path, options = {}) {
     return payload;
 }
 
+function withQuery(path, params = {}) {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+            query.set(key, value);
+        }
+    });
+    const qs = query.toString();
+    return qs ? `${path}?${qs}` : path;
+}
+
 export const api = {
     login(username, password) {
         return request('/api/auth/login', {
@@ -54,5 +65,31 @@ export const api = {
     },
     deactivateUser(id) {
         return request(`/api/users/${id}`, { method: 'DELETE' });
+    },
+    listSMLDocFormats(screenCode) {
+        return request(withQuery('/api/sml/doc-formats', { screen_code: screenCode }));
+    },
+    listDocumentConfigs(params) {
+        return request(
+            withQuery('/api/document-configs', {
+                screen_code: params?.screenCode,
+                doc_format_code: params?.docFormatCode
+            })
+        );
+    },
+    createDocumentConfig(payload) {
+        return request('/api/document-configs', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+    updateDocumentConfig(id, payload) {
+        return request(`/api/document-configs/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    },
+    deleteDocumentConfig(id) {
+        return request(`/api/document-configs/${id}`, { method: 'DELETE' });
     }
 };

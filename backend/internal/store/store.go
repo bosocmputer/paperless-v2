@@ -17,8 +17,10 @@ type Store struct {
 }
 
 var (
-	ErrUsernameTaken = errors.New("username already exists")
-	ErrUserNotFound  = errors.New("user not found")
+	ErrUsernameTaken           = errors.New("username already exists")
+	ErrUserNotFound            = errors.New("user not found")
+	ErrDocumentConfigDuplicate = errors.New("document config step already exists")
+	ErrDocumentConfigNotFound  = errors.New("document config step not found")
 )
 
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
@@ -71,6 +73,27 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS document_config_steps (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    screen_code TEXT NOT NULL CHECK (screen_code IN ('PO', 'SR', 'SI', 'EE')),
+    doc_format_code TEXT NOT NULL,
+    position_code TEXT NOT NULL,
+    position_name TEXT NOT NULL,
+    user01 TEXT NOT NULL DEFAULT '',
+    user02 TEXT NOT NULL DEFAULT '',
+    user03 TEXT NOT NULL DEFAULT '',
+    sequence_no DOUBLE PRECISION NOT NULL CHECK (sequence_no > 0),
+    condition_type INTEGER NOT NULL CHECK (condition_type IN (1, 2, 3)),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS document_config_steps_unique_position_idx
+ON document_config_steps (screen_code, lower(doc_format_code), lower(position_code));
+
+CREATE INDEX IF NOT EXISTS document_config_steps_lookup_idx
+ON document_config_steps (screen_code, lower(doc_format_code), sequence_no);
 `)
 	return err
 }
@@ -219,6 +242,90 @@ VALUES ($1, $2, $3, $4, $5, $6)
 	return err
 }
 
+func (s *Store) ListDocumentConfigSteps(ctx context.Context, screenCode, docFormatCode string) ([]models.DocumentConfigStep, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+       sequence_no, condition_type, created_at, updated_at
+FROM document_config_steps
+WHERE ($1 = '' OR screen_code = $1)
+  AND ($2 = '' OR lower(doc_format_code) = lower($2))
+ORDER BY screen_code, lower(doc_format_code), sequence_no, position_code
+`, screenCode, docFormatCode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	steps := []models.DocumentConfigStep{}
+	for rows.Next() {
+		step, err := scanDocumentConfigStep(rows)
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, step)
+	}
+	return steps, rows.Err()
+}
+
+func (s *Store) CreateDocumentConfigStep(ctx context.Context, req models.DocumentConfigStepRequest) (models.DocumentConfigStep, error) {
+	step, err := scanDocumentConfigStep(s.pool.QueryRow(ctx, `
+INSERT INTO document_config_steps (
+    screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+    sequence_no, condition_type
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+          sequence_no, condition_type, created_at, updated_at
+`, req.ScreenCode, req.DocFormatCode, req.PositionCode, req.PositionName, req.User01, req.User02, req.User03, req.SequenceNo, req.ConditionType))
+	if err != nil {
+		if strings.Contains(err.Error(), "document_config_steps_unique_position_idx") {
+			return models.DocumentConfigStep{}, ErrDocumentConfigDuplicate
+		}
+		return models.DocumentConfigStep{}, err
+	}
+	return step, nil
+}
+
+func (s *Store) UpdateDocumentConfigStep(ctx context.Context, id string, req models.DocumentConfigStepRequest) (models.DocumentConfigStep, error) {
+	step, err := scanDocumentConfigStep(s.pool.QueryRow(ctx, `
+UPDATE document_config_steps
+SET screen_code = $1,
+    doc_format_code = $2,
+    position_code = $3,
+    position_name = $4,
+    user01 = $5,
+    user02 = $6,
+    user03 = $7,
+    sequence_no = $8,
+    condition_type = $9,
+    updated_at = now()
+WHERE id = $10
+RETURNING id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+          sequence_no, condition_type, created_at, updated_at
+`, req.ScreenCode, req.DocFormatCode, req.PositionCode, req.PositionName, req.User01, req.User02, req.User03, req.SequenceNo, req.ConditionType, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.DocumentConfigStep{}, ErrDocumentConfigNotFound
+	}
+	if err != nil {
+		if strings.Contains(err.Error(), "document_config_steps_unique_position_idx") {
+			return models.DocumentConfigStep{}, ErrDocumentConfigDuplicate
+		}
+		return models.DocumentConfigStep{}, err
+	}
+	return step, nil
+}
+
+func (s *Store) DeleteDocumentConfigStep(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM document_config_steps WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrDocumentConfigNotFound
+	}
+	return nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -235,4 +342,23 @@ func scanUser(row rowScanner) (models.User, error) {
 		&user.CreatedAt,
 	)
 	return user, err
+}
+
+func scanDocumentConfigStep(row rowScanner) (models.DocumentConfigStep, error) {
+	var step models.DocumentConfigStep
+	err := row.Scan(
+		&step.ID,
+		&step.ScreenCode,
+		&step.DocFormatCode,
+		&step.PositionCode,
+		&step.PositionName,
+		&step.User01,
+		&step.User02,
+		&step.User03,
+		&step.SequenceNo,
+		&step.ConditionType,
+		&step.CreatedAt,
+		&step.UpdatedAt,
+	)
+	return step, err
 }

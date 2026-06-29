@@ -10,13 +10,19 @@ import (
 )
 
 type Server struct {
-	cfg    config.Config
-	store  *store.Store
-	logger *slog.Logger
+	cfg        config.Config
+	store      *store.Store
+	logger     *slog.Logger
+	httpClient *http.Client
 }
 
 func NewServer(cfg config.Config, store *store.Store, logger *slog.Logger) *Server {
-	return &Server{cfg: cfg, store: store, logger: logger}
+	return &Server{
+		cfg:        cfg,
+		store:      store,
+		logger:     logger,
+		httpClient: &http.Client{Timeout: cfg.SMLPaperlessTimeout},
+	}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -30,6 +36,11 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /api/users", s.requireAdmin(http.HandlerFunc(s.createUser)))
 	mux.Handle("PUT /api/users/{id}", s.requireAdmin(http.HandlerFunc(s.updateUser)))
 	mux.Handle("DELETE /api/users/{id}", s.requireAdmin(http.HandlerFunc(s.deactivateUser)))
+	mux.Handle("GET /api/sml/doc-formats", s.requireAdmin(http.HandlerFunc(s.listSMLDocFormats)))
+	mux.Handle("GET /api/document-configs", s.requireAdmin(http.HandlerFunc(s.listDocumentConfigSteps)))
+	mux.Handle("POST /api/document-configs", s.requireAdmin(http.HandlerFunc(s.createDocumentConfigStep)))
+	mux.Handle("PUT /api/document-configs/{id}", s.requireAdmin(http.HandlerFunc(s.updateDocumentConfigStep)))
+	mux.Handle("DELETE /api/document-configs/{id}", s.requireAdmin(http.HandlerFunc(s.deleteDocumentConfigStep)))
 
 	return s.recover(s.cors(mux))
 }

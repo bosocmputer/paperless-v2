@@ -17,9 +17,9 @@ const model = ref([
                 to: '/pages/empty'
             },
             {
-                label: 'Workflow Config',
-                icon: 'pi pi-fw pi-sitemap',
-                to: '/pages/empty'
+                label: 'Config เอกสาร',
+                icon: 'pi pi-fw pi-file-edit',
+                to: '/config/documents'
             },
             {
                 label: 'Audit Trail',
