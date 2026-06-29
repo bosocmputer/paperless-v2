@@ -43,6 +43,11 @@ type SMLDocFormat struct {
 	ScreenCode string `json:"screen_code"`
 }
 
+type SMLScreenCode struct {
+	Code  string `json:"code"`
+	Count int    `json:"count"`
+}
+
 type DocumentConfigStep struct {
 	ID            string    `json:"id"`
 	ScreenCode    string    `json:"screenCode"`

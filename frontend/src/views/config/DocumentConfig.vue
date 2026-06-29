@@ -7,23 +7,18 @@ import { useToast } from 'primevue/usetoast';
 const confirm = useConfirm();
 const toast = useToast();
 
-const screenOptions = [
-    { label: 'PO', value: 'PO', name: 'Purchase Order' },
-    { label: 'SR', value: 'SR', name: 'Sale Reservation' },
-    { label: 'SI', value: 'SI', name: 'Sale Invoice' },
-    { label: 'EE', value: 'EE', name: 'Receipt' }
-];
-
 const conditionOptions = [
     { label: '1 - คนใดคนหนึ่ง', value: 1, severity: 'info' },
     { label: '2 - ทุกคน', value: 2, severity: 'warn' },
     { label: '3 - บุคคลภายนอก', value: 3, severity: 'secondary' }
 ];
 
-const selectedScreen = ref('PO');
+const screenOptions = ref([]);
+const selectedScreen = ref('');
 const selectedDocFormat = ref('');
 const docFormats = ref([]);
 const configs = ref([]);
+const loadingScreens = ref(false);
 const loadingFormats = ref(false);
 const loadingConfigs = ref(false);
 const saving = ref(false);
@@ -42,9 +37,9 @@ const docFormatOptions = computed(() =>
 
 const selectedDocFormatDetail = computed(() => docFormats.value.find((format) => format.code === selectedDocFormat.value));
 const dialogTitle = computed(() => (editingConfig.value ? 'แก้ไข Config เอกสาร' : 'เพิ่ม Config เอกสาร'));
-const canAdd = computed(() => !loadingFormats.value && !!selectedDocFormat.value);
+const canAdd = computed(() => !loadingScreens.value && !loadingFormats.value && !!selectedDocFormat.value);
 
-onMounted(refreshScreen);
+onMounted(initializePage);
 
 function emptyForm() {
     return {
@@ -70,7 +65,41 @@ async function refreshScreen() {
     await loadConfigs();
 }
 
+async function initializePage() {
+    await loadScreenCodes();
+    await refreshScreen();
+}
+
+async function loadScreenCodes() {
+    loadingScreens.value = true;
+    error.value = '';
+    try {
+        const result = await api.listSMLScreenCodes();
+        screenOptions.value = (result.screenCodes || []).map((item) => ({
+            label: item.code,
+            value: item.code,
+            count: item.count
+        }));
+
+        const stillAvailable = screenOptions.value.some((option) => option.value === selectedScreen.value);
+        selectedScreen.value = stillAvailable ? selectedScreen.value : screenOptions.value[0]?.value || '';
+    } catch (err) {
+        screenOptions.value = [];
+        selectedScreen.value = '';
+        error.value = err.message;
+        toast.add({ severity: 'error', summary: 'โหลด Screen Code ไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        loadingScreens.value = false;
+    }
+}
+
 async function loadDocFormats() {
+    if (!selectedScreen.value) {
+        docFormats.value = [];
+        selectedDocFormat.value = '';
+        return;
+    }
+
     loadingFormats.value = true;
     error.value = '';
     try {
@@ -108,6 +137,11 @@ async function loadConfigs() {
     } finally {
         loadingConfigs.value = false;
     }
+}
+
+async function handleScreenChange() {
+    selectedDocFormat.value = '';
+    await refreshScreen();
 }
 
 function openCreate() {
@@ -222,11 +256,25 @@ function formatName(code) {
         <div class="grid grid-cols-1 md:grid-cols-12 gap-4 mb-6">
             <div class="md:col-span-3 flex flex-col gap-2">
                 <label for="screenCode" class="font-medium">Screen Code</label>
-                <Select id="screenCode" v-model="selectedScreen" :options="screenOptions" optionLabel="label" optionValue="value" @change="refreshScreen">
+                <Select
+                    id="screenCode"
+                    v-model="selectedScreen"
+                    :options="screenOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    :loading="loadingScreens"
+                    :disabled="loadingScreens || screenOptions.length === 0"
+                    filter
+                    @change="handleScreenChange"
+                >
+                    <template #value="{ value, placeholder }">
+                        <span v-if="value">{{ value }}</span>
+                        <span v-else>{{ placeholder }}</span>
+                    </template>
                     <template #option="{ option }">
                         <div>
                             <div class="font-medium">{{ option.label }}</div>
-                            <div class="text-sm text-muted-color">{{ option.name }}</div>
+                            <div class="text-sm text-muted-color">{{ option.count }} รูปแบบเอกสาร</div>
                         </div>
                     </template>
                 </Select>
@@ -259,7 +307,7 @@ function formatName(code) {
             </div>
 
             <div class="md:col-span-3 flex items-end">
-                <Button label="โหลดใหม่" icon="pi pi-refresh" severity="secondary" outlined class="w-full" :loading="loadingFormats || loadingConfigs" @click="refreshScreen" />
+                <Button label="โหลดใหม่" icon="pi pi-refresh" severity="secondary" outlined class="w-full" :loading="loadingScreens || loadingFormats || loadingConfigs" @click="initializePage" />
             </div>
         </div>
 

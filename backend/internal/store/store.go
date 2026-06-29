@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 CREATE TABLE IF NOT EXISTS document_config_steps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    screen_code TEXT NOT NULL CHECK (screen_code IN ('PO', 'SR', 'SI', 'EE')),
+    screen_code TEXT NOT NULL,
     doc_format_code TEXT NOT NULL,
     position_code TEXT NOT NULL,
     position_name TEXT NOT NULL,
@@ -88,6 +88,13 @@ CREATE TABLE IF NOT EXISTS document_config_steps (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE document_config_steps
+DROP CONSTRAINT IF EXISTS document_config_steps_screen_code_check;
+
+ALTER TABLE document_config_steps
+ADD CONSTRAINT document_config_steps_screen_code_check
+CHECK (screen_code <> '' AND length(screen_code) <= 40);
 
 CREATE UNIQUE INDEX IF NOT EXISTS document_config_steps_unique_position_idx
 ON document_config_steps (screen_code, lower(doc_format_code), lower(position_code));

@@ -66,6 +66,9 @@ export const api = {
     deactivateUser(id) {
         return request(`/api/users/${id}`, { method: 'DELETE' });
     },
+    listSMLScreenCodes() {
+        return request('/api/sml/screen-codes');
+    },
     listSMLDocFormats(screenCode) {
         return request(withQuery('/api/sml/doc-formats', { screen_code: screenCode }));
     },

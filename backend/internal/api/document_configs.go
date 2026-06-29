@@ -14,7 +14,7 @@ func (s *Server) listDocumentConfigSteps(w http.ResponseWriter, r *http.Request)
 	screenCode := normalizeScreenCode(r.URL.Query().Get("screen_code"))
 	docFormatCode := strings.TrimSpace(r.URL.Query().Get("doc_format_code"))
 	if screenCode != "" && !isValidScreenCode(screenCode) {
-		writeError(w, http.StatusBadRequest, "invalid_screen_code", "screen_code must be PO, SR, SI, or EE.")
+		writeError(w, http.StatusBadRequest, "invalid_screen_code", "screen_code is invalid.")
 		return
 	}
 
@@ -157,7 +157,7 @@ func normalizeDocumentConfigStep(req models.DocumentConfigStepRequest) models.Do
 
 func validateDocumentConfigStep(req models.DocumentConfigStepRequest) string {
 	if !isValidScreenCode(req.ScreenCode) {
-		return "screen_code must be PO, SR, SI, or EE."
+		return "screen_code is invalid."
 	}
 	if req.DocFormatCode == "" {
 		return "Doc format code is required."
@@ -185,10 +185,14 @@ func normalizeScreenCode(value string) string {
 }
 
 func isValidScreenCode(value string) bool {
-	switch value {
-	case "PO", "SR", "SI", "EE":
-		return true
-	default:
+	if value == "" || len(value) > 40 {
 		return false
 	}
+	for _, r := range value {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }

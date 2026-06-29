@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
@@ -30,10 +31,47 @@ type smlAPIError struct {
 	Message string `json:"message"`
 }
 
+func (s *Server) listSMLScreenCodes(w http.ResponseWriter, r *http.Request) {
+	formats, err := s.fetchSMLDocFormats(r.Context(), "")
+	if errors.Is(err, errSMLConfigMissing) {
+		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML Paperless API is not configured.")
+		return
+	}
+	if err != nil {
+		s.logger.Warn("fetch sml screen codes failed", "error", err)
+		writeError(w, http.StatusBadGateway, "sml_screen_codes_failed", fmt.Sprintf("Cannot load screen codes from SML: %s", err.Error()))
+		return
+	}
+
+	counts := map[string]int{}
+	for _, format := range formats {
+		screenCode := normalizeScreenCode(format.ScreenCode)
+		if screenCode == "" {
+			continue
+		}
+		counts[screenCode]++
+	}
+
+	screenCodes := make([]models.SMLScreenCode, 0, len(counts))
+	for code, count := range counts {
+		screenCodes = append(screenCodes, models.SMLScreenCode{Code: code, Count: count})
+	}
+	sort.Slice(screenCodes, func(i, j int) bool {
+		return screenCodes[i].Code < screenCodes[j].Code
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tenant":      s.cfg.SMLPaperlessTenant,
+		"screenCodes": screenCodes,
+		"source":      "sml-api-bybos-paperless",
+		"sourceTable": "erp_doc_format",
+	})
+}
+
 func (s *Server) listSMLDocFormats(w http.ResponseWriter, r *http.Request) {
 	screenCode := normalizeScreenCode(r.URL.Query().Get("screen_code"))
-	if !isValidScreenCode(screenCode) {
-		writeError(w, http.StatusBadRequest, "invalid_screen_code", "screen_code must be PO, SR, SI, or EE.")
+	if screenCode != "" && !isValidScreenCode(screenCode) {
+		writeError(w, http.StatusBadRequest, "invalid_screen_code", "screen_code is invalid.")
 		return
 	}
 
@@ -69,7 +107,9 @@ func (s *Server) fetchSMLDocFormats(ctx context.Context, screenCode string) ([]m
 		return nil, fmt.Errorf("invalid SML base URL")
 	}
 	query := endpoint.Query()
-	query.Set("screen_code", screenCode)
+	if screenCode != "" {
+		query.Set("screen_code", screenCode)
+	}
 	endpoint.RawQuery = query.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
@@ -87,7 +127,7 @@ func (s *Server) fetchSMLDocFormats(ctx context.Context, screenCode string) ([]m
 	defer resp.Body.Close()
 
 	var payload smlDocFormatsResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("cannot parse SML response")
 	}
 
