@@ -75,6 +75,76 @@ type DocumentConfigStepRequest struct {
 	ConditionType int     `json:"conditionType"`
 }
 
+type UploadedFile struct {
+	ID           string    `json:"id"`
+	OriginalName string    `json:"originalName"`
+	StoredName   string    `json:"storedName"`
+	StoragePath  string    `json:"-"`
+	ContentType  string    `json:"contentType"`
+	SizeBytes    int64     `json:"sizeBytes"`
+	PageCount    int       `json:"pageCount"`
+	SHA256       string    `json:"sha256"`
+	CreatedBy    string    `json:"createdBy"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+type SignatureTemplate struct {
+	ID            string                 `json:"id"`
+	ScreenCode    string                 `json:"screenCode"`
+	DocFormatCode string                 `json:"docFormatCode"`
+	Version       int                    `json:"version"`
+	Status        string                 `json:"status"`
+	SampleFileID  string                 `json:"sampleFileId"`
+	SampleFile    *UploadedFile          `json:"sampleFile,omitempty"`
+	Revision      int                    `json:"revision"`
+	CreatedBy     string                 `json:"createdBy"`
+	PublishedBy   string                 `json:"publishedBy"`
+	CreatedAt     time.Time              `json:"createdAt"`
+	UpdatedAt     time.Time              `json:"updatedAt"`
+	PublishedAt   *time.Time             `json:"publishedAt,omitempty"`
+	Boxes         []SignatureTemplateBox `json:"boxes"`
+}
+
+type SignatureTemplateBox struct {
+	ID           string    `json:"id"`
+	TemplateID   string    `json:"templateId"`
+	PositionCode string    `json:"positionCode"`
+	SignerSlot   int       `json:"signerSlot"`
+	SignerType   string    `json:"signerType"`
+	SignerUser   string    `json:"signerUser"`
+	PageNo       int       `json:"pageNo"`
+	XRatio       float64   `json:"xRatio"`
+	YRatio       float64   `json:"yRatio"`
+	WidthRatio   float64   `json:"widthRatio"`
+	HeightRatio  float64   `json:"heightRatio"`
+	Label        string    `json:"label"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+type SignatureTemplateBoxRequest struct {
+	PositionCode string  `json:"positionCode"`
+	SignerSlot   int     `json:"signerSlot"`
+	SignerType   string  `json:"signerType"`
+	SignerUser   string  `json:"signerUser"`
+	PageNo       int     `json:"pageNo"`
+	XRatio       float64 `json:"xRatio"`
+	YRatio       float64 `json:"yRatio"`
+	WidthRatio   float64 `json:"widthRatio"`
+	HeightRatio  float64 `json:"heightRatio"`
+	Label        string  `json:"label"`
+}
+
+type SaveSignatureBoxesRequest struct {
+	Revision int                           `json:"revision"`
+	Boxes    []SignatureTemplateBoxRequest `json:"boxes"`
+}
+
+type SignatureValidationIssue struct {
+	Code         string `json:"code"`
+	PositionCode string `json:"positionCode,omitempty"`
+	Message      string `json:"message"`
+}
+
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`

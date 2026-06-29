@@ -10,7 +10,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/paperle
 
 FROM alpine:3.21
 
-RUN addgroup -S app && adduser -S app -G app && apk add --no-cache ca-certificates tzdata
+RUN addgroup -S app \
+    && adduser -S app -G app \
+    && apk add --no-cache ca-certificates tzdata \
+    && mkdir -p /app/uploads \
+    && chown -R app:app /app
 USER app
 WORKDIR /app
 

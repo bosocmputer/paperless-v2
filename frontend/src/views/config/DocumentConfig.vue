@@ -1,11 +1,13 @@
 <script setup>
 import { api } from '@/services/api';
 import { computed, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
 const confirm = useConfirm();
 const toast = useToast();
+const router = useRouter();
 
 const conditionOptions = [
     { label: '1 - คนใดคนหนึ่ง', value: 1, severity: 'info' },
@@ -157,6 +159,10 @@ function openEdit(config) {
     dialogVisible.value = true;
 }
 
+function openSignatureTemplate(docFormatCode) {
+    router.push({ name: 'signature-template', params: { docFormatCode } });
+}
+
 function handleDocFormatChange() {
     if (editingConfig.value) return;
     form.value.sequenceNo = nextSequenceNo(form.value.docFormatCode);
@@ -303,10 +309,11 @@ function userValue(user) {
                     <Tag :value="conditionLabel(data.conditionType)" :severity="conditionSeverity(data.conditionType)" />
                 </template>
             </Column>
-            <Column header="จัดการ" style="width: 10rem">
+            <Column header="จัดการ" style="width: 13rem">
                 <template #body="{ data }">
                     <div class="flex gap-2">
                         <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ไข Config เอกสาร" @click="openEdit(data)" />
+                        <Button icon="pi pi-file-edit" severity="info" rounded outlined aria-label="ตั้งค่ากรอบลายเซ็น" @click="openSignatureTemplate(data.docFormatCode)" />
                         <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบ Config เอกสาร" @click="confirmDelete(data)" />
                     </div>
                 </template>

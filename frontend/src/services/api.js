@@ -2,7 +2,8 @@ const API_BASE = '';
 
 async function request(path, options = {}) {
     const headers = new Headers(options.headers || {});
-    headers.set('Content-Type', 'application/json');
+    const isFormData = options.body instanceof FormData;
+    if (!isFormData) headers.set('Content-Type', 'application/json');
 
     const token = localStorage.getItem('paperless_token');
     if (token) headers.set('Authorization', `Bearer ${token}`);
@@ -97,5 +98,32 @@ export const api = {
     },
     deleteDocumentConfig(id) {
         return request(`/api/document-configs/${id}`, { method: 'DELETE' });
+    },
+    getSignatureTemplateState(docFormatCode) {
+        return request(withQuery('/api/signature-templates', { doc_format_code: docFormatCode }));
+    },
+    uploadSignatureTemplateSamplePDF(docFormatCode, file) {
+        const form = new FormData();
+        form.set('file', file);
+        return request(withQuery('/api/signature-templates/sample-pdf', { doc_format_code: docFormatCode }), {
+            method: 'POST',
+            body: form
+        });
+    },
+    saveSignatureTemplateBoxes(id, payload) {
+        return request(`/api/signature-templates/${id}/boxes`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    },
+    publishSignatureTemplate(id) {
+        return request(`/api/signature-templates/${id}/publish`, { method: 'POST' });
+    },
+    signatureTemplateSamplePDFUrl(id) {
+        return `/api/signature-templates/${id}/sample-pdf`;
+    },
+    authHeaders() {
+        const token = localStorage.getItem('paperless_token');
+        return token ? { Authorization: `Bearer ${token}` } : {};
     }
 };

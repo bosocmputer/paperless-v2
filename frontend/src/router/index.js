@@ -30,6 +30,12 @@ const router = createRouter({
                     name: 'document-config',
                     component: () => import('@/views/config/DocumentConfig.vue'),
                     meta: { role: 'admin' }
+                },
+                {
+                    path: '/config/documents/:docFormatCode/signature-template',
+                    name: 'signature-template',
+                    component: () => import('@/views/config/SignatureTemplateDesigner.vue'),
+                    meta: { role: 'admin' }
                 }
             ]
         },

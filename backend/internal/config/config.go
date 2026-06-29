@@ -22,6 +22,9 @@ type Config struct {
 	SMLPaperlessAPIKey  string
 	SMLPaperlessTenant  string
 	SMLPaperlessTimeout time.Duration
+	FileStorageDir      string
+	MaxUploadMB         int64
+	MaxTemplatePages    int
 	SeedSuperAdmin      models.SeedUser
 }
 
@@ -39,6 +42,7 @@ func Load() (Config, error) {
 		),
 		SMLPaperlessAPIKey: getenv("SML_PAPERLESS_API_KEY", ""),
 		SMLPaperlessTenant: strings.ToLower(getenv("SML_PAPERLESS_TENANT", "sml1_2026")),
+		FileStorageDir:     getenv("FILE_STORAGE_DIR", "/app/uploads"),
 		SeedSuperAdmin: models.SeedUser{
 			DisplayName: getenv("SEED_SUPERADMIN_NAME", "System Administrator"),
 			Username:    getenv("SEED_SUPERADMIN_USERNAME", "superadmin"),
@@ -62,6 +66,18 @@ func Load() (Config, error) {
 		return Config{}, errors.New("SML_PAPERLESS_TIMEOUT_SECONDS must be a positive integer")
 	}
 	cfg.SMLPaperlessTimeout = time.Duration(timeoutSeconds) * time.Second
+
+	maxUploadMB, err := strconv.Atoi(getenv("MAX_UPLOAD_MB", "15"))
+	if err != nil || maxUploadMB <= 0 {
+		return Config{}, errors.New("MAX_UPLOAD_MB must be a positive integer")
+	}
+	cfg.MaxUploadMB = int64(maxUploadMB)
+
+	maxTemplatePages, err := strconv.Atoi(getenv("MAX_TEMPLATE_PAGES", "20"))
+	if err != nil || maxTemplatePages <= 0 {
+		return Config{}, errors.New("MAX_TEMPLATE_PAGES must be a positive integer")
+	}
+	cfg.MaxTemplatePages = maxTemplatePages
 
 	if strings.TrimSpace(cfg.JWTSecret) == "" {
 		return Config{}, errors.New("JWT_SECRET is required")

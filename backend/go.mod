@@ -1,10 +1,11 @@
 module github.com/bosocmputer/paperless-v2/backend
 
-go 1.24.0
+go 1.24.1
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/jackc/pgx/v5 v5.7.4
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	golang.org/x/crypto v0.36.0
 )
 

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"time"
@@ -17,10 +18,13 @@ type Store struct {
 }
 
 var (
-	ErrUsernameTaken           = errors.New("username already exists")
-	ErrUserNotFound            = errors.New("user not found")
-	ErrDocumentConfigDuplicate = errors.New("document config step already exists")
-	ErrDocumentConfigNotFound  = errors.New("document config step not found")
+	ErrUsernameTaken             = errors.New("username already exists")
+	ErrUserNotFound              = errors.New("user not found")
+	ErrDocumentConfigDuplicate   = errors.New("document config step already exists")
+	ErrDocumentConfigNotFound    = errors.New("document config step not found")
+	ErrSignatureTemplateNotFound = errors.New("signature template not found")
+	ErrSignatureRevisionConflict = errors.New("signature template revision conflict")
+	ErrSignatureTemplateNotDraft = errors.New("signature template is not draft")
 )
 
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
@@ -101,6 +105,76 @@ ON document_config_steps (screen_code, lower(doc_format_code), lower(position_co
 
 CREATE INDEX IF NOT EXISTS document_config_steps_lookup_idx
 ON document_config_steps (screen_code, lower(doc_format_code), sequence_no);
+
+CREATE TABLE IF NOT EXISTS uploaded_files (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    original_name TEXT NOT NULL,
+    stored_name TEXT NOT NULL,
+    storage_path TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
+    page_count INTEGER NOT NULL DEFAULT 0 CHECK (page_count >= 0),
+    sha256 TEXT NOT NULL,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE uploaded_files
+ADD COLUMN IF NOT EXISTS page_count INTEGER NOT NULL DEFAULT 0 CHECK (page_count >= 0);
+
+CREATE INDEX IF NOT EXISTS uploaded_files_sha256_idx ON uploaded_files (sha256);
+
+CREATE TABLE IF NOT EXISTS signature_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    screen_code TEXT NOT NULL,
+    doc_format_code TEXT NOT NULL,
+    version INTEGER NOT NULL CHECK (version > 0),
+    status TEXT NOT NULL CHECK (status IN ('draft', 'active', 'archived')),
+    sample_file_id UUID REFERENCES uploaded_files(id),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_by UUID REFERENCES users(id),
+    published_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    published_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS signature_templates_active_unique_idx
+ON signature_templates (screen_code, lower(doc_format_code))
+WHERE status = 'active';
+
+CREATE UNIQUE INDEX IF NOT EXISTS signature_templates_draft_unique_idx
+ON signature_templates (screen_code, lower(doc_format_code))
+WHERE status = 'draft';
+
+CREATE INDEX IF NOT EXISTS signature_templates_lookup_idx
+ON signature_templates (screen_code, lower(doc_format_code), status, version DESC);
+
+CREATE TABLE IF NOT EXISTS signature_template_boxes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    template_id UUID NOT NULL REFERENCES signature_templates(id) ON DELETE CASCADE,
+    position_code TEXT NOT NULL,
+    signer_slot INTEGER NOT NULL CHECK (signer_slot > 0),
+    signer_type TEXT NOT NULL CHECK (signer_type IN ('any', 'internal', 'external')),
+    signer_user TEXT NOT NULL DEFAULT '',
+    page_no INTEGER NOT NULL CHECK (page_no > 0),
+    x_ratio DOUBLE PRECISION NOT NULL,
+    y_ratio DOUBLE PRECISION NOT NULL,
+    width_ratio DOUBLE PRECISION NOT NULL,
+    height_ratio DOUBLE PRECISION NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (x_ratio >= 0 AND y_ratio >= 0),
+    CHECK (width_ratio > 0 AND height_ratio > 0),
+    CHECK (x_ratio + width_ratio <= 1),
+    CHECK (y_ratio + height_ratio <= 1)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS signature_template_boxes_slot_unique_idx
+ON signature_template_boxes (template_id, lower(position_code), signer_slot);
+
+CREATE INDEX IF NOT EXISTS signature_template_boxes_lookup_idx
+ON signature_template_boxes (template_id, page_no, lower(position_code), signer_slot);
 `)
 	return err
 }
@@ -333,6 +407,265 @@ func (s *Store) DeleteDocumentConfigStep(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *Store) CreateUploadedFile(ctx context.Context, file models.UploadedFile) (models.UploadedFile, error) {
+	return scanUploadedFile(s.pool.QueryRow(ctx, `
+INSERT INTO uploaded_files (original_name, stored_name, storage_path, content_type, size_bytes, page_count, sha256, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::uuid)
+RETURNING id::text, original_name, stored_name, storage_path, content_type, size_bytes, page_count, sha256, COALESCE(created_by::text, ''), created_at
+`, file.OriginalName, file.StoredName, file.StoragePath, file.ContentType, file.SizeBytes, file.PageCount, file.SHA256, file.CreatedBy))
+}
+
+func (s *Store) FindUploadedFileByID(ctx context.Context, id string) (models.UploadedFile, error) {
+	return scanUploadedFile(s.pool.QueryRow(ctx, `
+SELECT id::text, original_name, stored_name, storage_path, content_type, size_bytes, page_count, sha256, COALESCE(created_by::text, ''), created_at
+FROM uploaded_files
+WHERE id = $1
+`, id))
+}
+
+func (s *Store) GetSignatureTemplateState(ctx context.Context, screenCode, docFormatCode string) (*models.SignatureTemplate, *models.SignatureTemplate, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT t.id::text, t.screen_code, t.doc_format_code, t.version, t.status, COALESCE(t.sample_file_id::text, ''),
+       t.revision, COALESCE(t.created_by::text, ''), COALESCE(t.published_by::text, ''),
+       t.created_at, t.updated_at, t.published_at,
+       COALESCE(f.id::text, ''), COALESCE(f.original_name, ''), COALESCE(f.stored_name, ''), COALESCE(f.storage_path, ''),
+       COALESCE(f.content_type, ''), COALESCE(f.size_bytes, 0), COALESCE(f.page_count, 0),
+       COALESCE(f.sha256, ''), COALESCE(f.created_by::text, ''), f.created_at
+FROM signature_templates t
+LEFT JOIN uploaded_files f ON f.id = t.sample_file_id
+WHERE t.screen_code = $1
+  AND lower(t.doc_format_code) = lower($2)
+  AND t.status IN ('draft', 'active')
+ORDER BY CASE t.status WHEN 'draft' THEN 0 ELSE 1 END, t.version DESC
+`, screenCode, docFormatCode)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	var draft *models.SignatureTemplate
+	var active *models.SignatureTemplate
+	for rows.Next() {
+		template, err := scanSignatureTemplateWithFile(rows)
+		if err != nil {
+			return nil, nil, err
+		}
+		boxes, err := s.ListSignatureTemplateBoxes(ctx, template.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		template.Boxes = boxes
+		if template.Status == "draft" && draft == nil {
+			copy := template
+			draft = &copy
+		}
+		if template.Status == "active" && active == nil {
+			copy := template
+			active = &copy
+		}
+	}
+	return draft, active, rows.Err()
+}
+
+func (s *Store) FindSignatureTemplateByID(ctx context.Context, id string) (models.SignatureTemplate, error) {
+	template, err := scanSignatureTemplateWithFile(s.pool.QueryRow(ctx, `
+SELECT t.id::text, t.screen_code, t.doc_format_code, t.version, t.status, COALESCE(t.sample_file_id::text, ''),
+       t.revision, COALESCE(t.created_by::text, ''), COALESCE(t.published_by::text, ''),
+       t.created_at, t.updated_at, t.published_at,
+       COALESCE(f.id::text, ''), COALESCE(f.original_name, ''), COALESCE(f.stored_name, ''), COALESCE(f.storage_path, ''),
+       COALESCE(f.content_type, ''), COALESCE(f.size_bytes, 0), COALESCE(f.page_count, 0),
+       COALESCE(f.sha256, ''), COALESCE(f.created_by::text, ''), f.created_at
+FROM signature_templates t
+LEFT JOIN uploaded_files f ON f.id = t.sample_file_id
+WHERE t.id = $1
+`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.SignatureTemplate{}, ErrSignatureTemplateNotFound
+	}
+	if err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	boxes, err := s.ListSignatureTemplateBoxes(ctx, template.ID)
+	if err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	template.Boxes = boxes
+	return template, nil
+}
+
+func (s *Store) UpsertDraftSignatureTemplateSample(ctx context.Context, screenCode, docFormatCode, uploadedFileID, actorUserID string) (models.SignatureTemplate, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var draftID string
+	err = tx.QueryRow(ctx, `
+SELECT id::text
+FROM signature_templates
+WHERE screen_code = $1 AND lower(doc_format_code) = lower($2) AND status = 'draft'
+`, screenCode, docFormatCode).Scan(&draftID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var nextVersion int
+		if err := tx.QueryRow(ctx, `
+SELECT COALESCE(MAX(version), 0) + 1
+FROM signature_templates
+WHERE screen_code = $1 AND lower(doc_format_code) = lower($2)
+`, screenCode, docFormatCode).Scan(&nextVersion); err != nil {
+			return models.SignatureTemplate{}, err
+		}
+		if err := tx.QueryRow(ctx, `
+INSERT INTO signature_templates (screen_code, doc_format_code, version, status, sample_file_id, created_by)
+VALUES ($1, $2, $3, 'draft', $4, NULLIF($5, '')::uuid)
+RETURNING id::text
+`, screenCode, docFormatCode, nextVersion, uploadedFileID, actorUserID).Scan(&draftID); err != nil {
+			return models.SignatureTemplate{}, err
+		}
+	} else if err != nil {
+		return models.SignatureTemplate{}, err
+	} else {
+		if _, err := tx.Exec(ctx, `DELETE FROM signature_template_boxes WHERE template_id = $1`, draftID); err != nil {
+			return models.SignatureTemplate{}, err
+		}
+		if _, err := tx.Exec(ctx, `
+UPDATE signature_templates
+SET sample_file_id = $1, revision = revision + 1, updated_at = now()
+WHERE id = $2 AND status = 'draft'
+`, uploadedFileID, draftID); err != nil {
+			return models.SignatureTemplate{}, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	return s.FindSignatureTemplateByID(ctx, draftID)
+}
+
+func (s *Store) ListSignatureTemplateBoxes(ctx context.Context, templateID string) ([]models.SignatureTemplateBox, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id::text, template_id::text, position_code, signer_slot, signer_type, signer_user, page_no,
+       x_ratio, y_ratio, width_ratio, height_ratio, label, created_at
+FROM signature_template_boxes
+WHERE template_id = $1
+ORDER BY page_no, lower(position_code), signer_slot
+`, templateID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	boxes := []models.SignatureTemplateBox{}
+	for rows.Next() {
+		box, err := scanSignatureTemplateBox(rows)
+		if err != nil {
+			return nil, err
+		}
+		boxes = append(boxes, box)
+	}
+	return boxes, rows.Err()
+}
+
+func (s *Store) ReplaceSignatureTemplateBoxes(ctx context.Context, templateID string, revision int, boxes []models.SignatureTemplateBoxRequest) (models.SignatureTemplate, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	var currentRevision int
+	if err := tx.QueryRow(ctx, `SELECT status, revision FROM signature_templates WHERE id = $1`, templateID).Scan(&status, &currentRevision); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.SignatureTemplate{}, ErrSignatureTemplateNotFound
+		}
+		return models.SignatureTemplate{}, err
+	}
+	if status != "draft" {
+		return models.SignatureTemplate{}, ErrSignatureTemplateNotDraft
+	}
+	if currentRevision != revision {
+		return models.SignatureTemplate{}, ErrSignatureRevisionConflict
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM signature_template_boxes WHERE template_id = $1`, templateID); err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	for _, box := range boxes {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO signature_template_boxes (
+    template_id, position_code, signer_slot, signer_type, signer_user, page_no,
+    x_ratio, y_ratio, width_ratio, height_ratio, label
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+`, templateID, box.PositionCode, box.SignerSlot, box.SignerType, box.SignerUser, box.PageNo, box.XRatio, box.YRatio, box.WidthRatio, box.HeightRatio, box.Label); err != nil {
+			return models.SignatureTemplate{}, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE signature_templates
+SET revision = revision + 1, updated_at = now()
+WHERE id = $1
+`, templateID); err != nil {
+		return models.SignatureTemplate{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	return s.FindSignatureTemplateByID(ctx, templateID)
+}
+
+func (s *Store) PublishSignatureTemplate(ctx context.Context, templateID, actorUserID string) (models.SignatureTemplate, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var screenCode, docFormatCode, status string
+	if err := tx.QueryRow(ctx, `
+SELECT screen_code, doc_format_code, status
+FROM signature_templates
+WHERE id = $1
+`, templateID).Scan(&screenCode, &docFormatCode, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.SignatureTemplate{}, ErrSignatureTemplateNotFound
+		}
+		return models.SignatureTemplate{}, err
+	}
+	if status != "draft" {
+		return models.SignatureTemplate{}, ErrSignatureTemplateNotDraft
+	}
+
+	if _, err := tx.Exec(ctx, `
+UPDATE signature_templates
+SET status = 'archived', updated_at = now()
+WHERE screen_code = $1
+  AND lower(doc_format_code) = lower($2)
+  AND status = 'active'
+`, screenCode, docFormatCode); err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE signature_templates
+SET status = 'active',
+    revision = revision + 1,
+    published_by = NULLIF($2, '')::uuid,
+    published_at = now(),
+    updated_at = now()
+WHERE id = $1
+`, templateID, actorUserID); err != nil {
+		return models.SignatureTemplate{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	return s.FindSignatureTemplateByID(ctx, templateID)
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -368,4 +701,97 @@ func scanDocumentConfigStep(row rowScanner) (models.DocumentConfigStep, error) {
 		&step.UpdatedAt,
 	)
 	return step, err
+}
+
+func scanUploadedFile(row rowScanner) (models.UploadedFile, error) {
+	var file models.UploadedFile
+	err := row.Scan(
+		&file.ID,
+		&file.OriginalName,
+		&file.StoredName,
+		&file.StoragePath,
+		&file.ContentType,
+		&file.SizeBytes,
+		&file.PageCount,
+		&file.SHA256,
+		&file.CreatedBy,
+		&file.CreatedAt,
+	)
+	return file, err
+}
+
+func scanSignatureTemplateWithFile(row rowScanner) (models.SignatureTemplate, error) {
+	var template models.SignatureTemplate
+	var publishedAt sql.NullTime
+	var fileID, fileOriginalName, fileStoredName, fileStoragePath, fileContentType, fileSHA256, fileCreatedBy string
+	var fileSize int64
+	var filePageCount int
+	var fileCreatedAt sql.NullTime
+	err := row.Scan(
+		&template.ID,
+		&template.ScreenCode,
+		&template.DocFormatCode,
+		&template.Version,
+		&template.Status,
+		&template.SampleFileID,
+		&template.Revision,
+		&template.CreatedBy,
+		&template.PublishedBy,
+		&template.CreatedAt,
+		&template.UpdatedAt,
+		&publishedAt,
+		&fileID,
+		&fileOriginalName,
+		&fileStoredName,
+		&fileStoragePath,
+		&fileContentType,
+		&fileSize,
+		&filePageCount,
+		&fileSHA256,
+		&fileCreatedBy,
+		&fileCreatedAt,
+	)
+	if err != nil {
+		return template, err
+	}
+	if publishedAt.Valid {
+		template.PublishedAt = &publishedAt.Time
+	}
+	if fileID != "" {
+		template.SampleFile = &models.UploadedFile{
+			ID:           fileID,
+			OriginalName: fileOriginalName,
+			StoredName:   fileStoredName,
+			StoragePath:  fileStoragePath,
+			ContentType:  fileContentType,
+			SizeBytes:    fileSize,
+			PageCount:    filePageCount,
+			SHA256:       fileSHA256,
+			CreatedBy:    fileCreatedBy,
+		}
+		if fileCreatedAt.Valid {
+			template.SampleFile.CreatedAt = fileCreatedAt.Time
+		}
+	}
+	return template, nil
+}
+
+func scanSignatureTemplateBox(row rowScanner) (models.SignatureTemplateBox, error) {
+	var box models.SignatureTemplateBox
+	err := row.Scan(
+		&box.ID,
+		&box.TemplateID,
+		&box.PositionCode,
+		&box.SignerSlot,
+		&box.SignerType,
+		&box.SignerUser,
+		&box.PageNo,
+		&box.XRatio,
+		&box.YRatio,
+		&box.WidthRatio,
+		&box.HeightRatio,
+		&box.Label,
+		&box.CreatedAt,
+	)
+	return box, err
 }
