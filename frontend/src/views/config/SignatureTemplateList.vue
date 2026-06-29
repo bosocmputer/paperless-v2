@@ -140,50 +140,84 @@ function sameCode(left, right) {
 
         <Message v-if="error" severity="error" class="mb-4">{{ error }}</Message>
 
-        <DataTable :value="rows" :loading="loading" dataKey="docFormatCode" responsiveLayout="scroll" stripedRows paginator :rows="10">
-            <template #empty>
-                <div class="py-6 text-center text-muted-color">
-                    ยังไม่มี Config เอกสาร ให้ไปเพิ่ม Position ก่อน
-                    <Button label="ไปที่ Config เอกสาร" link class="ml-2" @click="openDocumentConfig" />
+        <div v-if="loading" class="py-6 text-muted-color">กำลังโหลดรายการ Template</div>
+
+        <div v-else-if="rows.length === 0" class="py-6 text-center text-muted-color">
+            ยังไม่มี Config เอกสาร ให้ไปเพิ่ม Position ก่อน
+            <Button label="ไปที่ Config เอกสาร" link class="ml-2" @click="openDocumentConfig" />
+        </div>
+
+        <div v-else class="template-list">
+            <div v-for="row in rows" :key="row.docFormatCode" class="template-row">
+                <div>
+                    <div class="text-sm text-muted-color">erp_doc_format.code</div>
+                    <div class="font-semibold text-xl text-surface-900 dark:text-surface-0">{{ row.docFormatCode }}</div>
+                    <div class="text-sm text-muted-color">{{ formatName(row) }}</div>
                 </div>
-            </template>
 
-            <Column field="docFormatCode" header="erp_doc_format.code" sortable style="min-width: 14rem">
-                <template #body="{ data }">
-                    <div class="font-medium text-surface-900 dark:text-surface-0">{{ data.docFormatCode }}</div>
-                    <div class="text-sm text-muted-color">{{ formatName(data) }}</div>
-                </template>
-            </Column>
+                <div>
+                    <div class="text-sm text-muted-color">Position</div>
+                    <div class="font-medium">{{ row.positions.length }} positions</div>
+                    <div class="text-sm text-muted-color">{{ row.positions.map((item) => `${item.positionCode}:${item.positionName}`).join(', ') }}</div>
+                </div>
 
-            <Column header="Position" style="min-width: 13rem">
-                <template #body="{ data }">
-                    <div class="font-medium">{{ data.positions.length }} positions</div>
-                    <div class="text-sm text-muted-color">
-                        {{ data.positions.map((item) => `${item.positionCode}:${item.positionName}`).join(', ') }}
-                    </div>
-                </template>
-            </Column>
-
-            <Column header="เงื่อนไข" style="min-width: 14rem">
-                <template #body="{ data }">
+                <div>
+                    <div class="text-sm text-muted-color mb-2">เงื่อนไข</div>
                     <div class="flex flex-wrap gap-2">
-                        <Tag v-for="condition in conditionSummary(data)" :key="condition" :value="`${condition} - ${conditionLabel(condition)}`" :severity="conditionSeverity(condition)" />
+                        <Tag v-for="condition in conditionSummary(row)" :key="condition" :value="`${condition} - ${conditionLabel(condition)}`" :severity="conditionSeverity(condition)" />
                     </div>
-                </template>
-            </Column>
+                </div>
 
-            <Column header="Template" style="min-width: 12rem">
-                <template #body="{ data }">
-                    <Tag :value="statusLabel(data)" :severity="statusSeverity(data)" />
-                    <div class="text-sm text-muted-color mt-2">แก้ไขล่าสุด {{ lastUpdated(data) }}</div>
-                </template>
-            </Column>
+                <div>
+                    <div class="text-sm text-muted-color mb-2">Template</div>
+                    <Tag :value="statusLabel(row)" :severity="statusSeverity(row)" />
+                    <div class="text-sm text-muted-color mt-2">แก้ไขล่าสุด {{ lastUpdated(row) }}</div>
+                </div>
 
-            <Column header="จัดการ" style="width: 13rem">
-                <template #body="{ data }">
-                    <Button label="เปิด Designer" icon="pi pi-pencil" severity="info" @click="openDesigner(data.docFormatCode)" />
-                </template>
-            </Column>
-        </DataTable>
+                <div class="template-actions">
+                    <Button label="เปิด Designer" icon="pi pi-pencil" severity="info" @click="openDesigner(row.docFormatCode)" />
+                </div>
+            </div>
+        </div>
     </div>
 </template>
+
+<style scoped>
+.template-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.template-row {
+    display: grid;
+    grid-template-columns: minmax(11rem, 1fr) minmax(16rem, 1.3fr) minmax(12rem, 1fr) minmax(12rem, 1fr) auto;
+    gap: 1rem;
+    align-items: center;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 1rem;
+    background: var(--surface-card);
+}
+
+.template-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+@media (max-width: 1200px) {
+    .template-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .template-actions {
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 640px) {
+    .template-row {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
