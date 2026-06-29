@@ -95,6 +95,7 @@ async function loadPdf() {
         pdfDoc.value = await task.promise;
         pageCount.value = pdfDoc.value.numPages;
         currentPage.value = 1;
+        pdfLoading.value = false;
         await nextTick();
         await fitWidth();
     } catch (err) {
