@@ -18,7 +18,6 @@ const docFormatCode = computed(() => String(route.params.docFormatCode || '').tr
 const loading = ref(false);
 const uploading = ref(false);
 const saving = ref(false);
-const publishing = ref(false);
 const rendering = ref(false);
 const error = ref('');
 const docFormat = ref(null);
@@ -39,9 +38,8 @@ const zoom = ref(1.2);
 const pageSize = ref({ width: 0, height: 0 });
 const maxTemplatePages = ref(20);
 
-const template = computed(() => draft.value || active.value);
-const isDraft = computed(() => template.value?.status === 'draft');
-const statusSeverity = computed(() => (template.value?.status === 'active' ? 'success' : template.value?.status === 'draft' ? 'warn' : 'secondary'));
+const template = computed(() => active.value || draft.value);
+const canEdit = computed(() => !!template.value && template.value.status !== 'archived');
 const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `หน้า ${index + 1}`, value: index + 1 })));
 const selectedStep = computed(() => configs.value.find((item) => item.positionCode === selectedPositionCode.value));
 const selectedBox = computed(() => boxes.value.find((box) => box.clientKey === selectedBoxKey.value) || null);
@@ -55,8 +53,7 @@ const selectedBoxSignerTypeLabel = computed(() => {
 });
 const currentPageBoxes = computed(() => boxes.value.filter((box) => Number(box.pageNo) === Number(currentPage.value)));
 const validationIssues = computed(() => validateBoxes());
-const canSave = computed(() => isDraft.value && !saving.value && !!template.value);
-const canPublish = computed(() => isDraft.value && validationIssues.value.length === 0 && !publishing.value);
+const canSave = computed(() => canEdit.value && !saving.value && !!template.value);
 const storedPageCount = computed(() => Number(template.value?.sampleFile?.pageCount || pageCount.value || 0));
 
 onMounted(loadState);
@@ -75,7 +72,7 @@ async function loadState() {
         draft.value = result.draft;
         active.value = result.active;
         maxTemplatePages.value = result.maxTemplatePages || 20;
-        boxes.value = withClientKeys((draft.value || active.value)?.boxes || []);
+        boxes.value = withClientKeys((active.value || draft.value)?.boxes || []);
         selectedPositionCode.value = configs.value[0]?.positionCode || '';
         selectedBoxKey.value = '';
         dirty.value = false;
@@ -141,7 +138,7 @@ async function handleFileChange(event) {
     if (!file) return;
     if (boxes.value.length > 0) {
         confirm.require({
-            message: 'อัปโหลด PDF ใหม่จะสร้าง Draft ใหม่และล้างกรอบเดิมทั้งหมด',
+            message: 'อัปโหลด PDF ใหม่จะล้างกรอบเดิมทั้งหมด และใช้ไฟล์ใหม่นี้แทนของเก่า',
             header: 'แทนที่ PDF ตัวอย่าง',
             icon: 'pi pi-exclamation-triangle',
             rejectProps: {
@@ -150,7 +147,7 @@ async function handleFileChange(event) {
                 outlined: true
             },
             acceptProps: {
-                label: 'แทนที่ PDF และล้างกรอบเดิม',
+                label: 'แทนที่ PDF',
                 severity: 'danger'
             },
             accept: () => uploadSamplePDF(file)
@@ -166,8 +163,8 @@ async function uploadSamplePDF(file) {
     error.value = '';
     try {
         const result = await api.uploadSignatureTemplateSamplePDF(docFormatCode.value, file);
-        draft.value = result.template;
-        active.value = null;
+        active.value = result.template;
+        draft.value = null;
         boxes.value = withClientKeys(result.template?.boxes || []);
         dirty.value = false;
         currentPage.value = 1;
@@ -182,8 +179,8 @@ async function uploadSamplePDF(file) {
 }
 
 function addBox(step) {
-    if (!isDraft.value) {
-        toast.add({ severity: 'warn', summary: 'ต้องอัปโหลด PDF เพื่อสร้าง Draft ก่อน', life: 3500 });
+    if (!canEdit.value || !template.value?.sampleFileId) {
+        toast.add({ severity: 'warn', summary: 'ต้องอัปโหลด PDF ตัวอย่างก่อน', life: 3500 });
         return;
     }
     const existing = boxes.value.filter((box) => box.positionCode === step.positionCode);
@@ -255,13 +252,13 @@ function selectBox(box) {
 }
 
 function updateBoxLabel(box, value) {
-    if (!isDraft.value || !box) return;
+    if (!canEdit.value || !box) return;
     box.label = String(value || '').slice(0, 80);
     dirty.value = true;
 }
 
 function updateBoxPage(box, value) {
-    if (!isDraft.value || !box) return;
+    if (!canEdit.value || !box) return;
     const pageNo = Number(value);
     if (!Number.isFinite(pageNo) || pageNo < 1 || pageNo > Math.max(pageCount.value, 1)) return;
     box.pageNo = pageNo;
@@ -270,7 +267,7 @@ function updateBoxPage(box, value) {
 }
 
 function updateBoxSignerUser(box, value) {
-    if (!isDraft.value || !box || !selectedBoxStep.value || Number(selectedBoxStep.value.conditionType) !== 2) return;
+    if (!canEdit.value || !box || !selectedBoxStep.value || Number(selectedBoxStep.value.conditionType) !== 2) return;
     const user = String(value || '').trim();
     const option = selectedBoxSignerOptions.value.find((item) => item.value === user);
     box.signerType = 'internal';
@@ -286,7 +283,7 @@ function ratioPercent(box, field) {
 }
 
 function updateBoxRatio(box, field, value) {
-    if (!isDraft.value || !box) return;
+    if (!canEdit.value || !box) return;
     const percent = Number(value);
     if (!Number.isFinite(percent)) return;
     const ratio = percent / 100;
@@ -315,7 +312,7 @@ function boxStyle(box) {
 
 function startBoxPointer(event, box, mode) {
     selectBox(box);
-    if (!isDraft.value || !overlayRef.value) return;
+    if (!canEdit.value || !overlayRef.value) return;
     event.preventDefault();
     event.stopPropagation();
     const rect = overlayRef.value.getBoundingClientRect();
@@ -356,10 +353,10 @@ function startBoxPointer(event, box, mode) {
     window.addEventListener('pointerup', onUp);
 }
 
-async function saveDraft(showToast = true) {
+async function saveTemplate(showToast = true) {
     if (!template.value?.id) return null;
-    if (!isDraft.value) {
-        toast.add({ severity: 'warn', summary: 'Active template แก้ไม่ได้', detail: 'อัปโหลด PDF เพื่อสร้าง draft version ใหม่ก่อน', life: 4000 });
+    if (!canEdit.value) {
+        toast.add({ severity: 'warn', summary: 'Template นี้แก้ไขไม่ได้', life: 4000 });
         return null;
     }
 
@@ -382,10 +379,11 @@ async function saveDraft(showToast = true) {
             }))
         };
         const result = await api.saveSignatureTemplateBoxes(template.value.id, payload);
-        draft.value = result.template;
+        active.value = result.template;
+        draft.value = null;
         boxes.value = withClientKeys(result.template?.boxes || []);
         dirty.value = false;
-        if (showToast) toast.add({ severity: 'success', summary: 'บันทึก Draft แล้ว', life: 2500 });
+        if (showToast) toast.add({ severity: 'success', summary: 'บันทึกแล้ว', life: 2500 });
         return result.template;
     } catch (err) {
         const detail = err.status === 409 ? 'template ถูกแก้จากที่อื่นแล้ว กรุณา refresh' : err.message;
@@ -394,30 +392,6 @@ async function saveDraft(showToast = true) {
         return null;
     } finally {
         saving.value = false;
-    }
-}
-
-async function publishTemplate() {
-    if (validationIssues.value.length > 0) return;
-    if (dirty.value) {
-        const saved = await saveDraft(false);
-        if (!saved) return;
-    }
-
-    publishing.value = true;
-    error.value = '';
-    try {
-        const result = await api.publishSignatureTemplate(template.value.id);
-        active.value = result.template;
-        draft.value = null;
-        boxes.value = withClientKeys(result.template?.boxes || []);
-        dirty.value = false;
-        toast.add({ severity: 'success', summary: 'Publish Template แล้ว', life: 3000 });
-    } catch (err) {
-        error.value = err.message;
-        toast.add({ severity: 'error', summary: 'Publish ไม่สำเร็จ', detail: err.payload?.issues?.[0]?.message || err.message, life: 5000 });
-    } finally {
-        publishing.value = false;
     }
 }
 
@@ -528,7 +502,6 @@ function formatDate(value) {
                         </div>
                     </div>
                     <div class="flex flex-wrap gap-2">
-                        <Tag v-if="template" :value="`${template.status} v${template.version}`" :severity="statusSeverity" />
                         <Tag v-if="dirty" value="ยังไม่ได้บันทึก" severity="warn" />
                         <span class="text-sm text-muted-color">แก้ไขล่าสุด {{ formatDate(template?.updatedAt) }}</span>
                     </div>
@@ -537,8 +510,7 @@ function formatDate(value) {
                 <div class="flex flex-wrap gap-2">
                     <input ref="fileInput" type="file" accept="application/pdf,.pdf" class="hidden" @change="handleFileChange" />
                     <Button label="อัปโหลด PDF" icon="pi pi-upload" severity="secondary" outlined :loading="uploading" @click="triggerUpload" />
-                    <Button label="บันทึก Draft" icon="pi pi-save" :disabled="!canSave" :loading="saving" @click="saveDraft()" />
-                    <Button label="Publish" icon="pi pi-check" severity="success" :disabled="!canPublish" :loading="publishing" @click="publishTemplate" />
+                    <Button label="บันทึก" icon="pi pi-save" :disabled="!canSave" :loading="saving" @click="saveTemplate()" />
                 </div>
             </div>
         </div>
@@ -571,15 +543,15 @@ function formatDate(value) {
                                 v-for="box in currentPageBoxes"
                                 :key="box.clientKey"
                                 class="signature-box"
-                                :class="{ selected: selectedBoxKey === box.clientKey, readonly: !isDraft }"
+                                :class="{ selected: selectedBoxKey === box.clientKey, readonly: !canEdit }"
                                 :style="boxStyle(box)"
                                 @pointerdown="startBoxPointer($event, box, 'move')"
                             >
                                 <div class="signature-box-label">{{ box.label || box.signerUser || box.positionCode }}</div>
-                                <button v-if="isDraft" class="signature-box-delete" type="button" @click.stop="deleteBox(box)">
+                                <button v-if="canEdit" class="signature-box-delete" type="button" @click.stop="deleteBox(box)">
                                     <i class="pi pi-times"></i>
                                 </button>
-                                <span v-if="isDraft" class="signature-box-handle" @pointerdown="startBoxPointer($event, box, 'resize')"></span>
+                                <span v-if="canEdit" class="signature-box-handle" @pointerdown="startBoxPointer($event, box, 'resize')"></span>
                             </div>
                         </div>
                     </div>
@@ -598,15 +570,14 @@ function formatDate(value) {
                                 </div>
                                 <Tag :value="conditionLabel(step.conditionType)" :severity="conditionSeverity(step.conditionType)" />
                             </div>
-                            <Button label="เพิ่มกรอบ" icon="pi pi-plus" size="small" class="mt-3" :disabled="!isDraft || !template?.sampleFileId" @click.stop="addBox(step)" />
+                            <Button label="เพิ่มกรอบ" icon="pi pi-plus" size="small" class="mt-3" :disabled="!canEdit || !template?.sampleFileId" @click.stop="addBox(step)" />
                         </div>
                     </div>
                 </div>
 
                 <div class="card">
                     <div class="font-semibold text-lg mb-3">Validation</div>
-                    <Message v-if="!isDraft && active" severity="info">Template นี้ Active แล้ว ถ้าต้องการแก้ไขให้อัปโหลด PDF เพื่อสร้าง Draft version ใหม่</Message>
-                    <Message v-if="validationIssues.length === 0" severity="success">กรอบลายเซ็นครบตามเงื่อนไข สามารถ Publish ได้</Message>
+                    <Message v-if="validationIssues.length === 0" severity="success">กรอบลายเซ็นครบตามเงื่อนไข</Message>
                     <div v-else class="flex flex-col gap-2">
                         <Message v-for="issue in validationIssues" :key="`${issue.code}-${issue.positionCode}-${issue.message}`" severity="warn">
                             {{ issue.message }}
@@ -636,15 +607,13 @@ function formatDate(value) {
                     <div class="font-semibold text-lg mb-3">รายละเอียดกรอบที่เลือก</div>
                     <div v-if="!selectedBox" class="text-muted-color">เลือกกรอบจากหน้า PDF หรือรายการด้านบนเพื่อดูรายละเอียด</div>
                     <div v-else class="flex flex-col gap-4">
-                        <Message v-if="!isDraft" severity="info">Active template ดูได้อย่างเดียว ต้องอัปโหลด PDF เพื่อสร้าง Draft ก่อนแก้ไข</Message>
-
                         <div class="flex flex-col gap-2 min-w-0">
                             <label :for="`box-label-${selectedBox.clientKey}`" class="font-medium">ข้อความบนกรอบ</label>
                             <InputText
                                 :id="`box-label-${selectedBox.clientKey}`"
                                 :modelValue="selectedBox.label"
                                 maxlength="80"
-                                :disabled="!isDraft"
+                                :disabled="!canEdit"
                                 @update:modelValue="updateBoxLabel(selectedBox, $event)"
                             />
                             <small class="text-muted-color">ใช้แสดงบนกรอบและช่วยตรวจตอนวางตำแหน่ง</small>
@@ -659,7 +628,7 @@ function formatDate(value) {
                                     :options="pageOptions"
                                     optionLabel="label"
                                     optionValue="value"
-                                    :disabled="!isDraft || pageOptions.length <= 1"
+                                    :disabled="!canEdit || pageOptions.length <= 1"
                                     @update:modelValue="updateBoxPage(selectedBox, $event)"
                                 />
                             </div>
@@ -677,7 +646,7 @@ function formatDate(value) {
                                 :options="selectedBoxSignerOptions"
                                 optionLabel="label"
                                 optionValue="value"
-                                :disabled="!isDraft"
+                                :disabled="!canEdit"
                                 @update:modelValue="updateBoxSignerUser(selectedBox, $event)"
                             />
                             <small class="text-muted-color">Condition “ทุกคน” ต้องมี user ไม่ซ้ำกันใน position เดียวกัน</small>
@@ -694,7 +663,7 @@ function formatDate(value) {
                                     min="0"
                                     max="100"
                                     step="0.01"
-                                    :disabled="!isDraft"
+                                    :disabled="!canEdit"
                                     @input="updateBoxRatio(selectedBox, 'xRatio', $event.target.value)"
                                 />
                             </div>
@@ -708,7 +677,7 @@ function formatDate(value) {
                                     min="0"
                                     max="100"
                                     step="0.01"
-                                    :disabled="!isDraft"
+                                    :disabled="!canEdit"
                                     @input="updateBoxRatio(selectedBox, 'yRatio', $event.target.value)"
                                 />
                             </div>
@@ -722,7 +691,7 @@ function formatDate(value) {
                                     min="3"
                                     max="100"
                                     step="0.01"
-                                    :disabled="!isDraft"
+                                    :disabled="!canEdit"
                                     @input="updateBoxRatio(selectedBox, 'widthRatio', $event.target.value)"
                                 />
                             </div>
@@ -736,7 +705,7 @@ function formatDate(value) {
                                     min="3"
                                     max="100"
                                     step="0.01"
-                                    :disabled="!isDraft"
+                                    :disabled="!canEdit"
                                     @input="updateBoxRatio(selectedBox, 'heightRatio', $event.target.value)"
                                 />
                             </div>

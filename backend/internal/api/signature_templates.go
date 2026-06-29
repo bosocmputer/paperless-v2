@@ -149,7 +149,7 @@ func (s *Server) uploadSignatureTemplateSamplePDF(w http.ResponseWriter, r *http
 		return
 	}
 
-	template, err := s.store.UpsertDraftSignatureTemplateSample(r.Context(), screenCode, format.Code, uploaded.ID, actor.ID)
+	template, err := s.store.UpsertActiveSignatureTemplateSample(r.Context(), screenCode, format.Code, uploaded.ID, actor.ID)
 	if err != nil {
 		s.logger.Error("upsert signature template sample failed", "error", err, "docFormatCode", format.Code)
 		writeError(w, http.StatusInternalServerError, "signature_template_sample_failed", "Cannot attach PDF to template right now.")
@@ -213,8 +213,8 @@ func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusNotFound, "signature_template_not_found", "Signature template was not found.")
 		return
 	}
-	if errors.Is(err, store.ErrSignatureTemplateNotDraft) {
-		writeError(w, http.StatusBadRequest, "signature_template_not_draft", "Only draft templates can be edited.")
+	if errors.Is(err, store.ErrSignatureTemplateArchived) {
+		writeError(w, http.StatusBadRequest, "signature_template_archived", "Archived templates cannot be edited.")
 		return
 	}
 	if errors.Is(err, store.ErrSignatureRevisionConflict) {

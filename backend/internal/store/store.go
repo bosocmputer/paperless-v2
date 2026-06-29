@@ -25,6 +25,7 @@ var (
 	ErrSignatureTemplateNotFound = errors.New("signature template not found")
 	ErrSignatureRevisionConflict = errors.New("signature template revision conflict")
 	ErrSignatureTemplateNotDraft = errors.New("signature template is not draft")
+	ErrSignatureTemplateArchived = errors.New("signature template is archived")
 )
 
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
@@ -493,54 +494,86 @@ WHERE t.id = $1
 	return template, nil
 }
 
-func (s *Store) UpsertDraftSignatureTemplateSample(ctx context.Context, screenCode, docFormatCode, uploadedFileID, actorUserID string) (models.SignatureTemplate, error) {
+func (s *Store) UpsertActiveSignatureTemplateSample(ctx context.Context, screenCode, docFormatCode, uploadedFileID, actorUserID string) (models.SignatureTemplate, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return models.SignatureTemplate{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var draftID string
+	var templateID string
 	err = tx.QueryRow(ctx, `
 SELECT id::text
 FROM signature_templates
-WHERE screen_code = $1 AND lower(doc_format_code) = lower($2) AND status = 'draft'
-`, screenCode, docFormatCode).Scan(&draftID)
+WHERE screen_code = $1 AND lower(doc_format_code) = lower($2) AND status = 'active'
+`, screenCode, docFormatCode).Scan(&templateID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		var nextVersion int
 		if err := tx.QueryRow(ctx, `
-SELECT COALESCE(MAX(version), 0) + 1
-FROM signature_templates
-WHERE screen_code = $1 AND lower(doc_format_code) = lower($2)
-`, screenCode, docFormatCode).Scan(&nextVersion); err != nil {
-			return models.SignatureTemplate{}, err
-		}
-		if err := tx.QueryRow(ctx, `
-INSERT INTO signature_templates (screen_code, doc_format_code, version, status, sample_file_id, created_by)
-VALUES ($1, $2, $3, 'draft', $4, NULLIF($5, '')::uuid)
-RETURNING id::text
-`, screenCode, docFormatCode, nextVersion, uploadedFileID, actorUserID).Scan(&draftID); err != nil {
+WITH existing_draft AS (
+    SELECT id
+    FROM signature_templates
+    WHERE screen_code = $1 AND lower(doc_format_code) = lower($2) AND status = 'draft'
+    ORDER BY version DESC
+    LIMIT 1
+),
+updated_draft AS (
+    UPDATE signature_templates
+    SET status = 'active',
+        sample_file_id = $3,
+        revision = revision + 1,
+        published_by = NULLIF($4, '')::uuid,
+        published_at = now(),
+        updated_at = now()
+    WHERE id = (SELECT id FROM existing_draft)
+    RETURNING id::text
+),
+created AS (
+    INSERT INTO signature_templates (screen_code, doc_format_code, version, status, sample_file_id, created_by, published_by, published_at)
+    SELECT $1, $2, 1, 'active', $3, NULLIF($4, '')::uuid, NULLIF($4, '')::uuid, now()
+    WHERE NOT EXISTS (SELECT 1 FROM updated_draft)
+    RETURNING id::text
+)
+SELECT id FROM updated_draft
+UNION ALL
+SELECT id FROM created
+LIMIT 1
+`, screenCode, docFormatCode, uploadedFileID, actorUserID).Scan(&templateID); err != nil {
 			return models.SignatureTemplate{}, err
 		}
 	} else if err != nil {
 		return models.SignatureTemplate{}, err
 	} else {
-		if _, err := tx.Exec(ctx, `DELETE FROM signature_template_boxes WHERE template_id = $1`, draftID); err != nil {
-			return models.SignatureTemplate{}, err
-		}
 		if _, err := tx.Exec(ctx, `
 UPDATE signature_templates
-SET sample_file_id = $1, revision = revision + 1, updated_at = now()
-WHERE id = $2 AND status = 'draft'
-`, uploadedFileID, draftID); err != nil {
+SET sample_file_id = $1,
+    revision = revision + 1,
+    published_by = NULLIF($2, '')::uuid,
+    published_at = now(),
+    updated_at = now()
+WHERE id = $3 AND status = 'active'
+`, uploadedFileID, actorUserID, templateID); err != nil {
 			return models.SignatureTemplate{}, err
 		}
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM signature_template_boxes WHERE template_id = $1`, templateID); err != nil {
+		return models.SignatureTemplate{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+DELETE FROM signature_templates
+WHERE screen_code = $1
+  AND lower(doc_format_code) = lower($2)
+  AND status = 'draft'
+  AND id <> $3
+`, screenCode, docFormatCode, templateID); err != nil {
+		return models.SignatureTemplate{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return models.SignatureTemplate{}, err
 	}
-	return s.FindSignatureTemplateByID(ctx, draftID)
+	return s.FindSignatureTemplateByID(ctx, templateID)
 }
 
 func (s *Store) ListSignatureTemplateBoxes(ctx context.Context, templateID string) ([]models.SignatureTemplateBox, error) {
@@ -582,8 +615,8 @@ func (s *Store) ReplaceSignatureTemplateBoxes(ctx context.Context, templateID st
 		}
 		return models.SignatureTemplate{}, err
 	}
-	if status != "draft" {
-		return models.SignatureTemplate{}, ErrSignatureTemplateNotDraft
+	if status == "archived" {
+		return models.SignatureTemplate{}, ErrSignatureTemplateArchived
 	}
 	if currentRevision != revision {
 		return models.SignatureTemplate{}, ErrSignatureRevisionConflict
