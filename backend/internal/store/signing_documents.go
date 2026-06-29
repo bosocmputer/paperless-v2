@@ -282,6 +282,48 @@ WHERE id = $1
 	return s.AddSigningEvent(ctx, documentID, "", "", action, message, "", "", metadata)
 }
 
+func (s *Store) UpdateSigningDocumentPDF(ctx context.Context, documentID string, file models.UploadedFile, final bool) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var currentVersion int
+	if err := tx.QueryRow(ctx, `SELECT current_version FROM signing_documents WHERE id = $1 FOR UPDATE`, documentID).Scan(&currentVersion); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrSigningDocumentNotFound
+		}
+		return err
+	}
+	nextVersion := currentVersion + 1
+	if _, err := tx.Exec(ctx, `
+UPDATE signing_documents
+SET current_file_id = $2,
+    final_file_id = CASE WHEN $3 THEN $2 ELSE final_file_id END,
+    current_version = $4,
+    updated_at = now()
+WHERE id = $1
+`, documentID, file.ID, final, nextVersion); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO signing_document_versions (document_id, version_no, file_id, kind)
+VALUES ($1, $2, $3, 'current')
+`, documentID, nextVersion, file.ID); err != nil {
+		return err
+	}
+	if final {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO signing_document_versions (document_id, version_no, file_id, kind)
+VALUES ($1, $2, $3, 'final')
+`, documentID, nextVersion, file.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) AddSigningEvent(ctx context.Context, documentID, actorUserID, actorLabel, action, message, ipAddress, userAgent string, metadata map[string]any) error {
 	return insertSigningEvent(ctx, s.pool, documentID, actorUserID, actorLabel, action, message, ipAddress, userAgent, metadata)
 }

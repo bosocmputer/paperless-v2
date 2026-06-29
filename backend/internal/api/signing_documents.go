@@ -371,6 +371,12 @@ func (s *Server) writeTaskMutationResult(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot sign document right now.")
 		return
 	}
+	if err := s.refreshStampedPDF(r.Context(), result.DocumentID, result.Completed); err != nil {
+		s.logger.Error("stamp signing document pdf failed", "error", err, "documentID", result.DocumentID)
+		_ = s.store.AddSigningEvent(context.Background(), result.DocumentID, "", "", "pdf_stamp_failed", "สร้าง PDF พร้อมลายเซ็นไม่สำเร็จ", clientIP(r), r.UserAgent(), map[string]any{
+			"error": err.Error(),
+		})
+	}
 	if result.Completed {
 		s.lockCompletedDocument(r.Context(), result.DocumentID, "")
 	}
