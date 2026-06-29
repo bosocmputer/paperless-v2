@@ -38,6 +38,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("DELETE /api/users/{id}", s.requireAdmin(http.HandlerFunc(s.deactivateUser)))
 	mux.Handle("GET /api/sml/screen-codes", s.requireAdmin(http.HandlerFunc(s.listSMLScreenCodes)))
 	mux.Handle("GET /api/sml/doc-formats", s.requireAdmin(http.HandlerFunc(s.listSMLDocFormats)))
+	mux.Handle("GET /api/sml/doc-format", s.requireAdmin(http.HandlerFunc(s.getSMLDocFormatByCode)))
 	mux.Handle("GET /api/document-configs", s.requireAdmin(http.HandlerFunc(s.listDocumentConfigSteps)))
 	mux.Handle("POST /api/document-configs", s.requireAdmin(http.HandlerFunc(s.createDocumentConfigStep)))
 	mux.Handle("PUT /api/document-configs/{id}", s.requireAdmin(http.HandlerFunc(s.updateDocumentConfigStep)))

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -38,12 +39,13 @@ func (s *Server) createDocumentConfigStep(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_document_config", message)
 		return
 	}
-	if err := s.ensureSMLDocFormatExists(r.Context(), req.ScreenCode, req.DocFormatCode); err != nil {
+	resolvedReq, err := s.resolveDocumentConfigStep(r.Context(), req)
+	if err != nil {
 		s.writeDocFormatValidationError(w, err)
 		return
 	}
 
-	step, err := s.store.CreateDocumentConfigStep(r.Context(), req)
+	step, err := s.store.CreateDocumentConfigStep(r.Context(), resolvedReq)
 	if errors.Is(err, store.ErrDocumentConfigDuplicate) {
 		writeError(w, http.StatusConflict, "document_config_duplicate", "Position code already exists for this document format.")
 		return
@@ -79,12 +81,13 @@ func (s *Server) updateDocumentConfigStep(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid_document_config", message)
 		return
 	}
-	if err := s.ensureSMLDocFormatExists(r.Context(), req.ScreenCode, req.DocFormatCode); err != nil {
+	resolvedReq, err := s.resolveDocumentConfigStep(r.Context(), req)
+	if err != nil {
 		s.writeDocFormatValidationError(w, err)
 		return
 	}
 
-	step, err := s.store.UpdateDocumentConfigStep(r.Context(), id, req)
+	step, err := s.store.UpdateDocumentConfigStep(r.Context(), id, resolvedReq)
 	if errors.Is(err, store.ErrDocumentConfigNotFound) {
 		writeError(w, http.StatusNotFound, "document_config_not_found", "Document config was not found.")
 		return
@@ -138,10 +141,28 @@ func (s *Server) writeDocFormatValidationError(w http.ResponseWriter, err error)
 		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML Paperless API is not configured.")
 	case errors.Is(err, errDocFormatNotFound):
 		writeError(w, http.StatusBadRequest, "doc_format_not_found", "Doc format code was not found in SML erp_doc_format.")
+	case errors.Is(err, errDocFormatAmbiguous):
+		writeError(w, http.StatusBadRequest, "doc_format_ambiguous", "Doc format code matches more than one SML screen code.")
+	case errors.Is(err, errDocFormatInvalidScreenCode):
+		writeError(w, http.StatusBadGateway, "doc_format_invalid_screen_code", "Doc format code has no valid screen_code in SML erp_doc_format.")
 	default:
 		s.logger.Warn("validate document format against sml failed", "error", err)
 		writeError(w, http.StatusBadGateway, "sml_doc_formats_failed", "Cannot verify document format with SML right now.")
 	}
+}
+
+func (s *Server) resolveDocumentConfigStep(ctx context.Context, req models.DocumentConfigStepRequest) (models.DocumentConfigStepRequest, error) {
+	format, err := s.fetchSMLDocFormatByCode(ctx, req.DocFormatCode)
+	if err != nil {
+		return req, err
+	}
+
+	req.DocFormatCode = strings.TrimSpace(format.Code)
+	req.ScreenCode = normalizeScreenCode(format.ScreenCode)
+	if !isValidScreenCode(req.ScreenCode) {
+		return req, errDocFormatInvalidScreenCode
+	}
+	return req, nil
 }
 
 func normalizeDocumentConfigStep(req models.DocumentConfigStepRequest) models.DocumentConfigStepRequest {
@@ -156,9 +177,6 @@ func normalizeDocumentConfigStep(req models.DocumentConfigStepRequest) models.Do
 }
 
 func validateDocumentConfigStep(req models.DocumentConfigStepRequest) string {
-	if !isValidScreenCode(req.ScreenCode) {
-		return "screen_code is invalid."
-	}
 	if req.DocFormatCode == "" {
 		return "Doc format code is required."
 	}

@@ -13,12 +13,8 @@ const conditionOptions = [
     { label: '3 - บุคคลภายนอก', value: 3, severity: 'secondary' }
 ];
 
-const screenOptions = ref([]);
-const selectedScreen = ref('');
-const selectedDocFormat = ref('');
 const docFormats = ref([]);
 const configs = ref([]);
-const loadingScreens = ref(false);
 const loadingFormats = ref(false);
 const loadingConfigs = ref(false);
 const saving = ref(false);
@@ -35,81 +31,49 @@ const docFormatOptions = computed(() =>
     }))
 );
 
-const selectedDocFormatDetail = computed(() => docFormats.value.find((format) => format.code === selectedDocFormat.value));
 const dialogTitle = computed(() => (editingConfig.value ? 'แก้ไข Config เอกสาร' : 'เพิ่ม Config เอกสาร'));
-const canAdd = computed(() => !loadingScreens.value && !loadingFormats.value && !!selectedDocFormat.value);
+const canAdd = computed(() => !loadingFormats.value && docFormatOptions.value.length > 0);
+const loadingPage = computed(() => loadingFormats.value || loadingConfigs.value);
 
 onMounted(initializePage);
 
-function emptyForm() {
+function emptyForm(docFormatCode = '') {
+    const code = docFormatCode || docFormats.value[0]?.code || '';
     return {
-        screenCode: selectedScreen.value,
-        docFormatCode: selectedDocFormat.value,
+        docFormatCode: code,
         positionCode: '',
         positionName: '',
         user01: '',
         user02: '',
         user03: '',
-        sequenceNo: nextSequenceNo(),
+        sequenceNo: nextSequenceNo(code),
         conditionType: 1
     };
 }
 
-function nextSequenceNo() {
-    const max = configs.value.reduce((current, item) => Math.max(current, Number(item.sequenceNo || 0)), 0);
+function nextSequenceNo(docFormatCode = '') {
+    const max = configs.value.reduce((current, item) => {
+        if (docFormatCode && !sameCode(item.docFormatCode, docFormatCode)) return current;
+        return Math.max(current, Number(item.sequenceNo || 0));
+    }, 0);
     return max + 1;
 }
 
-async function refreshScreen() {
-    await loadDocFormats();
-    await loadConfigs();
-}
-
 async function initializePage() {
-    await loadScreenCodes();
-    await refreshScreen();
-}
-
-async function loadScreenCodes() {
-    loadingScreens.value = true;
-    error.value = '';
-    try {
-        const result = await api.listSMLScreenCodes();
-        screenOptions.value = (result.screenCodes || []).map((item) => ({
-            label: item.code,
-            value: item.code,
-            count: item.count
-        }));
-
-        const stillAvailable = screenOptions.value.some((option) => option.value === selectedScreen.value);
-        selectedScreen.value = stillAvailable ? selectedScreen.value : screenOptions.value[0]?.value || '';
-    } catch (err) {
-        screenOptions.value = [];
-        selectedScreen.value = '';
-        error.value = err.message;
-        toast.add({ severity: 'error', summary: 'โหลด Screen Code ไม่สำเร็จ', detail: err.message, life: 4000 });
-    } finally {
-        loadingScreens.value = false;
-    }
+    await Promise.all([loadDocFormats(), loadConfigs()]);
 }
 
 async function loadDocFormats() {
-    if (!selectedScreen.value) {
-        docFormats.value = [];
-        selectedDocFormat.value = '';
-        return;
-    }
-
     loadingFormats.value = true;
     error.value = '';
     try {
-        const result = await api.listSMLDocFormats(selectedScreen.value);
+        const result = await api.listSMLDocFormats();
         docFormats.value = result.docFormats || [];
-        const stillAvailable = docFormats.value.some((format) => format.code === selectedDocFormat.value);
-        selectedDocFormat.value = stillAvailable ? selectedDocFormat.value : docFormats.value[0]?.code || '';
+        if (!form.value.docFormatCode && docFormats.value.length > 0) {
+            form.value.docFormatCode = docFormats.value[0].code;
+        }
     } catch (err) {
         docFormats.value = [];
-        selectedDocFormat.value = '';
         error.value = err.message;
         toast.add({ severity: 'error', summary: 'โหลด Doc Format ไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
@@ -118,18 +82,10 @@ async function loadDocFormats() {
 }
 
 async function loadConfigs() {
-    if (!selectedDocFormat.value) {
-        configs.value = [];
-        return;
-    }
-
     loadingConfigs.value = true;
     error.value = '';
     try {
-        const result = await api.listDocumentConfigs({
-            screenCode: selectedScreen.value,
-            docFormatCode: selectedDocFormat.value
-        });
+        const result = await api.listDocumentConfigs();
         configs.value = result.configs || [];
     } catch (err) {
         error.value = err.message;
@@ -137,11 +93,6 @@ async function loadConfigs() {
     } finally {
         loadingConfigs.value = false;
     }
-}
-
-async function handleScreenChange() {
-    selectedDocFormat.value = '';
-    await refreshScreen();
 }
 
 function openCreate() {
@@ -153,7 +104,6 @@ function openCreate() {
 function openEdit(config) {
     editingConfig.value = config;
     form.value = {
-        screenCode: config.screenCode,
         docFormatCode: config.docFormatCode,
         positionCode: config.positionCode,
         positionName: config.positionName,
@@ -166,6 +116,11 @@ function openEdit(config) {
     dialogVisible.value = true;
 }
 
+function handleDocFormatChange() {
+    if (editingConfig.value) return;
+    form.value.sequenceNo = nextSequenceNo(form.value.docFormatCode);
+}
+
 function closeDialog() {
     if (saving.value) return;
     dialogVisible.value = false;
@@ -176,7 +131,12 @@ async function saveConfig() {
     error.value = '';
     try {
         const payload = {
-            ...form.value,
+            docFormatCode: form.value.docFormatCode,
+            positionCode: form.value.positionCode,
+            positionName: form.value.positionName,
+            user01: form.value.user01,
+            user02: form.value.user02,
+            user03: form.value.user03,
             sequenceNo: Number(form.value.sequenceNo),
             conditionType: Number(form.value.conditionType)
         };
@@ -190,8 +150,6 @@ async function saveConfig() {
         }
 
         dialogVisible.value = false;
-        selectedScreen.value = payload.screenCode;
-        selectedDocFormat.value = payload.docFormatCode;
         await loadConfigs();
     } catch (err) {
         error.value = err.message;
@@ -237,9 +195,21 @@ function conditionSeverity(value) {
     return conditionOptions.find((option) => option.value === Number(value))?.severity || 'secondary';
 }
 
+function formatDetail(code) {
+    return docFormats.value.find((item) => sameCode(item.code, code));
+}
+
 function formatName(code) {
-    const format = docFormats.value.find((item) => item.code === code);
+    const format = formatDetail(code);
     return format?.name_1 || format?.name_2 || format?.format || '-';
+}
+
+function formatPattern(code) {
+    return formatDetail(code)?.format || 'ไม่มี format';
+}
+
+function sameCode(left, right) {
+    return String(left || '').toLowerCase() === String(right || '').toLowerCase();
 }
 </script>
 
@@ -250,89 +220,25 @@ function formatName(code) {
                 <div class="font-semibold text-xl mb-1">Config เอกสาร</div>
                 <p class="text-muted-color m-0">กำหนดลำดับ Position และผู้รับเอกสารตาม erp_doc_format จาก SML</p>
             </div>
-            <Button label="เพิ่ม Position" icon="pi pi-plus" :disabled="!canAdd" @click="openCreate" />
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-12 gap-4 mb-6">
-            <div class="md:col-span-3 flex flex-col gap-2">
-                <label for="screenCode" class="font-medium">Screen Code</label>
-                <Select
-                    id="screenCode"
-                    v-model="selectedScreen"
-                    :options="screenOptions"
-                    optionLabel="label"
-                    optionValue="value"
-                    :loading="loadingScreens"
-                    :disabled="loadingScreens || screenOptions.length === 0"
-                    filter
-                    @change="handleScreenChange"
-                >
-                    <template #value="{ value, placeholder }">
-                        <span v-if="value">{{ value }}</span>
-                        <span v-else>{{ placeholder }}</span>
-                    </template>
-                    <template #option="{ option }">
-                        <div>
-                            <div class="font-medium">{{ option.label }}</div>
-                            <div class="text-sm text-muted-color">{{ option.count }} รูปแบบเอกสาร</div>
-                        </div>
-                    </template>
-                </Select>
-            </div>
-
-            <div class="md:col-span-6 flex flex-col gap-2">
-                <label for="docFormat" class="font-medium">erp_doc_format.code</label>
-                <Select
-                    id="docFormat"
-                    v-model="selectedDocFormat"
-                    :options="docFormatOptions"
-                    optionLabel="label"
-                    optionValue="value"
-                    :loading="loadingFormats"
-                    :disabled="loadingFormats || docFormatOptions.length === 0"
-                    filter
-                    @change="loadConfigs"
-                >
-                    <template #value="{ value, placeholder }">
-                        <span v-if="value">{{ value }} - {{ formatName(value) }}</span>
-                        <span v-else>{{ placeholder }}</span>
-                    </template>
-                    <template #option="{ option }">
-                        <div class="flex flex-col">
-                            <span class="font-medium">{{ option.format.code }} - {{ option.format.name_1 || option.format.name_2 || '-' }}</span>
-                            <span class="text-sm text-muted-color">{{ option.format.format || 'ไม่มี format' }}</span>
-                        </div>
-                    </template>
-                </Select>
-            </div>
-
-            <div class="md:col-span-3 flex items-end">
-                <Button label="โหลดใหม่" icon="pi pi-refresh" severity="secondary" outlined class="w-full" :loading="loadingScreens || loadingFormats || loadingConfigs" @click="initializePage" />
+            <div class="flex gap-2">
+                <Button icon="pi pi-refresh" severity="secondary" outlined :loading="loadingPage" aria-label="โหลดใหม่" @click="initializePage" />
+                <Button label="เพิ่ม Position" icon="pi pi-plus" :disabled="!canAdd" @click="openCreate" />
             </div>
         </div>
 
         <Message v-if="error && !dialogVisible" severity="error" class="mb-4">{{ error }}</Message>
 
-        <div v-if="selectedDocFormatDetail" class="rounded-lg border border-surface p-4 mb-4">
-            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <div>
-                    <div class="font-semibold text-surface-900 dark:text-surface-0">{{ selectedDocFormatDetail.code }} - {{ selectedDocFormatDetail.name_1 || selectedDocFormatDetail.name_2 || '-' }}</div>
-                    <div class="text-sm text-muted-color">{{ selectedDocFormatDetail.format || 'ไม่มี format' }}</div>
-                </div>
-                <Tag :value="selectedScreen" severity="info" class="w-fit" />
-            </div>
-        </div>
-
         <DataTable :value="configs" :loading="loadingConfigs" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows sortField="sequenceNo" :sortOrder="1">
             <template #empty>
                 <div class="py-6 text-center text-muted-color">
-                    {{ selectedDocFormat ? 'ยังไม่มี Config สำหรับรูปแบบเอกสารนี้' : 'ไม่พบ Doc Format จาก SML' }}
+                    {{ loadingFormats ? 'กำลังโหลด Doc Format จาก SML' : 'ยังไม่มี Config เอกสาร' }}
                 </div>
             </template>
             <Column field="docFormatCode" header="erp_doc_format.code" sortable style="min-width: 13rem">
                 <template #body="{ data }">
                     <div class="font-medium text-surface-900 dark:text-surface-0">{{ data.docFormatCode }}</div>
                     <div class="text-sm text-muted-color">{{ formatName(data.docFormatCode) }}</div>
+                    <div class="text-xs text-muted-color">{{ formatPattern(data.docFormatCode) }}</div>
                 </template>
             </Column>
             <Column field="positionCode" header="รหัส Position" sortable style="min-width: 9rem" />
@@ -367,15 +273,30 @@ function formatName(code) {
         <form class="flex flex-col gap-4" @submit.prevent="saveConfig">
             <Message v-if="error && dialogVisible" severity="error">{{ error }}</Message>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="flex flex-col gap-2">
-                    <label for="dialogScreenCode" class="font-medium">Screen Code</label>
-                    <Select id="dialogScreenCode" v-model="form.screenCode" :options="screenOptions" optionLabel="label" optionValue="value" disabled />
-                </div>
-                <div class="flex flex-col gap-2">
-                    <label for="dialogDocFormat" class="font-medium">erp_doc_format.code</label>
-                    <Select id="dialogDocFormat" v-model="form.docFormatCode" :options="docFormatOptions" optionLabel="label" optionValue="value" disabled />
-                </div>
+            <div class="flex flex-col gap-2">
+                <label for="dialogDocFormat" class="font-medium">erp_doc_format.code</label>
+                <Select
+                    id="dialogDocFormat"
+                    v-model="form.docFormatCode"
+                    :options="docFormatOptions"
+                    optionLabel="label"
+                    optionValue="value"
+                    :loading="loadingFormats"
+                    :disabled="loadingFormats || docFormatOptions.length === 0"
+                    filter
+                    @change="handleDocFormatChange"
+                >
+                    <template #value="{ value, placeholder }">
+                        <span v-if="value">{{ value }} - {{ formatName(value) }}</span>
+                        <span v-else>{{ placeholder }}</span>
+                    </template>
+                    <template #option="{ option }">
+                        <div class="flex flex-col">
+                            <span class="font-medium">{{ option.format.code }} - {{ option.format.name_1 || option.format.name_2 || '-' }}</span>
+                            <span class="text-sm text-muted-color">{{ option.format.format || 'ไม่มี format' }}</span>
+                        </div>
+                    </template>
+                </Select>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

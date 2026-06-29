@@ -72,6 +72,9 @@ export const api = {
     listSMLDocFormats(screenCode) {
         return request(withQuery('/api/sml/doc-formats', { screen_code: screenCode }));
     },
+    getSMLDocFormat(docFormatCode) {
+        return request(withQuery('/api/sml/doc-format', { doc_format_code: docFormatCode }));
+    },
     listDocumentConfigs(params) {
         return request(
             withQuery('/api/document-configs', {
