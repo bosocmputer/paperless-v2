@@ -14,8 +14,10 @@ const conditionOptions = [
 ];
 
 const docFormats = ref([]);
+const users = ref([]);
 const configs = ref([]);
 const loadingFormats = ref(false);
+const loadingUsers = ref(false);
 const loadingConfigs = ref(false);
 const saving = ref(false);
 const dialogVisible = ref(false);
@@ -31,9 +33,33 @@ const docFormatOptions = computed(() =>
     }))
 );
 
+const userOptions = computed(() => {
+    const options = users.value
+        .filter((user) => user.status === 'active')
+        .map((user) => ({
+            label: `${user.username}:${user.displayName}`,
+            value: userValue(user),
+            user
+        }))
+        .sort((left, right) => left.value.localeCompare(right.value, 'th'));
+
+    const existingValues = new Set(options.map((option) => option.value));
+    [...configs.value, form.value].forEach((item) => {
+        [item.user01, item.user02, item.user03].forEach((value) => {
+            const normalized = String(value || '').trim();
+            if (normalized && !existingValues.has(normalized)) {
+                existingValues.add(normalized);
+                options.push({ label: normalized, value: normalized });
+            }
+        });
+    });
+
+    return options;
+});
+
 const dialogTitle = computed(() => (editingConfig.value ? 'แก้ไข Config เอกสาร' : 'เพิ่ม Config เอกสาร'));
-const canAdd = computed(() => !loadingFormats.value && docFormatOptions.value.length > 0);
-const loadingPage = computed(() => loadingFormats.value || loadingConfigs.value);
+const canAdd = computed(() => !loadingFormats.value && !loadingUsers.value && docFormatOptions.value.length > 0 && userOptions.value.length > 0);
+const loadingPage = computed(() => loadingFormats.value || loadingUsers.value || loadingConfigs.value);
 
 onMounted(initializePage);
 
@@ -60,7 +86,7 @@ function nextSequenceNo(docFormatCode = '') {
 }
 
 async function initializePage() {
-    await Promise.all([loadDocFormats(), loadConfigs()]);
+    await Promise.all([loadDocFormats(), loadUsers(), loadConfigs()]);
 }
 
 async function loadDocFormats() {
@@ -78,6 +104,21 @@ async function loadDocFormats() {
         toast.add({ severity: 'error', summary: 'โหลด Doc Format ไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         loadingFormats.value = false;
+    }
+}
+
+async function loadUsers() {
+    loadingUsers.value = true;
+    error.value = '';
+    try {
+        const result = await api.listUsers();
+        users.value = result.users || [];
+    } catch (err) {
+        users.value = [];
+        error.value = err.message;
+        toast.add({ severity: 'error', summary: 'โหลด User ไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        loadingUsers.value = false;
     }
 }
 
@@ -134,9 +175,9 @@ async function saveConfig() {
             docFormatCode: form.value.docFormatCode,
             positionCode: form.value.positionCode,
             positionName: form.value.positionName,
-            user01: form.value.user01,
-            user02: form.value.user02,
-            user03: form.value.user03,
+            user01: form.value.user01 || '',
+            user02: form.value.user02 || '',
+            user03: form.value.user03 || '',
             sequenceNo: Number(form.value.sequenceNo),
             conditionType: Number(form.value.conditionType)
         };
@@ -210,6 +251,10 @@ function formatPattern(code) {
 
 function sameCode(left, right) {
     return String(left || '').toLowerCase() === String(right || '').toLowerCase();
+}
+
+function userValue(user) {
+    return `${String(user.username || '').trim()}:${String(user.displayName || '').trim()}`;
 }
 </script>
 
@@ -313,15 +358,47 @@ function sameCode(left, right) {
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="flex flex-col gap-2">
                     <label for="user01" class="font-medium">User01</label>
-                    <InputText id="user01" v-model="form.user01" autocomplete="off" placeholder="001:ชื่อผู้รับ" />
+                    <Select
+                        id="user01"
+                        v-model="form.user01"
+                        :options="userOptions"
+                        optionLabel="label"
+                        optionValue="value"
+                        :loading="loadingUsers"
+                        :disabled="loadingUsers || userOptions.length === 0"
+                        filter
+                        placeholder="เลือก User01"
+                    />
                 </div>
                 <div class="flex flex-col gap-2">
                     <label for="user02" class="font-medium">User02</label>
-                    <InputText id="user02" v-model="form.user02" autocomplete="off" />
+                    <Select
+                        id="user02"
+                        v-model="form.user02"
+                        :options="userOptions"
+                        optionLabel="label"
+                        optionValue="value"
+                        :loading="loadingUsers"
+                        :disabled="loadingUsers || userOptions.length === 0"
+                        filter
+                        showClear
+                        placeholder="เลือก User02"
+                    />
                 </div>
                 <div class="flex flex-col gap-2">
                     <label for="user03" class="font-medium">User03</label>
-                    <InputText id="user03" v-model="form.user03" autocomplete="off" />
+                    <Select
+                        id="user03"
+                        v-model="form.user03"
+                        :options="userOptions"
+                        optionLabel="label"
+                        optionValue="value"
+                        :loading="loadingUsers"
+                        :disabled="loadingUsers || userOptions.length === 0"
+                        filter
+                        showClear
+                        placeholder="เลือก User03"
+                    />
                 </div>
             </div>
 
