@@ -31,7 +31,8 @@ const model = computed(() => {
                 {
                     label: 'เอกสารเพื่อเซ็น',
                     icon: 'pi pi-fw pi-send',
-                    to: '/signing/documents'
+                    to: '/signing/documents',
+                    activeMatch: '/signing/documents'
                 }
             ]
         },

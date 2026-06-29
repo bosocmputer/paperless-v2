@@ -1,5 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
+import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -24,7 +25,7 @@ let searchTimer;
 const filteredDocuments = computed(() => {
     const query = normalize(searchQuery.value);
     if (!query) return documents.value;
-    return documents.value.filter((doc) => normalize(`${doc.docFormatCode} ${doc.docNo} ${doc.partyName} ${doc.status}`).includes(query));
+    return documents.value.filter((doc) => normalize(`${doc.docFormatCode} ${doc.docNo} ${doc.partyName} ${doc.status} ${signingStatusLabel(doc.status)}`).includes(query));
 });
 
 const docFormatOptions = computed(() =>
@@ -151,22 +152,6 @@ function openDetail(doc) {
     router.push({ name: 'signing-document-detail', params: { id: doc.id } });
 }
 
-function statusSeverity(status) {
-    return {
-        in_progress: 'info',
-        completed: 'success',
-        completed_lock_failed: 'danger',
-        rejected: 'danger',
-        cancelled: 'secondary',
-        draft: 'secondary'
-    }[status] || 'secondary';
-}
-
-function formatDate(value) {
-    if (!value) return '-';
-    return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
-}
-
 function normalize(value) {
     return String(value || '').toLowerCase().trim();
 }
@@ -196,15 +181,17 @@ function normalize(value) {
                     <div class="text-sm text-muted-color">{{ data.docFormatCode }} · {{ data.partyName || data.partyCode || '-' }}</div>
                 </template>
             </Column>
-            <Column field="docDate" header="วันที่เอกสาร" sortable />
+            <Column field="docDate" header="วันที่เอกสาร" sortable>
+                <template #body="{ data }">{{ formatDocumentDate(data.docDate) }}</template>
+            </Column>
             <Column field="totalAmount" header="ยอดเงิน" sortable>
                 <template #body="{ data }">{{ Number(data.totalAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}</template>
             </Column>
             <Column field="status" header="สถานะ" sortable>
-                <template #body="{ data }"><Tag :value="data.status" :severity="statusSeverity(data.status)" /></template>
+                <template #body="{ data }"><Tag :value="signingStatusLabel(data.status)" :severity="signingStatusSeverity(data.status)" /></template>
             </Column>
             <Column field="updatedAt" header="อัปเดตล่าสุด" sortable>
-                <template #body="{ data }">{{ formatDate(data.updatedAt) }}</template>
+                <template #body="{ data }">{{ formatThaiDateTime(data.updatedAt) }}</template>
             </Column>
             <Column header="จัดการ" style="width: 8rem">
                 <template #body="{ data }">
@@ -239,9 +226,9 @@ function normalize(value) {
                 >
                     <span>
                         <strong>{{ candidate.doc_no }}</strong>
-                        <small>{{ candidate.party_name || candidate.party_code || '-' }} · {{ candidate.doc_date }}</small>
+                        <small>{{ candidate.party_name || candidate.party_code || '-' }} · {{ formatDocumentDate(candidate.doc_date) }}</small>
                     </span>
-                    <Tag v-if="candidate.is_lock_record === 1" value="SML locked" severity="danger" />
+                    <Tag v-if="candidate.is_lock_record === 1" value="SML lock แล้ว" severity="danger" />
                     <span>{{ Number(candidate.total_amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}</span>
                 </button>
                 <Button v-if="candidateHasMore" label="โหลดเพิ่ม" severity="secondary" text :loading="searchingCandidates" @click="loadMoreCandidates" />

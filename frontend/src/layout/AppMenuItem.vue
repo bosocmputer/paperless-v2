@@ -1,8 +1,10 @@
 <script setup>
 import { useLayout } from '@/layout/composables/layout';
 import { computed } from 'vue';
+import { useRoute } from 'vue-router';
 
 const { layoutState, isDesktop } = useLayout();
+const route = useRoute();
 
 const props = defineProps({
     item: {
@@ -20,9 +22,16 @@ const props = defineProps({
 });
 
 const fullPath = computed(() => (props.item.path ? (props.parentPath ? props.parentPath + props.item.path : props.item.path) : null));
+const isRouteActive = computed(() => {
+    if (!props.item.to) return false;
+    if (props.item.activeMatch) {
+        return route.path === props.item.activeMatch || route.path.startsWith(`${props.item.activeMatch}/`);
+    }
+    return route.path === props.item.to;
+});
 
 const isActive = computed(() => {
-    return props.item.path ? layoutState.activePath?.startsWith(fullPath.value) : layoutState.activePath === props.item.to;
+    return props.item.path ? layoutState.activePath?.startsWith(fullPath.value) : isRouteActive.value || layoutState.activePath === props.item.to;
 });
 
 const itemClick = (event, item) => {
@@ -64,7 +73,15 @@ const onMouseEnter = () => {
             <span class="layout-menuitem-text">{{ item.label }}</span>
             <i class="pi pi-fw pi-angle-down layout-submenu-toggler" v-if="item.items" />
         </a>
-        <router-link v-if="item.to && !item.items && item.visible !== false" @click="itemClick($event, item)" exactActiveClass="active-route" :class="item.class" tabindex="0" :to="item.to" @mouseenter="onMouseEnter">
+        <router-link
+            v-if="item.to && !item.items && item.visible !== false"
+            @click="itemClick($event, item)"
+            exactActiveClass="active-route"
+            :class="[item.class, { 'active-route': isRouteActive }]"
+            tabindex="0"
+            :to="item.to"
+            @mouseenter="onMouseEnter"
+        >
             <i :class="item.icon" class="layout-menuitem-icon" />
             <span class="layout-menuitem-text">{{ item.label }}</span>
             <i class="pi pi-fw pi-angle-down layout-submenu-toggler" v-if="item.items" />

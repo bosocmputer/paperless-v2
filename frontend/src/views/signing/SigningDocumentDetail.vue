@@ -1,8 +1,13 @@
 <script setup>
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { api } from '@/services/api';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const route = useRoute();
 const router = useRouter();
@@ -11,11 +16,23 @@ const toast = useToast();
 const document = ref(null);
 const loading = ref(false);
 const pdfUrl = ref('');
+const viewerRef = ref(null);
+const canvasRef = ref(null);
+const pdfDoc = shallowRef(null);
+const pdfLoading = ref(false);
+const pdfError = ref('');
+const currentPage = ref(1);
+const pageCount = ref(0);
+const zoom = ref(1);
+const fitWidthActive = ref(true);
 const retryingLock = ref(false);
 const retryingFinalPDF = ref(false);
 const printing = ref(false);
 const tokenDialog = ref(false);
 const generatedToken = ref(null);
+let renderSequence = 0;
+let renderTask = null;
+let resizeObserver = null;
 
 const signersByStep = computed(() => {
     const groups = new Map();
@@ -32,10 +49,22 @@ const importantEvents = computed(() =>
         .filter((event) => event.view)
 );
 const printEvents = computed(() => document.value?.printEvents || []);
+const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `${index + 1}/${pageCount.value}`, value: index + 1 })));
+const pdfMetaLabel = computed(() => (pageCount.value ? `หน้า ${currentPage.value} / ${pageCount.value} · ${Math.round(zoom.value * 100)}%` : 'ยังไม่มี PDF'));
 
-onMounted(loadPage);
+onMounted(async () => {
+    await nextTick();
+    setupResizeObserver();
+    await loadPage();
+});
 onBeforeUnmount(() => {
+    cleanupPDF();
+    if (resizeObserver) resizeObserver.disconnect();
     if (pdfUrl.value) URL.revokeObjectURL(pdfUrl.value);
+});
+
+watch([currentPage, zoom], async () => {
+    if (pdfDoc.value) await renderCurrentPage();
 });
 
 async function loadPage() {
@@ -53,11 +82,106 @@ async function loadPage() {
 
 async function loadPdf() {
     if (!document.value?.id) return;
+    cleanupPDF();
     if (pdfUrl.value) URL.revokeObjectURL(pdfUrl.value);
-    const response = await fetch(api.signingDocumentPDFUrl(document.value.id), { headers: api.authHeaders() });
-    if (!response.ok) throw new Error('โหลด PDF ไม่สำเร็จ');
-    const blob = await response.blob();
-    pdfUrl.value = URL.createObjectURL(blob);
+    pdfLoading.value = true;
+    pdfError.value = '';
+    try {
+        const response = await fetch(api.signingDocumentPDFUrl(document.value.id), { headers: api.authHeaders() });
+        if (!response.ok) throw new Error('โหลด PDF ไม่สำเร็จ');
+        const blob = await response.blob();
+        pdfUrl.value = URL.createObjectURL(blob);
+        const task = pdfjsLib.getDocument({ url: pdfUrl.value });
+        pdfDoc.value = await task.promise;
+        pageCount.value = pdfDoc.value.numPages;
+        currentPage.value = 1;
+        await nextTick();
+        await fitWidth();
+    } catch (err) {
+        pdfError.value = err?.message || 'โหลด PDF ไม่สำเร็จ';
+        throw err;
+    } finally {
+        pdfLoading.value = false;
+    }
+}
+
+function setupResizeObserver() {
+    if (!viewerRef.value || !window.ResizeObserver) return;
+    resizeObserver = new ResizeObserver(() => {
+        if (fitWidthActive.value) void fitWidth();
+    });
+    resizeObserver.observe(viewerRef.value);
+}
+
+async function fitWidth() {
+    if (!pdfDoc.value || !viewerRef.value) return;
+    fitWidthActive.value = true;
+    const page = await pdfDoc.value.getPage(currentPage.value);
+    const viewport = page.getViewport({ scale: 1 });
+    const available = Math.max(viewerRef.value.clientWidth - 32, 240);
+    zoom.value = clamp(available / viewport.width, 0.45, 2.25);
+    await renderCurrentPage();
+}
+
+function setZoom(value) {
+    fitWidthActive.value = false;
+    zoom.value = clamp(value, 0.45, 2.5);
+}
+
+async function renderCurrentPage() {
+    if (!pdfDoc.value || !canvasRef.value) return;
+    const sequence = ++renderSequence;
+    cancelRenderTask();
+    try {
+        const page = await pdfDoc.value.getPage(currentPage.value);
+        if (sequence !== renderSequence) return;
+        const viewport = page.getViewport({ scale: zoom.value });
+        const outputScale = Math.min(window.devicePixelRatio || 1, 2);
+        const canvas = canvasRef.value;
+        const context = canvas.getContext('2d');
+        canvas.width = Math.floor(viewport.width * outputScale);
+        canvas.height = Math.floor(viewport.height * outputScale);
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
+        context.setTransform(outputScale, 0, 0, outputScale, 0, 0);
+        renderTask = page.render({ canvasContext: context, viewport });
+        await renderTask.promise;
+    } catch (err) {
+        if (err?.name === 'RenderingCancelledException') return;
+        pdfError.value = err?.message || 'แสดง PDF ไม่สำเร็จ';
+    } finally {
+        if (sequence === renderSequence) renderTask = null;
+    }
+}
+
+function cancelRenderTask() {
+    if (!renderTask) return;
+    try {
+        renderTask.cancel();
+    } catch {
+        // PDF.js can throw if rendering finished at the same time.
+    }
+    renderTask = null;
+}
+
+function cleanupPDF() {
+    cancelRenderTask();
+    if (pdfDoc.value?.destroy) pdfDoc.value.destroy().catch(() => {});
+    pdfDoc.value = null;
+    pageCount.value = 0;
+}
+
+function openPDF() {
+    if (!pdfUrl.value) return;
+    window.open(pdfUrl.value, '_blank', 'noopener');
+}
+
+function downloadPDF() {
+    if (!pdfUrl.value) return;
+    const link = window.document.createElement('a');
+    link.href = pdfUrl.value;
+    link.download = `${document.value?.docNo || 'document'}.pdf`;
+    link.click();
 }
 
 async function retryLock() {
@@ -148,24 +272,22 @@ async function copy(value) {
     toast.add({ severity: 'success', summary: 'คัดลอกแล้ว', life: 1800 });
 }
 
-function statusSeverity(status) {
-    return {
-        pending: 'info',
-        waiting: 'secondary',
-        signed: 'success',
-        completed: 'success',
-        completed_evidence_failed: 'warn',
-        rejected: 'danger',
-        skipped: 'secondary',
-        in_progress: 'info',
-        completed_lock_failed: 'danger'
-    }[status] || 'secondary';
-}
-
 function conditionLabel(value) {
     if (Number(value) === 1) return 'คนใดคนหนึ่ง';
     if (Number(value) === 2) return 'ทุกคน';
     return 'บุคคลภายนอก';
+}
+
+function signerTypeLabel(value) {
+    if (value === 'external') return 'บุคคลภายนอก';
+    if (value === 'any') return 'คนใดคนหนึ่ง';
+    return 'ผู้ใช้ภายใน';
+}
+
+function printerLabel(value) {
+    if (!value) return '-';
+    if (value === 'not_available_web_browser') return 'ไม่สามารถอ่านชื่อเครื่องพิมพ์จาก Web';
+    return value;
 }
 
 function movementEventView(event) {
@@ -236,9 +358,8 @@ function movementEventView(event) {
     return labels[action] || null;
 }
 
-function formatDate(value) {
-    if (!value) return '-';
-    return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
 }
 </script>
 
@@ -250,7 +371,7 @@ function formatDate(value) {
                 <strong>{{ document?.docNo || 'เอกสาร' }}</strong>
                 <span>{{ document?.docFormatCode }} · {{ document?.partyName || document?.partyCode || '-' }}</span>
             </div>
-            <Tag v-if="document" :value="document.status" :severity="statusSeverity(document.status)" />
+            <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
             <Button v-if="document?.status === 'completed_evidence_failed'" label="Retry Final PDF" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
             <Button v-if="document?.status === 'completed_lock_failed'" label="Retry SML Lock" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
             <Button v-if="document?.status === 'completed'" label="พิมพ์เอกสาร" icon="pi pi-print" severity="primary" :loading="printing" @click="printOfficialCopy" />
@@ -259,8 +380,37 @@ function formatDate(value) {
 
         <div class="detail-grid">
             <section class="pdf-panel">
-                <iframe v-if="pdfUrl" :src="pdfUrl" title="PDF preview"></iframe>
-                <div v-else class="empty-pdf">กำลังโหลด PDF...</div>
+                <div class="pdf-toolbar">
+                    <div class="toolbar-group">
+                        <Select v-model="currentPage" :options="pageOptions" optionLabel="label" optionValue="value" :disabled="pageOptions.length === 0" class="page-select" />
+                        <Button icon="pi pi-search-minus" severity="secondary" outlined :disabled="!pdfDoc || zoom <= 0.45" aria-label="ซูมออก" @click="setZoom(zoom - 0.1)" />
+                        <span class="zoom-value">{{ Math.round(zoom * 100) }}%</span>
+                        <Button icon="pi pi-search-plus" severity="secondary" outlined :disabled="!pdfDoc || zoom >= 2.5" aria-label="ซูมเข้า" @click="setZoom(zoom + 0.1)" />
+                        <Button label="Fit width" icon="pi pi-arrows-h" severity="secondary" outlined :disabled="!pdfDoc" @click="fitWidth" />
+                        <Button label="100%" severity="secondary" outlined :disabled="!pdfDoc" @click="setZoom(1)" />
+                    </div>
+                    <div class="toolbar-group right">
+                        <span class="pdf-meta">{{ pdfMetaLabel }}</span>
+                        <Button icon="pi pi-external-link" severity="secondary" outlined rounded aria-label="เปิด PDF" :disabled="!pdfUrl" @click="openPDF" />
+                        <Button icon="pi pi-download" severity="secondary" outlined rounded aria-label="ดาวน์โหลด PDF" :disabled="!pdfUrl" @click="downloadPDF" />
+                    </div>
+                </div>
+                <div ref="viewerRef" class="pdf-scroll">
+                    <div v-if="pdfLoading" class="empty-pdf">
+                        <i class="pi pi-spin pi-spinner"></i>
+                        <span>กำลังโหลด PDF...</span>
+                    </div>
+                    <Message v-else-if="pdfError" severity="error" class="pdf-error">
+                        {{ pdfError }}
+                        <div class="mt-3">
+                            <Button size="small" label="ลองใหม่" icon="pi pi-refresh" severity="secondary" outlined @click="loadPdf" />
+                        </div>
+                    </Message>
+                    <div v-else-if="pdfDoc" class="pdf-page-shell">
+                        <canvas ref="canvasRef" class="pdf-canvas"></canvas>
+                    </div>
+                    <div v-else class="empty-pdf">ยังไม่มี PDF</div>
+                </div>
             </section>
 
             <aside class="side-panel">
@@ -268,7 +418,7 @@ function formatDate(value) {
                     <div class="block-title">ข้อมูลเอกสาร</div>
                     <dl>
                         <dt>วันที่</dt>
-                        <dd>{{ document?.docDate || '-' }}</dd>
+                        <dd>{{ formatDocumentDate(document?.docDate) }}</dd>
                         <dt>ยอดเงิน</dt>
                         <dd>{{ Number(document?.totalAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}</dd>
                         <dt>SML lock</dt>
@@ -281,17 +431,17 @@ function formatDate(value) {
                     <div v-for="group in signersByStep" :key="group.step.id" class="step-card">
                         <div class="step-head">
                             <strong>{{ group.step.positionCode }} · {{ group.step.positionName }}</strong>
-                            <Tag :value="group.step.status" :severity="statusSeverity(group.step.status)" />
+                            <Tag :value="signingStatusLabel(group.step.status)" :severity="signingStatusSeverity(group.step.status)" />
                         </div>
                         <small>{{ conditionLabel(group.step.conditionType) }}</small>
                         <div class="signer-list">
                             <div v-for="signer in group.signers" :key="signer.id" class="signer-row">
                                 <span>
                                     <strong>{{ signer.signerName || signer.signerUser || 'บุคคลภายนอก' }}</strong>
-                                    <small>{{ signer.signerType }} · page {{ signer.pageNo }}</small>
+                                    <small>{{ signerTypeLabel(signer.signerType) }} · หน้า {{ signer.pageNo }}</small>
                                 </span>
                                 <div class="signer-actions">
-                                    <Tag :value="signer.status" :severity="statusSeverity(signer.status)" />
+                                    <Tag :value="signingStatusLabel(signer.status)" :severity="signingStatusSeverity(signer.status)" />
                                     <Button v-if="signer.signerType === 'external' && signer.status !== 'signed'" icon="pi pi-key" rounded outlined aria-label="สร้าง OTP" @click="generateExternal(signer)" />
                                 </div>
                             </div>
@@ -311,8 +461,8 @@ function formatDate(value) {
                     <div v-else class="print-list">
                         <div v-for="item in printEvents" :key="item.id" class="print-row">
                             <span>
-                                <strong>{{ formatDate(item.printedAt) }}</strong>
-                                <small>{{ item.channel }} · {{ item.printerName }}</small>
+                                <strong>{{ formatThaiDateTime(item.printedAt) }}</strong>
+                                <small>{{ item.channel === 'web' ? 'Web' : 'App' }} · {{ printerLabel(item.printerName) }}</small>
                             </span>
                             <Tag :value="item.file?.sha256 ? item.file.sha256.slice(0, 10) : '-'" severity="secondary" />
                         </div>
@@ -338,7 +488,7 @@ function formatDate(value) {
                                     <strong>{{ item.view.title }}</strong>
                                 </div>
                                 <span>{{ item.view.detail }}</span>
-                                <small>{{ formatDate(item.createdAt) }}</small>
+                                <small>{{ formatThaiDateTime(item.createdAt) }}</small>
                             </div>
                         </template>
                     </Timeline>
@@ -359,7 +509,7 @@ function formatDate(value) {
                 <InputText :modelValue="generatedToken.otp" readonly class="w-full otp-text" />
                 <Button icon="pi pi-copy" rounded outlined aria-label="copy otp" @click="copy(generatedToken.otp)" />
             </div>
-            <small class="text-muted-color">OTP หมดอายุ {{ formatDate(generatedToken.expiresAt) }}</small>
+            <small class="text-muted-color">OTP หมดอายุ {{ formatThaiDateTime(generatedToken.expiresAt) }}</small>
         </div>
     </Dialog>
 </template>
@@ -410,16 +560,70 @@ function formatDate(value) {
     background: var(--surface-card);
     border-radius: 8px;
 }
-.pdf-panel iframe {
-    width: 100%;
-    height: 100%;
-    border: 0;
+.pdf-panel {
+    display: flex;
+    flex-direction: column;
+    padding: 0.75rem;
+}
+.pdf-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding-bottom: 0.75rem;
+}
+.toolbar-group {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+}
+.toolbar-group.right {
+    justify-content: flex-end;
+}
+.page-select {
+    min-width: 8rem;
+}
+.zoom-value {
+    width: 3.4rem;
+    text-align: center;
+    color: var(--text-color-secondary);
+    font-size: 0.875rem;
+}
+.pdf-meta {
+    white-space: nowrap;
+    color: var(--text-color-secondary);
+    font-size: 0.875rem;
+}
+.pdf-scroll {
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+    border: 1px solid var(--surface-border);
     border-radius: 8px;
+    background: var(--surface-ground);
+    padding: 0.85rem;
+}
+.pdf-page-shell {
+    display: inline-block;
+    background: white;
+    line-height: 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+}
+.pdf-canvas {
+    display: block;
+}
+.pdf-error {
+    width: min(34rem, 100%);
+    margin: 1rem auto;
 }
 .empty-pdf {
-    height: 100%;
+    min-height: 18rem;
     display: grid;
     place-items: center;
+    align-content: center;
+    gap: 0.6rem;
     color: var(--text-color-secondary);
 }
 .side-panel {
@@ -557,6 +761,16 @@ dd {
     }
     .pdf-panel {
         height: 72dvh;
+    }
+}
+@media (max-width: 640px) {
+    .pdf-toolbar,
+    .toolbar-group.right {
+        align-items: stretch;
+        flex-direction: column;
+    }
+    .toolbar-group {
+        width: 100%;
     }
 }
 </style>
