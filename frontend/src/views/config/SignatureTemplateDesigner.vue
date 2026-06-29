@@ -4,12 +4,14 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { computed, nextTick, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const route = useRoute();
 const router = useRouter();
+const confirm = useConfirm();
 const toast = useToast();
 
 const docFormatCode = computed(() => String(route.params.docFormatCode || '').trim());
@@ -42,6 +44,15 @@ const isDraft = computed(() => template.value?.status === 'draft');
 const statusSeverity = computed(() => (template.value?.status === 'active' ? 'success' : template.value?.status === 'draft' ? 'warn' : 'secondary'));
 const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `หน้า ${index + 1}`, value: index + 1 })));
 const selectedStep = computed(() => configs.value.find((item) => item.positionCode === selectedPositionCode.value));
+const selectedBox = computed(() => boxes.value.find((box) => box.clientKey === selectedBoxKey.value) || null);
+const selectedBoxStep = computed(() => (selectedBox.value ? configs.value.find((item) => item.positionCode === selectedBox.value.positionCode) : null));
+const selectedBoxSignerOptions = computed(() => stepUsers(selectedBoxStep.value || {}).map((user, index) => ({ label: user, value: user, slot: index + 1 })));
+const selectedBoxSignerTypeLabel = computed(() => {
+    if (!selectedBox.value) return '-';
+    if (selectedBox.value.signerType === 'any') return 'คนใดคนหนึ่ง';
+    if (selectedBox.value.signerType === 'external') return 'บุคคลภายนอก';
+    return 'User ภายใน';
+});
 const currentPageBoxes = computed(() => boxes.value.filter((box) => Number(box.pageNo) === Number(currentPage.value)));
 const validationIssues = computed(() => validateBoxes());
 const canSave = computed(() => isDraft.value && !saving.value && !!template.value);
@@ -66,6 +77,7 @@ async function loadState() {
         maxTemplatePages.value = result.maxTemplatePages || 20;
         boxes.value = withClientKeys((draft.value || active.value)?.boxes || []);
         selectedPositionCode.value = configs.value[0]?.positionCode || '';
+        selectedBoxKey.value = '';
         dirty.value = false;
         await nextTick();
         if (template.value?.id) await loadPDF();
@@ -127,8 +139,29 @@ async function handleFileChange(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if (boxes.value.length > 0 && !window.confirm('อัปโหลด PDF ใหม่จะล้างกรอบเดิมทั้งหมด ต้องการทำต่อไหม?')) return;
+    if (boxes.value.length > 0) {
+        confirm.require({
+            message: 'อัปโหลด PDF ใหม่จะสร้าง Draft ใหม่และล้างกรอบเดิมทั้งหมด',
+            header: 'แทนที่ PDF ตัวอย่าง',
+            icon: 'pi pi-exclamation-triangle',
+            rejectProps: {
+                label: 'ยกเลิก',
+                severity: 'secondary',
+                outlined: true
+            },
+            acceptProps: {
+                label: 'แทนที่ PDF และล้างกรอบเดิม',
+                severity: 'danger'
+            },
+            accept: () => uploadSamplePDF(file)
+        });
+        return;
+    }
 
+    await uploadSamplePDF(file);
+}
+
+async function uploadSamplePDF(file) {
     uploading.value = true;
     error.value = '';
     try {
@@ -186,14 +219,88 @@ function addBox(step) {
     }
 
     boxes.value.push(box);
-    selectedBoxKey.value = box.clientKey;
+    selectBox(box);
     dirty.value = true;
 }
 
 function deleteBox(box) {
-    if (box.signerUser && !window.confirm(`ลบกรอบของ ${box.signerUser} ใช่ไหม?`)) return;
+    const label = box.signerUser || box.label || `Position ${box.positionCode}`;
+    confirm.require({
+        message: `ลบกรอบ "${label}" ออกจาก template นี้ใช่ไหม?`,
+        header: 'ลบกรอบลายเซ็น',
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: 'ยกเลิก',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ลบกรอบ',
+            severity: 'danger'
+        },
+        accept: () => removeBox(box)
+    });
+}
+
+function removeBox(box) {
     boxes.value = boxes.value.filter((item) => item.clientKey !== box.clientKey);
     if (selectedBoxKey.value === box.clientKey) selectedBoxKey.value = '';
+    dirty.value = true;
+}
+
+function selectBox(box) {
+    if (!box) return;
+    selectedBoxKey.value = box.clientKey;
+    selectedPositionCode.value = box.positionCode;
+}
+
+function updateBoxLabel(box, value) {
+    if (!isDraft.value || !box) return;
+    box.label = String(value || '').slice(0, 80);
+    dirty.value = true;
+}
+
+function updateBoxPage(box, value) {
+    if (!isDraft.value || !box) return;
+    const pageNo = Number(value);
+    if (!Number.isFinite(pageNo) || pageNo < 1 || pageNo > Math.max(pageCount.value, 1)) return;
+    box.pageNo = pageNo;
+    currentPage.value = pageNo;
+    dirty.value = true;
+}
+
+function updateBoxSignerUser(box, value) {
+    if (!isDraft.value || !box || !selectedBoxStep.value || Number(selectedBoxStep.value.conditionType) !== 2) return;
+    const user = String(value || '').trim();
+    const option = selectedBoxSignerOptions.value.find((item) => item.value === user);
+    box.signerType = 'internal';
+    box.signerUser = user;
+    box.signerSlot = option?.slot || Math.max(1, Number(box.signerSlot || 1));
+    box.label = user || selectedBoxStep.value.positionName;
+    dirty.value = true;
+}
+
+function ratioPercent(box, field) {
+    if (!box) return 0;
+    return Number((Number(box[field] || 0) * 100).toFixed(2));
+}
+
+function updateBoxRatio(box, field, value) {
+    if (!isDraft.value || !box) return;
+    const percent = Number(value);
+    if (!Number.isFinite(percent)) return;
+    const ratio = percent / 100;
+
+    if (field === 'xRatio') {
+        box.xRatio = clamp(ratio, 0, 1 - box.widthRatio);
+    } else if (field === 'yRatio') {
+        box.yRatio = clamp(ratio, 0, 1 - box.heightRatio);
+    } else if (field === 'widthRatio') {
+        box.widthRatio = clamp(ratio, 0.03, 1 - box.xRatio);
+    } else if (field === 'heightRatio') {
+        box.heightRatio = clamp(ratio, 0.03, 1 - box.yRatio);
+    }
+
     dirty.value = true;
 }
 
@@ -207,10 +314,10 @@ function boxStyle(box) {
 }
 
 function startBoxPointer(event, box, mode) {
+    selectBox(box);
     if (!isDraft.value || !overlayRef.value) return;
     event.preventDefault();
     event.stopPropagation();
-    selectedBoxKey.value = box.clientKey;
     const rect = overlayRef.value.getBoundingClientRect();
     const start = {
         x: event.clientX,
@@ -517,11 +624,127 @@ function formatDate(value) {
                             type="button"
                             class="box-list-item"
                             :class="{ active: selectedBoxKey === box.clientKey }"
-                            @click="selectedBoxKey = box.clientKey"
+                            @click="selectBox(box)"
                         >
                             <span>{{ box.label || box.signerUser || box.positionCode }}</span>
                             <small>{{ box.positionCode }} / {{ box.signerType }}</small>
                         </button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="font-semibold text-lg mb-3">รายละเอียดกรอบที่เลือก</div>
+                    <div v-if="!selectedBox" class="text-muted-color">เลือกกรอบจากหน้า PDF หรือรายการด้านบนเพื่อดูรายละเอียด</div>
+                    <div v-else class="flex flex-col gap-4">
+                        <Message v-if="!isDraft" severity="info">Active template ดูได้อย่างเดียว ต้องอัปโหลด PDF เพื่อสร้าง Draft ก่อนแก้ไข</Message>
+
+                        <div class="flex flex-col gap-2 min-w-0">
+                            <label :for="`box-label-${selectedBox.clientKey}`" class="font-medium">ข้อความบนกรอบ</label>
+                            <InputText
+                                :id="`box-label-${selectedBox.clientKey}`"
+                                :modelValue="selectedBox.label"
+                                maxlength="80"
+                                :disabled="!isDraft"
+                                @update:modelValue="updateBoxLabel(selectedBox, $event)"
+                            />
+                            <small class="text-muted-color">ใช้แสดงบนกรอบและช่วยตรวจตอนวางตำแหน่ง</small>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div class="flex flex-col gap-2">
+                                <label :for="`box-page-${selectedBox.clientKey}`" class="font-medium">หน้า PDF</label>
+                                <Select
+                                    :id="`box-page-${selectedBox.clientKey}`"
+                                    :modelValue="Number(selectedBox.pageNo)"
+                                    :options="pageOptions"
+                                    optionLabel="label"
+                                    optionValue="value"
+                                    :disabled="!isDraft || pageOptions.length <= 1"
+                                    @update:modelValue="updateBoxPage(selectedBox, $event)"
+                                />
+                            </div>
+                            <div class="flex flex-col gap-2">
+                                <span class="font-medium">ประเภท</span>
+                                <Tag :value="selectedBoxSignerTypeLabel" :severity="conditionSeverity(selectedBoxStep?.conditionType)" class="w-fit" />
+                            </div>
+                        </div>
+
+                        <div v-if="Number(selectedBoxStep?.conditionType) === 2" class="flex flex-col gap-2">
+                            <label :for="`box-user-${selectedBox.clientKey}`" class="font-medium">ผู้ลงนาม</label>
+                            <Select
+                                :id="`box-user-${selectedBox.clientKey}`"
+                                :modelValue="selectedBox.signerUser"
+                                :options="selectedBoxSignerOptions"
+                                optionLabel="label"
+                                optionValue="value"
+                                :disabled="!isDraft"
+                                @update:modelValue="updateBoxSignerUser(selectedBox, $event)"
+                            />
+                            <small class="text-muted-color">Condition “ทุกคน” ต้องมี user ไม่ซ้ำกันใน position เดียวกัน</small>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="flex flex-col gap-2">
+                                <label :for="`box-x-${selectedBox.clientKey}`" class="font-medium">X (%)</label>
+                                <InputNumber
+                                    :inputId="`box-x-${selectedBox.clientKey}`"
+                                    :modelValue="ratioPercent(selectedBox, 'xRatio')"
+                                    suffix="%"
+                                    :min="0"
+                                    :max="100"
+                                    :minFractionDigits="0"
+                                    :maxFractionDigits="2"
+                                    :disabled="!isDraft"
+                                    inputClass="w-full"
+                                    @update:modelValue="updateBoxRatio(selectedBox, 'xRatio', $event)"
+                                />
+                            </div>
+                            <div class="flex flex-col gap-2">
+                                <label :for="`box-y-${selectedBox.clientKey}`" class="font-medium">Y (%)</label>
+                                <InputNumber
+                                    :inputId="`box-y-${selectedBox.clientKey}`"
+                                    :modelValue="ratioPercent(selectedBox, 'yRatio')"
+                                    suffix="%"
+                                    :min="0"
+                                    :max="100"
+                                    :minFractionDigits="0"
+                                    :maxFractionDigits="2"
+                                    :disabled="!isDraft"
+                                    inputClass="w-full"
+                                    @update:modelValue="updateBoxRatio(selectedBox, 'yRatio', $event)"
+                                />
+                            </div>
+                            <div class="flex flex-col gap-2">
+                                <label :for="`box-width-${selectedBox.clientKey}`" class="font-medium">กว้าง (%)</label>
+                                <InputNumber
+                                    :inputId="`box-width-${selectedBox.clientKey}`"
+                                    :modelValue="ratioPercent(selectedBox, 'widthRatio')"
+                                    suffix="%"
+                                    :min="3"
+                                    :max="100"
+                                    :minFractionDigits="0"
+                                    :maxFractionDigits="2"
+                                    :disabled="!isDraft"
+                                    inputClass="w-full"
+                                    @update:modelValue="updateBoxRatio(selectedBox, 'widthRatio', $event)"
+                                />
+                            </div>
+                            <div class="flex flex-col gap-2">
+                                <label :for="`box-height-${selectedBox.clientKey}`" class="font-medium">สูง (%)</label>
+                                <InputNumber
+                                    :inputId="`box-height-${selectedBox.clientKey}`"
+                                    :modelValue="ratioPercent(selectedBox, 'heightRatio')"
+                                    suffix="%"
+                                    :min="3"
+                                    :max="100"
+                                    :minFractionDigits="0"
+                                    :maxFractionDigits="2"
+                                    :disabled="!isDraft"
+                                    inputClass="w-full"
+                                    @update:modelValue="updateBoxRatio(selectedBox, 'heightRatio', $event)"
+                                />
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
