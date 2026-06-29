@@ -7,17 +7,17 @@ const router = createRouter({
     history: createWebHistory(),
     routes: [
         {
-            path: '/',
+            path: '/signing',
             component: SignerLayout,
             children: [
                 {
-                    path: '/signing/tasks',
+                    path: 'tasks',
                     name: 'my-signing-tasks',
                     component: () => import('@/views/signing/MySigningTasks.vue'),
                     meta: { role: 'user' }
                 },
                 {
-                    path: '/signing/tasks/:taskId',
+                    path: 'tasks/:taskId',
                     name: 'my-signing-task',
                     component: () => import('@/views/signing/SigningTask.vue'),
                     meta: { role: 'user' }
