@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 	"github.com/phpdave11/gofpdf"
@@ -102,11 +101,6 @@ func stampPDFWithSignatures(sourcePath string, pageCount int, signers []models.S
 				continue
 			}
 			pdf.ImageOptions(file.StoragePath, x, y, w, h, false, gofpdf.ImageOptions{ImageType: imageTypeForContent(file.ContentType), ReadDpi: false}, 0, "")
-			if signer.SignedAt != nil {
-				pdf.SetFont("Helvetica", "", 7)
-				pdf.SetTextColor(40, 40, 40)
-				pdf.Text(x, minFloat(y+h+9, size.Ht-4), signer.SignedAt.In(time.FixedZone("ICT", 7*60*60)).Format("02/01/2006 15:04"))
-			}
 		}
 	}
 	var out bytes.Buffer
@@ -154,11 +148,4 @@ func clampRatio(value float64) float64 {
 		return 1
 	}
 	return value
-}
-
-func minFloat(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
 }
