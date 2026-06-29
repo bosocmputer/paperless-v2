@@ -226,6 +226,27 @@ func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	existingTemplate, err := s.store.FindSignatureTemplateByID(r.Context(), id)
+	if errors.Is(err, store.ErrSignatureTemplateNotFound) {
+		writeError(w, http.StatusNotFound, "signature_template_not_found", "Signature template was not found.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("load signature template before save failed", "error", err, "templateID", id)
+		writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load signature template right now.")
+		return
+	}
+	configs, err := s.store.ListDocumentConfigSteps(r.Context(), existingTemplate.ScreenCode, existingTemplate.DocFormatCode)
+	if err != nil {
+		s.logger.Error("list document configs before save failed", "error", err, "templateID", id)
+		writeError(w, http.StatusInternalServerError, "signature_template_configs_failed", "Cannot validate signature boxes right now.")
+		return
+	}
+	if limitIssues := validateSignatureBoxSaveLimits(boxes, configs); len(limitIssues) > 0 {
+		writeValidationIssues(w, http.StatusBadRequest, "invalid_signature_boxes", limitIssues)
+		return
+	}
+
 	template, err := s.store.ReplaceSignatureTemplateBoxes(r.Context(), id, req.Revision, boxes)
 	if errors.Is(err, store.ErrSignatureTemplateNotFound) {
 		writeError(w, http.StatusNotFound, "signature_template_not_found", "Signature template was not found.")
@@ -503,6 +524,34 @@ func validationIssuesForTemplate(template *models.SignatureTemplate, configs []m
 	return validateSignatureTemplate(*template, configs, maxPages)
 }
 
+func validateSignatureBoxSaveLimits(boxes []models.SignatureTemplateBoxRequest, configs []models.DocumentConfigStep) []models.SignatureValidationIssue {
+	issues := []models.SignatureValidationIssue{}
+	stepsByPosition := map[string]models.DocumentConfigStep{}
+	for _, step := range configs {
+		stepsByPosition[strings.ToLower(step.PositionCode)] = step
+	}
+
+	boxesByPosition := map[string][]models.SignatureTemplateBoxRequest{}
+	for _, box := range boxes {
+		key := strings.ToLower(box.PositionCode)
+		boxesByPosition[key] = append(boxesByPosition[key], box)
+		if _, ok := stepsByPosition[key]; !ok && box.PositionCode != "" {
+			issues = append(issues, signatureIssue("box_position_unknown", box.PositionCode, "Signature box uses a position that is not in document config."))
+		}
+	}
+
+	for key, step := range stepsByPosition {
+		limit := 1
+		if step.ConditionType == 2 {
+			limit = len(stepUsers(step))
+		}
+		if len(boxesByPosition[key]) > limit {
+			issues = append(issues, signatureIssue("box_count_exceeds_condition", step.PositionCode, fmt.Sprintf("%s has more signature boxes than allowed.", step.PositionName)))
+		}
+	}
+	return issues
+}
+
 func validateSignatureTemplate(template models.SignatureTemplate, configs []models.DocumentConfigStep, maxPages int) []models.SignatureValidationIssue {
 	issues := []models.SignatureValidationIssue{}
 	if template.SampleFileID == "" {
@@ -538,6 +587,9 @@ func validateSignatureTemplate(template models.SignatureTemplate, configs []mode
 		case 1:
 			if !hasSignerType(positionBoxes, "any") {
 				issues = append(issues, signatureIssue("condition_any_box_required", step.PositionCode, fmt.Sprintf("%s needs at least one any-signer box.", step.PositionName)))
+			}
+			if len(positionBoxes) > 1 {
+				issues = append(issues, signatureIssue("condition_any_box_count_invalid", step.PositionCode, fmt.Sprintf("%s needs exactly one signature box.", step.PositionName)))
 			}
 			for _, box := range positionBoxes {
 				if box.SignerType != "any" || box.SignerUser != "" {
@@ -584,6 +636,9 @@ func validateSignatureTemplate(template models.SignatureTemplate, configs []mode
 		case 3:
 			if !hasSignerType(positionBoxes, "external") {
 				issues = append(issues, signatureIssue("condition_external_box_required", step.PositionCode, fmt.Sprintf("%s needs at least one external signer box.", step.PositionName)))
+			}
+			if len(positionBoxes) > 1 {
+				issues = append(issues, signatureIssue("condition_external_box_count_invalid", step.PositionCode, fmt.Sprintf("%s needs exactly one external signer box.", step.PositionName)))
 			}
 			for _, box := range positionBoxes {
 				if box.SignerType != "external" || box.SignerUser != "" {

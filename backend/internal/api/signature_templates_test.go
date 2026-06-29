@@ -75,6 +75,44 @@ func TestValidateSignatureTemplateRejectsWrongSignerTypes(t *testing.T) {
 	}
 }
 
+func TestValidateSignatureTemplateRejectsExtraAnySignerBox(t *testing.T) {
+	configs := []models.DocumentConfigStep{
+		{PositionCode: "1", PositionName: "ผู้จัดทำ", ConditionType: 1},
+	}
+	template := models.SignatureTemplate{
+		SampleFileID: "file-1",
+		SampleFile:   &models.UploadedFile{PageCount: 1},
+		Boxes: []models.SignatureTemplateBox{
+			{PositionCode: "1", SignerSlot: 1, SignerType: "any", PageNo: 1, XRatio: 0.1, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+			{PositionCode: "1", SignerSlot: 2, SignerType: "any", PageNo: 1, XRatio: 0.4, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+		},
+	}
+
+	issues := validateSignatureTemplate(template, configs, 20)
+	if !hasSignatureIssue(issues, "condition_any_box_count_invalid") {
+		t.Fatalf("expected condition_any_box_count_invalid, got %#v", issues)
+	}
+}
+
+func TestValidateSignatureTemplateRejectsExtraExternalSignerBox(t *testing.T) {
+	configs := []models.DocumentConfigStep{
+		{PositionCode: "4", PositionName: "ลูกค้า", ConditionType: 3},
+	}
+	template := models.SignatureTemplate{
+		SampleFileID: "file-1",
+		SampleFile:   &models.UploadedFile{PageCount: 1},
+		Boxes: []models.SignatureTemplateBox{
+			{PositionCode: "4", SignerSlot: 1, SignerType: "external", PageNo: 1, XRatio: 0.1, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+			{PositionCode: "4", SignerSlot: 2, SignerType: "external", PageNo: 1, XRatio: 0.4, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+		},
+	}
+
+	issues := validateSignatureTemplate(template, configs, 20)
+	if !hasSignatureIssue(issues, "condition_external_box_count_invalid") {
+		t.Fatalf("expected condition_external_box_count_invalid, got %#v", issues)
+	}
+}
+
 func TestNormalizeAndValidateBoxRequestsRejectsStructuralErrors(t *testing.T) {
 	_, issues := normalizeAndValidateBoxRequests([]models.SignatureTemplateBoxRequest{
 		{PositionCode: "1", SignerSlot: 1, SignerType: "any", PageNo: 1, XRatio: 0.1, YRatio: 0.1, WidthRatio: 0.3, HeightRatio: 0.1},
@@ -89,6 +127,39 @@ func TestNormalizeAndValidateBoxRequestsRejectsStructuralErrors(t *testing.T) {
 	}
 	if !hasSignatureIssue(issues, "box_bounds_invalid") {
 		t.Fatalf("expected box_bounds_invalid, got %#v", issues)
+	}
+}
+
+func TestValidateSignatureBoxSaveLimitsAllowsIncompleteButRejectsExtra(t *testing.T) {
+	configs := []models.DocumentConfigStep{
+		{PositionCode: "1", PositionName: "ผู้จัดทำ", ConditionType: 1},
+		{PositionCode: "3", PositionName: "ผู้อนุมัติ", User01: "901:นาย A", User02: "902:นาย B", ConditionType: 2},
+	}
+	incomplete := []models.SignatureTemplateBoxRequest{
+		{PositionCode: "1", SignerSlot: 1, SignerType: "any"},
+	}
+	if issues := validateSignatureBoxSaveLimits(incomplete, configs); len(issues) != 0 {
+		t.Fatalf("expected incomplete template to be saveable, got %#v", issues)
+	}
+
+	extra := []models.SignatureTemplateBoxRequest{
+		{PositionCode: "1", SignerSlot: 1, SignerType: "any"},
+		{PositionCode: "1", SignerSlot: 2, SignerType: "any"},
+	}
+	issues := validateSignatureBoxSaveLimits(extra, configs)
+	if !hasSignatureIssue(issues, "box_count_exceeds_condition") {
+		t.Fatalf("expected box_count_exceeds_condition, got %#v", issues)
+	}
+}
+
+func TestValidateSignatureBoxSaveLimitsRejectsUnknownPosition(t *testing.T) {
+	issues := validateSignatureBoxSaveLimits([]models.SignatureTemplateBoxRequest{
+		{PositionCode: "999", SignerSlot: 1, SignerType: "any"},
+	}, []models.DocumentConfigStep{
+		{PositionCode: "1", PositionName: "ผู้จัดทำ", ConditionType: 1},
+	})
+	if !hasSignatureIssue(issues, "box_position_unknown") {
+		t.Fatalf("expected box_position_unknown, got %#v", issues)
 	}
 }
 

@@ -87,7 +87,9 @@ const stepViews = computed(() =>
             required,
             issues: validationByPosition.value.get(step.positionCode) || [],
             isActive: selectedPositionCode.value === step.positionCode,
-            isComplete: required > 0 && stepBoxes.length >= required && !(validationByPosition.value.get(step.positionCode) || []).length
+            isComplete: required > 0 && stepBoxes.length >= required && !(validationByPosition.value.get(step.positionCode) || []).length,
+            canAdd: canAddBoxForStep(step, stepBoxes),
+            addDisabledReason: addDisabledReasonForStep(step, stepBoxes)
         };
     })
 );
@@ -309,6 +311,11 @@ function addBox(step) {
         return;
     }
     const existing = boxesByPosition.value.get(step.positionCode) || [];
+    const required = requiredBoxesForStep(step);
+    if (existing.length >= required) {
+        toast.add({ severity: 'info', summary: 'เพิ่มกรอบครบแล้ว', detail: `${step.positionName} มีกรอบครบตามเงื่อนไขแล้ว`, life: 3000 });
+        return;
+    }
     const box = {
         clientKey: makeClientKey(),
         positionCode: step.positionCode,
@@ -567,6 +574,9 @@ function validateBoxes() {
         if (step.conditionType === 1 && !stepBoxes.some((box) => box.signerType === 'any')) {
             issues.push({ code: 'condition_any_box_required', positionCode: step.positionCode, message: `${step.positionName} ต้องมีกรอบอย่างน้อย 1 กรอบ` });
         }
+        if (step.conditionType === 1 && stepBoxes.length > 1) {
+            issues.push({ code: 'condition_any_box_count_invalid', positionCode: step.positionCode, message: `${step.positionName} ต้องมีได้ 1 กรอบเท่านั้น` });
+        }
         if (step.conditionType === 1 && stepBoxes.some((box) => box.signerType !== 'any' || box.signerUser)) {
             issues.push({ code: 'condition_any_type_invalid', positionCode: step.positionCode, message: `${step.positionName} ต้องเป็นกรอบแบบคนใดคนหนึ่งเท่านั้น` });
         }
@@ -591,6 +601,9 @@ function validateBoxes() {
         }
         if (step.conditionType === 3 && !stepBoxes.some((box) => box.signerType === 'external')) {
             issues.push({ code: 'condition_external_box_required', positionCode: step.positionCode, message: `${step.positionName} ต้องมีกรอบบุคคลภายนอก` });
+        }
+        if (step.conditionType === 3 && stepBoxes.length > 1) {
+            issues.push({ code: 'condition_external_box_count_invalid', positionCode: step.positionCode, message: `${step.positionName} ต้องมีได้ 1 กรอบเท่านั้น` });
         }
         if (step.conditionType === 3 && stepBoxes.some((box) => box.signerType !== 'external' || box.signerUser)) {
             issues.push({ code: 'condition_external_type_invalid', positionCode: step.positionCode, message: `${step.positionName} ต้องเป็นกรอบบุคคลภายนอกเท่านั้น` });
@@ -636,6 +649,17 @@ function stepUsers(step) {
 function requiredBoxesForStep(step) {
     if (Number(step.conditionType) === 2) return stepUsers(step).length;
     return 1;
+}
+
+function canAddBoxForStep(step, stepBoxes = []) {
+    return canAddBoxes.value && stepBoxes.length < requiredBoxesForStep(step);
+}
+
+function addDisabledReasonForStep(step, stepBoxes = []) {
+    if (!template.value?.sampleFileId) return 'ต้องอัปโหลด PDF ก่อน';
+    if (!canEdit.value) return 'Template นี้แก้ไขไม่ได้';
+    if (stepBoxes.length >= requiredBoxesForStep(step)) return 'เพิ่มครบแล้ว';
+    return '';
 }
 
 function conditionLabel(value) {
@@ -1000,15 +1024,15 @@ function recordDesignerEvent(event, extra = {}) {
                             <div class="step-status-row">
                                 <span :class="['box-count', { ok: step.isComplete, warn: step.issues.length > 0 }]">{{ step.boxes.length }}/{{ step.required }}</span>
                                 <Button
-                                    label="เพิ่มกรอบ"
-                                    icon="pi pi-plus"
+                                    :label="step.canAdd ? 'เพิ่มกรอบ' : step.addDisabledReason || 'เพิ่มกรอบ'"
+                                    :icon="step.canAdd ? 'pi pi-plus' : 'pi pi-check'"
                                     size="small"
-                                    :disabled="!canAddBoxes"
+                                    :disabled="!step.canAdd"
                                     @click.stop="addBox(step)"
                                 />
                             </div>
 
-                            <small v-if="!canAddBoxes" class="text-muted-color">ต้องอัปโหลด PDF ก่อน</small>
+                            <small v-if="step.addDisabledReason" class="text-muted-color">{{ step.addDisabledReason }}</small>
 
                             <div v-if="step.boxes.length" class="step-box-list">
                                 <button
