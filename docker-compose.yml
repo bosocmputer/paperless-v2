@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: paperless-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-paperless}
+      POSTGRES_USER: ${POSTGRES_USER:-paperless}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paperless_dev_password}
+    ports:
+      - "${POSTGRES_PORT:-54320}:5432"
+    volumes:
+      - paperless_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-paperless} -d ${POSTGRES_DB:-paperless}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    container_name: paperless-api
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_NAME: ${APP_NAME:-PaperLess V2}
+      APP_PORT: "8080"
+      APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:-http://localhost:5173,http://localhost:3070,http://192.168.2.109:3070}
+      DATABASE_URL: postgres://${POSTGRES_USER:-paperless}:${POSTGRES_PASSWORD:-paperless_dev_password}@postgres:5432/${POSTGRES_DB:-paperless}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-change-this-before-production}
+      JWT_TTL_HOURS: ${JWT_TTL_HOURS:-12}
+      SEED_SUPERADMIN_NAME: ${SEED_SUPERADMIN_NAME:-System Administrator}
+      SEED_SUPERADMIN_USERNAME: ${SEED_SUPERADMIN_USERNAME:-superadmin}
+      SEED_SUPERADMIN_PASSWORD: ${SEED_SUPERADMIN_PASSWORD:-superadmin}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: paperless-web
+    ports:
+      - "${WEB_PORT:-3070}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  paperless_postgres_data:
+
