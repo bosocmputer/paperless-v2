@@ -285,11 +285,23 @@ type SignTaskRequest struct {
 	SignatureDataURL string `json:"signatureDataUrl"`
 	DeviceID         string `json:"deviceId"`
 	LegalText        string `json:"legalText"`
+	LegalAccepted    bool   `json:"legalAccepted"`
 }
 
 type RejectTaskRequest struct {
 	Reason   string `json:"reason"`
 	DeviceID string `json:"deviceId"`
+}
+
+type SigningTaskEventRequest struct {
+	Event         string                    `json:"event"`
+	SessionID     string                    `json:"sessionId"`
+	ElapsedMS     int64                     `json:"elapsedMs"`
+	Viewport      SignatureDesignerViewport `json:"viewport"`
+	PDFPage       int                       `json:"pdfPage"`
+	PDFPageCount  int                       `json:"pdfPageCount"`
+	AttachmentCnt int                       `json:"attachmentCount"`
+	ErrorCode     string                    `json:"errorCode"`
 }
 
 type VerifyExternalOTPRequest struct {

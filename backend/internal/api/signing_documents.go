@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -18,6 +19,28 @@ import (
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 	"github.com/bosocmputer/paperless-v2/backend/internal/store"
 )
+
+const (
+	signingLegalTextVersion = "thai-eta-v1"
+	signingLegalText        = "ข้าพเจ้ายืนยันการลงลายเซ็นอิเล็กทรอนิกส์นี้ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ และยอมรับให้ใช้เป็นหลักฐานประกอบเอกสารนี้"
+	maxSigningEventBytes    = 8 * 1024
+)
+
+var signingUXEventNames = map[string]bool{
+	"task_open":         true,
+	"pdf_load_success":  true,
+	"pdf_load_error":    true,
+	"signature_started": true,
+	"signature_cleared": true,
+	"sign_attempt":      true,
+	"sign_success":      true,
+	"sign_error":        true,
+	"reject_success":    true,
+	"attachment_upload": true,
+	"blocked_not_turn":  true,
+	"blocked_signed":    true,
+	"blocked_rejected":  true,
+}
 
 func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 	documents, err := s.store.ListSigningDocuments(r.Context())
@@ -245,7 +268,70 @@ func (s *Server) getMySigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"document": document, "task": signer})
+	writeJSON(w, http.StatusOK, map[string]any{"document": document, "task": signer, "legal": signingLegalPayload()})
+}
+
+func (s *Server) recordMySigningTaskEvent(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r)
+	taskID := strings.TrimSpace(r.PathValue("taskId"))
+	signer, err := s.store.FindSigningTaskByID(r.Context(), taskID)
+	if errors.Is(err, store.ErrSigningTaskNotFound) || (err == nil && !strings.EqualFold(signer.SignerUser, user.Username)) {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot load signing task right now.")
+		return
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	req, err := decodeSigningTaskEventPayload(r.Body, maxSigningEventBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "signing_task_event_invalid", "Signing task event is invalid.")
+		return
+	}
+	metadata, err := normalizeSigningTaskEventMetadata(req, document, signer)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "signing_task_event_invalid", "Signing task event is invalid.")
+		return
+	}
+	if err := s.store.WriteAuditWithMetadata(r.Context(), user.ID, "signing_task.ux_event", "signing_task", signer.ID, clientIP(r), r.UserAgent(), metadata); err != nil {
+		s.logger.Warn("write signing task ux event failed", "error", err, "signerID", signer.ID)
+		writeError(w, http.StatusInternalServerError, "signing_task_event_failed", "Cannot record signing task event right now.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) uploadMySigningTaskAttachment(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r)
+	taskID := strings.TrimSpace(r.PathValue("taskId"))
+	signer, err := s.store.FindSigningTaskByID(r.Context(), taskID)
+	if errors.Is(err, store.ErrSigningTaskNotFound) || (err == nil && !strings.EqualFold(signer.SignerUser, user.Username)) {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot load signing task right now.")
+		return
+	}
+	if signer.Status != "pending" {
+		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
+		return
+	}
+	uploaded, note, err := s.readAndStoreSigningAttachment(w, r, user.ID)
+	if err != nil {
+		return
+	}
+	if err := s.store.AddSigningAttachment(r.Context(), signer.DocumentID, signer.ID, uploaded.ID, note, user.ID); err != nil {
+		s.logger.Error("add signing attachment failed", "error", err, "signerID", signer.ID)
+		writeError(w, http.StatusInternalServerError, "attachment_upload_failed", "Cannot attach file right now.")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"file": uploaded})
 }
 
 func (s *Server) signMySigningTask(w http.ResponseWriter, r *http.Request) {
@@ -256,13 +342,38 @@ func (s *Server) signMySigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
 		return
 	}
+	if !req.LegalAccepted {
+		writeError(w, http.StatusBadRequest, "legal_acceptance_required", "Legal acceptance is required before signing.")
+		return
+	}
+	signer, err := s.store.FindSigningTaskByID(r.Context(), taskID)
+	if errors.Is(err, store.ErrSigningTaskNotFound) || (err == nil && !strings.EqualFold(signer.SignerUser, user.Username)) {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot load signing task right now.")
+		return
+	}
+	if signer.Status != "pending" {
+		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
+		return
+	}
+	scope := "internal-sign:" + taskID
+	if s.replayIdempotentResponse(w, r, scope, user.ID) {
+		return
+	}
+	claimed := strings.TrimSpace(r.Header.Get("Idempotency-Key")) != ""
 	uploaded, err := s.storeSignatureImage(r.Context(), req.SignatureDataURL, user.ID)
 	if err != nil {
+		if claimed {
+			_ = s.store.ReleaseIdempotencyKey(context.Background(), scope, r.Header.Get("Idempotency-Key"), user.ID)
+		}
 		writeError(w, http.StatusBadRequest, "invalid_signature", err.Error())
 		return
 	}
-	result, err := s.store.SignInternalTask(r.Context(), taskID, user.Username, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent())
-	s.writeTaskMutationResult(w, r, result, err)
+	result, err := s.store.SignInternalTask(r.Context(), taskID, user.Username, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion)
+	s.writeTaskMutationResult(w, r, scope, user.ID, result, err)
 }
 
 func (s *Server) rejectMySigningTask(w http.ResponseWriter, r *http.Request) {
@@ -273,8 +384,17 @@ func (s *Server) rejectMySigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
 		return
 	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if req.Reason == "" {
+		writeError(w, http.StatusBadRequest, "reject_reason_required", "Reject reason is required.")
+		return
+	}
+	scope := "internal-reject:" + taskID
+	if s.replayIdempotentResponse(w, r, scope, user.ID) {
+		return
+	}
 	documentID, err := s.store.RejectInternalTask(r.Context(), taskID, user.Username, req.Reason, req.DeviceID, clientIP(r), r.UserAgent())
-	s.writeRejectResult(w, r, documentID, err)
+	s.writeRejectResult(w, r, scope, user.ID, documentID, err)
 }
 
 func (s *Server) verifyExternalOTP(w http.ResponseWriter, r *http.Request) {
@@ -307,7 +427,7 @@ func (s *Server) getPublicSigningDocument(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"document": document, "task": signer})
+	writeJSON(w, http.StatusOK, map[string]any{"document": document, "task": signer, "legal": signingLegalPayload()})
 }
 
 func (s *Server) getPublicSigningPDF(w http.ResponseWriter, r *http.Request) {
@@ -324,6 +444,55 @@ func (s *Server) getPublicSigningPDF(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, document.CurrentFile.StoragePath)
 }
 
+func (s *Server) recordPublicSigningTaskEvent(w http.ResponseWriter, r *http.Request) {
+	signer, ok := s.externalSignerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	req, err := decodeSigningTaskEventPayload(r.Body, maxSigningEventBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "signing_task_event_invalid", "Signing task event is invalid.")
+		return
+	}
+	metadata, err := normalizeSigningTaskEventMetadata(req, document, signer)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "signing_task_event_invalid", "Signing task event is invalid.")
+		return
+	}
+	if err := s.store.WriteAuditWithMetadata(r.Context(), "", "signing_task.ux_event", "signing_task", signer.ID, clientIP(r), r.UserAgent(), metadata); err != nil {
+		s.logger.Warn("write public signing task ux event failed", "error", err, "signerID", signer.ID)
+		writeError(w, http.StatusInternalServerError, "signing_task_event_failed", "Cannot record signing task event right now.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) uploadPublicSigningTaskAttachment(w http.ResponseWriter, r *http.Request) {
+	signer, ok := s.externalSignerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if signer.Status != "pending" {
+		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
+		return
+	}
+	uploaded, note, err := s.readAndStoreSigningAttachment(w, r, "")
+	if err != nil {
+		return
+	}
+	if err := s.store.AddSigningAttachment(r.Context(), signer.DocumentID, signer.ID, uploaded.ID, note, ""); err != nil {
+		s.logger.Error("add public signing attachment failed", "error", err, "signerID", signer.ID)
+		writeError(w, http.StatusInternalServerError, "attachment_upload_failed", "Cannot attach file right now.")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"file": uploaded})
+}
+
 func (s *Server) signPublicSigningTask(w http.ResponseWriter, r *http.Request) {
 	signer, ok := s.externalSignerFromRequest(w, r)
 	if !ok {
@@ -334,13 +503,29 @@ func (s *Server) signPublicSigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
 		return
 	}
+	if !req.LegalAccepted {
+		writeError(w, http.StatusBadRequest, "legal_acceptance_required", "Legal acceptance is required before signing.")
+		return
+	}
+	if signer.Status != "pending" {
+		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
+		return
+	}
+	scope := "public-sign:" + signer.ID
+	if s.replayIdempotentResponse(w, r, scope, "") {
+		return
+	}
+	claimed := strings.TrimSpace(r.Header.Get("Idempotency-Key")) != ""
 	uploaded, err := s.storeSignatureImage(r.Context(), req.SignatureDataURL, "")
 	if err != nil {
+		if claimed {
+			_ = s.store.ReleaseIdempotencyKey(context.Background(), scope, r.Header.Get("Idempotency-Key"), "")
+		}
 		writeError(w, http.StatusBadRequest, "invalid_signature", err.Error())
 		return
 	}
-	result, err := s.store.SignExternalTask(r.Context(), signer.ID, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent())
-	s.writeTaskMutationResult(w, r, result, err)
+	result, err := s.store.SignExternalTask(r.Context(), signer.ID, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion)
+	s.writeTaskMutationResult(w, r, scope, "", result, err)
 }
 
 func (s *Server) rejectPublicSigningTask(w http.ResponseWriter, r *http.Request) {
@@ -353,20 +538,32 @@ func (s *Server) rejectPublicSigningTask(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
 		return
 	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if req.Reason == "" {
+		writeError(w, http.StatusBadRequest, "reject_reason_required", "Reject reason is required.")
+		return
+	}
+	scope := "public-reject:" + signer.ID
+	if s.replayIdempotentResponse(w, r, scope, "") {
+		return
+	}
 	documentID, err := s.store.RejectExternalTask(r.Context(), signer.ID, req.Reason, req.DeviceID, clientIP(r), r.UserAgent())
-	s.writeRejectResult(w, r, documentID, err)
+	s.writeRejectResult(w, r, scope, "", documentID, err)
 }
 
-func (s *Server) writeTaskMutationResult(w http.ResponseWriter, r *http.Request, result store.SignTaskResult, err error) {
+func (s *Server) writeTaskMutationResult(w http.ResponseWriter, r *http.Request, idempotencyScope, actorUserID string, result store.SignTaskResult, err error) {
 	if errors.Is(err, store.ErrSigningTaskNotFound) {
+		s.releaseIdempotency(idempotencyScope, actorUserID, r)
 		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
 		return
 	}
 	if errors.Is(err, store.ErrSigningTaskUnavailable) {
+		s.releaseIdempotency(idempotencyScope, actorUserID, r)
 		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
 		return
 	}
 	if err != nil {
+		s.releaseIdempotency(idempotencyScope, actorUserID, r)
 		s.logger.Error("sign task failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot sign document right now.")
 		return
@@ -381,25 +578,156 @@ func (s *Server) writeTaskMutationResult(w http.ResponseWriter, r *http.Request,
 		s.lockCompletedDocument(r.Context(), result.DocumentID, "")
 	}
 	document, _ := s.store.FindSigningDocumentByID(r.Context(), result.DocumentID)
-	writeJSON(w, http.StatusOK, map[string]any{"document": document})
+	payload := map[string]any{"document": document}
+	s.completeIdempotency(idempotencyScope, actorUserID, r, http.StatusOK, payload)
+	writeJSON(w, http.StatusOK, payload)
 }
 
-func (s *Server) writeRejectResult(w http.ResponseWriter, r *http.Request, documentID string, err error) {
+func (s *Server) writeRejectResult(w http.ResponseWriter, r *http.Request, idempotencyScope, actorUserID, documentID string, err error) {
 	if errors.Is(err, store.ErrSigningTaskNotFound) {
+		s.releaseIdempotency(idempotencyScope, actorUserID, r)
 		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
 		return
 	}
 	if errors.Is(err, store.ErrSigningTaskUnavailable) {
+		s.releaseIdempotency(idempotencyScope, actorUserID, r)
 		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
 		return
 	}
 	if err != nil {
+		s.releaseIdempotency(idempotencyScope, actorUserID, r)
 		s.logger.Error("reject task failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "reject_task_failed", "Cannot reject document right now.")
 		return
 	}
 	document, _ := s.store.FindSigningDocumentByID(r.Context(), documentID)
-	writeJSON(w, http.StatusOK, map[string]any{"document": document})
+	payload := map[string]any{"document": document}
+	s.completeIdempotency(idempotencyScope, actorUserID, r, http.StatusOK, payload)
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) replayIdempotentResponse(w http.ResponseWriter, r *http.Request, scope, actorUserID string) bool {
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if key == "" {
+		return false
+	}
+	claim, err := s.store.ClaimIdempotencyKey(r.Context(), scope, key, actorUserID)
+	if errors.Is(err, store.ErrIdempotencyInProgress) {
+		writeError(w, http.StatusConflict, "idempotency_in_progress", "The same request is still being processed.")
+		return true
+	}
+	if err != nil {
+		s.logger.Error("claim idempotency key failed", "error", err, "scope", scope)
+		writeError(w, http.StatusInternalServerError, "idempotency_failed", "Cannot process duplicate request guard right now.")
+		return true
+	}
+	if claim.Claimed {
+		return false
+	}
+	writeRawJSON(w, claim.ResponseCode, claim.Response)
+	return true
+}
+
+func (s *Server) completeIdempotency(scope, actorUserID string, r *http.Request, status int, payload any) {
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if key == "" {
+		return
+	}
+	if err := s.store.CompleteIdempotencyKey(context.Background(), scope, key, actorUserID, status, payload); err != nil {
+		s.logger.Warn("complete idempotency key failed", "error", err, "scope", scope)
+	}
+}
+
+func (s *Server) releaseIdempotency(scope, actorUserID string, r *http.Request) {
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if key == "" {
+		return
+	}
+	if err := s.store.ReleaseIdempotencyKey(context.Background(), scope, key, actorUserID); err != nil {
+		s.logger.Warn("release idempotency key failed", "error", err, "scope", scope)
+	}
+}
+
+func taskUnavailableCode(status string) string {
+	switch status {
+	case "signed":
+		return "already_signed"
+	case "rejected":
+		return "already_rejected"
+	case "waiting":
+		return "signing_task_not_turn"
+	case "skipped":
+		return "signing_task_skipped"
+	default:
+		return "signing_task_unavailable"
+	}
+}
+
+func taskUnavailableMessage(status string) string {
+	switch status {
+	case "signed":
+		return "This signing task was already signed."
+	case "rejected":
+		return "This signing task was already rejected."
+	case "waiting":
+		return "This signing task is not available yet."
+	case "skipped":
+		return "This signing task was skipped by workflow condition."
+	default:
+		return "This signing task is not available."
+	}
+}
+
+func signingLegalPayload() map[string]string {
+	return map[string]string{
+		"text":    signingLegalText,
+		"version": signingLegalTextVersion,
+	}
+}
+
+func decodeSigningTaskEventPayload(reader io.Reader, maxBytes int64) (models.SigningTaskEventRequest, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return models.SigningTaskEventRequest{}, err
+	}
+	if int64(len(data)) > maxBytes {
+		return models.SigningTaskEventRequest{}, fmt.Errorf("signing task event too large")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var req models.SigningTaskEventRequest
+	if err := decoder.Decode(&req); err != nil {
+		return models.SigningTaskEventRequest{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return models.SigningTaskEventRequest{}, fmt.Errorf("signing task event invalid")
+	}
+	return req, nil
+}
+
+func normalizeSigningTaskEventMetadata(req models.SigningTaskEventRequest, document models.SigningDocument, signer models.SigningDocumentSigner) (map[string]any, error) {
+	event := strings.TrimSpace(req.Event)
+	if !signingUXEventNames[event] {
+		return nil, fmt.Errorf("invalid signing task event")
+	}
+	return map[string]any{
+		"event":           event,
+		"sessionId":       truncateForMetadata(req.SessionID, 80),
+		"docFormatCode":   document.DocFormatCode,
+		"positionCode":    signer.PositionCode,
+		"conditionType":   safeConditionType(signer.ConditionType),
+		"signerType":      signer.SignerType,
+		"taskStatus":      signer.Status,
+		"elapsedMs":       clampInt64(req.ElapsedMS, 0, 24*60*60*1000),
+		"pdfPage":         clampInt(req.PDFPage, 0, 500),
+		"pdfPageCount":    clampInt(req.PDFPageCount, 0, 500),
+		"attachmentCount": clampInt(req.AttachmentCnt, 0, 20),
+		"errorCode":       truncateForMetadata(req.ErrorCode, 80),
+		"viewport": map[string]any{
+			"width":  clampInt(req.Viewport.Width, 0, 10000),
+			"height": clampInt(req.Viewport.Height, 0, 10000),
+		},
+	}, nil
 }
 
 func (s *Server) lockCompletedDocument(ctx context.Context, documentID, docNo string) (bool, map[string]any) {
@@ -461,6 +789,56 @@ func (s *Server) storeSignatureImage(ctx context.Context, dataURL, actorID strin
 		return models.UploadedFile{}, fmt.Errorf("signature image must be 2 MB or smaller")
 	}
 	return s.storeUploadedBytes(ctx, data, "signature"+ext, "signature"+ext, contentType, ext, 0, actorID)
+}
+
+func (s *Server) readAndStoreSigningAttachment(w http.ResponseWriter, r *http.Request, actorID string) (models.UploadedFile, string, error) {
+	maxBytes := s.cfg.MaxUploadMB * 1024 * 1024
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+1024)
+	if err := r.ParseMultipartForm(maxBytes + 1024); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_form", "Attachment form is invalid.")
+		return models.UploadedFile{}, "", err
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "attachment_file_required", "Attachment file is required.")
+		return models.UploadedFile{}, "", err
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil || int64(len(data)) > maxBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "attachment_too_large", fmt.Sprintf("Attachment must be %d MB or smaller.", s.cfg.MaxUploadMB))
+		return models.UploadedFile{}, "", fmt.Errorf("attachment too large")
+	}
+	contentType, ext, pageCount, err := detectSigningAttachmentType(data)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_attachment", err.Error())
+		return models.UploadedFile{}, "", err
+	}
+	note := truncateForMetadata(r.FormValue("note"), 500)
+	uploaded, err := s.storeUploadedBytes(r.Context(), data, filepath.Base(header.Filename), "attachment"+ext, contentType, ext, pageCount, actorID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "attachment_upload_failed", "Cannot store attachment right now.")
+		return models.UploadedFile{}, "", err
+	}
+	return uploaded, note, nil
+}
+
+func detectSigningAttachmentType(data []byte) (string, string, int, error) {
+	if isPDFBytes(data) {
+		pageCount, err := readPDFPageCount(data)
+		if err != nil || pageCount <= 0 {
+			return "", "", 0, fmt.Errorf("PDF attachment must be readable")
+		}
+		return "application/pdf", ".pdf", pageCount, nil
+	}
+	if len(data) >= 8 && string(data[:8]) == "\x89PNG\r\n\x1a\n" {
+		return "image/png", ".png", 0, nil
+	}
+	if len(data) >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff {
+		return "image/jpeg", ".jpg", 0, nil
+	}
+	return "", "", 0, fmt.Errorf("Attachment must be PDF, PNG, or JPEG")
 }
 
 func (s *Server) storeUploadedBytes(ctx context.Context, data []byte, originalName, fallbackName, contentType, ext string, pageCount int, actorID string) (models.UploadedFile, error) {

@@ -1,10 +1,27 @@
 import AppLayout from '@/layout/AppLayout.vue';
+import SignerLayout from '@/layout/SignerLayout.vue';
 import { authStore } from '@/stores/auth';
 import { createRouter, createWebHistory } from 'vue-router';
 
 const router = createRouter({
     history: createWebHistory(),
     routes: [
+        {
+            path: '/',
+            component: SignerLayout,
+            children: [
+                {
+                    path: '/signing/tasks',
+                    name: 'my-signing-tasks',
+                    component: () => import('@/views/signing/MySigningTasks.vue')
+                },
+                {
+                    path: '/signing/tasks/:taskId',
+                    name: 'my-signing-task',
+                    component: () => import('@/views/signing/SigningTask.vue')
+                }
+            ]
+        },
         {
             path: '/',
             component: AppLayout,
@@ -54,16 +71,6 @@ const router = createRouter({
                     name: 'signing-document-detail',
                     component: () => import('@/views/signing/SigningDocumentDetail.vue'),
                     meta: { role: 'admin' }
-                },
-                {
-                    path: '/signing/tasks',
-                    name: 'my-signing-tasks',
-                    component: () => import('@/views/signing/MySigningTasks.vue')
-                },
-                {
-                    path: '/signing/tasks/:taskId',
-                    name: 'my-signing-task',
-                    component: () => import('@/views/signing/SigningTask.vue')
                 }
             ]
         },
@@ -95,11 +102,11 @@ router.beforeEach(async (to) => {
     if (to.name === 'public-signing') return true;
 
     if (to.meta.public) {
-        if (authStore.isAuthenticated()) return { name: 'dashboard' };
+        if (authStore.isAuthenticated()) return authStore.user?.role === 'user' ? { name: 'my-signing-tasks' } : { name: 'dashboard' };
         return true;
     }
 
-    if (!authStore.isAuthenticated()) return { name: 'login' };
+    if (!authStore.isAuthenticated()) return { name: 'login', query: { redirect: to.fullPath } };
 
     if (!authStore.user) {
         try {
@@ -110,8 +117,12 @@ router.beforeEach(async (to) => {
         }
     }
 
+    if (to.name === 'dashboard' && authStore.user?.role === 'user') {
+        return { name: 'my-signing-tasks' };
+    }
+
     if (to.meta.role && authStore.user?.role !== to.meta.role) {
-        return { name: 'dashboard' };
+        return authStore.user?.role === 'user' ? { name: 'my-signing-tasks' } : { name: 'dashboard' };
     }
 
     return true;

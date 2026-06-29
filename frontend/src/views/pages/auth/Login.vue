@@ -2,9 +2,10 @@
 import FloatingConfigurator from '@/components/FloatingConfigurator.vue';
 import { authStore } from '@/stores/auth';
 import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 
+const route = useRoute();
 const router = useRouter();
 const toast = useToast();
 const username = ref('superadmin');
@@ -17,7 +18,12 @@ async function submit() {
     loading.value = true;
     try {
         await authStore.login(username.value, password.value);
-        router.push({ name: 'dashboard' });
+        const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '';
+        if (redirect && redirect.startsWith('/')) {
+            router.push(redirect);
+        } else {
+            router.push(authStore.user?.role === 'user' ? { name: 'my-signing-tasks' } : { name: 'dashboard' });
+        }
     } catch (err) {
         error.value = err.message;
         toast.add({
@@ -93,4 +99,3 @@ async function submit() {
     margin-right: 1rem;
 }
 </style>
-

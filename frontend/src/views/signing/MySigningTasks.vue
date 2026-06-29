@@ -51,41 +51,193 @@ function formatDate(value) {
 </script>
 
 <template>
-    <div class="card">
-        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+    <section class="tasks-page">
+        <header class="tasks-header">
             <div>
-                <div class="font-semibold text-xl mb-1">เอกสารรอเซ็น</div>
-                <p class="text-muted-color m-0">เอกสารที่ถึงลำดับของคุณแล้ว</p>
+                <h1>เอกสารรอเซ็น</h1>
+                <p>เอกสารจะแสดงเมื่อถึงลำดับของคุณแล้ว</p>
             </div>
-            <div class="flex gap-2">
-                <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเอกสาร" class="w-full sm:w-72" />
-                <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadTasks" />
-            </div>
+            <Tag :value="`${rows.length} งาน`" severity="info" />
+        </header>
+
+        <div class="task-search">
+            <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร, คู่ค้า, position" />
+            <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadTasks" />
         </div>
 
-        <DataTable :value="filteredRows" :loading="loading" dataKey="signer.id" paginator :rows="10" responsiveLayout="scroll" stripedRows>
-            <template #empty>
-                <div class="py-6 text-center text-muted-color">{{ searchQuery ? 'ไม่พบงานที่ค้นหา' : 'ไม่มีเอกสารรอเซ็น' }}</div>
-            </template>
-            <Column header="เอกสาร">
-                <template #body="{ data }">
-                    <div class="font-semibold">{{ data.doc.docNo }}</div>
-                    <div class="text-sm text-muted-color">{{ data.doc.docFormatCode }} · {{ data.doc.partyName || data.doc.partyCode || '-' }}</div>
-                </template>
-            </Column>
-            <Column header="Position">
-                <template #body="{ data }">
-                    <Tag :value="data.signer.positionName" severity="info" />
-                </template>
-            </Column>
-            <Column header="วันที่เอกสาร">
-                <template #body="{ data }">{{ formatDate(data.doc.docDate) }}</template>
-            </Column>
-            <Column header="จัดการ" style="width: 9rem">
-                <template #body="{ data }">
-                    <Button label="เปิดเซ็น" icon="pi pi-pencil" @click="openTask(data.signer.id)" />
-                </template>
-            </Column>
-        </DataTable>
-    </div>
+        <div v-if="loading" class="task-state">
+            <i class="pi pi-spin pi-spinner"></i>
+            <span>กำลังโหลดเอกสารรอเซ็น</span>
+        </div>
+
+        <div v-else-if="filteredRows.length === 0" class="empty-state">
+            <i class="pi pi-inbox"></i>
+            <strong>{{ searchQuery ? 'ไม่พบงานที่ค้นหา' : 'ยังไม่มีเอกสารที่ถึงลำดับของคุณ' }}</strong>
+            <p>{{ searchQuery ? 'ลองค้นหาด้วยเลขเอกสารหรือชื่อคู่ค้าอีกครั้ง' : 'เมื่อขั้นตอนก่อนหน้าเซ็นครบ เอกสารจะปรากฏในหน้านี้' }}</p>
+        </div>
+
+        <div v-else class="task-list">
+            <article v-for="{ doc, signer } in filteredRows" :key="signer.id" class="task-card">
+                <div class="task-main">
+                    <div>
+                        <strong>{{ doc.docNo }}</strong>
+                        <span>{{ doc.docFormatCode }} · {{ doc.partyName || doc.partyCode || '-' }}</span>
+                    </div>
+                    <Tag :value="signer.positionName" severity="info" />
+                </div>
+                <dl>
+                    <div>
+                        <dt>วันที่เอกสาร</dt>
+                        <dd>{{ formatDate(doc.docDate) }}</dd>
+                    </div>
+                    <div>
+                        <dt>สถานะ</dt>
+                        <dd>รอเซ็น</dd>
+                    </div>
+                </dl>
+                <Button label="เปิดเอกสาร" icon="pi pi-pencil" class="open-button" @click="openTask(signer.id)" />
+            </article>
+        </div>
+    </section>
 </template>
+
+<style scoped>
+.tasks-page {
+    min-height: calc(100dvh - 56px);
+    padding: 0.85rem;
+    display: grid;
+    align-content: start;
+    gap: 0.85rem;
+}
+
+.tasks-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.tasks-header h1 {
+    margin: 0;
+    font-size: 1.35rem;
+    line-height: 1.2;
+}
+
+.tasks-header p {
+    margin: 0.25rem 0 0;
+    color: var(--text-color-secondary);
+}
+
+.task-search {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.6rem;
+}
+
+.task-search :deep(.p-inputtext) {
+    min-height: 44px;
+}
+
+.task-state,
+.empty-state {
+    min-height: 42dvh;
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 0.65rem;
+    text-align: center;
+    color: var(--text-color-secondary);
+}
+
+.empty-state {
+    border: 1px solid var(--surface-border);
+    background: var(--surface-card);
+    border-radius: 8px;
+    padding: 1.25rem;
+}
+
+.empty-state i {
+    font-size: 2rem;
+    color: var(--primary-color);
+}
+
+.empty-state strong {
+    color: var(--text-color);
+}
+
+.empty-state p {
+    margin: 0;
+    max-width: 34rem;
+}
+
+.task-list {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.task-card {
+    border: 1px solid var(--surface-border);
+    background: var(--surface-card);
+    border-radius: 8px;
+    padding: 0.85rem;
+    display: grid;
+    gap: 0.75rem;
+}
+
+.task-main {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.task-main > div {
+    min-width: 0;
+    display: grid;
+    gap: 0.2rem;
+}
+
+.task-main strong,
+.task-main span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.task-main span,
+dt {
+    color: var(--text-color-secondary);
+}
+
+dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+}
+
+dt {
+    font-size: 0.78rem;
+}
+
+dd {
+    margin: 0.15rem 0 0;
+    font-weight: 600;
+}
+
+.open-button {
+    min-height: 44px;
+}
+
+@media (min-width: 760px) {
+    .tasks-page {
+        max-width: 920px;
+        margin: 0 auto;
+        padding-top: 1.25rem;
+    }
+
+    .task-list {
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    }
+}
+</style>

@@ -33,7 +33,14 @@ var (
 	ErrSigningTaskUnavailable    = errors.New("signing task is not available")
 	ErrExternalTokenNotFound     = errors.New("external signing token not found")
 	ErrExternalTokenInvalid      = errors.New("external signing token invalid")
+	ErrIdempotencyInProgress     = errors.New("idempotency key is already in progress")
 )
+
+type IdempotencyClaim struct {
+	Claimed      bool
+	Response     json.RawMessage
+	ResponseCode int
+}
 
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
@@ -515,6 +522,85 @@ func (s *Store) WriteAuditWithMetadata(ctx context.Context, actorUserID, action,
 INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, ip_address, user_agent, metadata)
 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 `, actor, action, targetType, targetID, ipAddress, userAgent, string(metadataJSON))
+	return err
+}
+
+func (s *Store) ClaimIdempotencyKey(ctx context.Context, scope, key, actorUserID string) (IdempotencyClaim, error) {
+	scope = strings.TrimSpace(scope)
+	key = strings.TrimSpace(key)
+	if scope == "" || key == "" {
+		return IdempotencyClaim{Claimed: true}, nil
+	}
+	if len(key) > 160 {
+		key = key[:160]
+	}
+
+	var actor any
+	if actorUserID != "" {
+		actor = actorUserID
+	}
+	tag, err := s.pool.Exec(ctx, `
+INSERT INTO idempotency_keys (scope, key, actor_user_id)
+VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING
+`, scope, key, actor)
+	if err != nil {
+		return IdempotencyClaim{}, err
+	}
+	if tag.RowsAffected() == 1 {
+		return IdempotencyClaim{Claimed: true}, nil
+	}
+
+	var status int
+	var body []byte
+	err = s.pool.QueryRow(ctx, `
+SELECT response_status, response_body
+FROM idempotency_keys
+WHERE scope = $1 AND key = $2 AND COALESCE(actor_user_id::text, '') = COALESCE(NULLIF($3, '')::uuid::text, '')
+`, scope, key, actorUserID).Scan(&status, &body)
+	if err != nil {
+		return IdempotencyClaim{}, err
+	}
+	if status == 0 {
+		return IdempotencyClaim{}, ErrIdempotencyInProgress
+	}
+	return IdempotencyClaim{ResponseCode: status, Response: json.RawMessage(body)}, nil
+}
+
+func (s *Store) CompleteIdempotencyKey(ctx context.Context, scope, key, actorUserID string, status int, body any) error {
+	scope = strings.TrimSpace(scope)
+	key = strings.TrimSpace(key)
+	if scope == "" || key == "" {
+		return nil
+	}
+	if len(key) > 160 {
+		key = key[:160]
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+UPDATE idempotency_keys
+SET response_status = $4, response_body = $5::jsonb
+WHERE scope = $1 AND key = $2 AND COALESCE(actor_user_id::text, '') = COALESCE(NULLIF($3, '')::uuid::text, '')
+`, scope, key, actorUserID, status, string(data))
+	return err
+}
+
+func (s *Store) ReleaseIdempotencyKey(ctx context.Context, scope, key, actorUserID string) error {
+	scope = strings.TrimSpace(scope)
+	key = strings.TrimSpace(key)
+	if scope == "" || key == "" {
+		return nil
+	}
+	if len(key) > 160 {
+		key = key[:160]
+	}
+	_, err := s.pool.Exec(ctx, `
+DELETE FROM idempotency_keys
+WHERE scope = $1 AND key = $2 AND response_status = 0 AND COALESCE(actor_user_id::text, '') = COALESCE(NULLIF($3, '')::uuid::text, '')
+`, scope, key, actorUserID)
 	return err
 }
 

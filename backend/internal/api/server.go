@@ -58,11 +58,15 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /api/signing-documents/external-token/{signerId}/regenerate", s.requireAdmin(http.HandlerFunc(s.regenerateExternalToken)))
 	mux.Handle("GET /api/my/signing-tasks", s.requireAuth(http.HandlerFunc(s.listMySigningTasks)))
 	mux.Handle("GET /api/my/signing-tasks/{taskId}", s.requireAuth(http.HandlerFunc(s.getMySigningTask)))
+	mux.Handle("POST /api/my/signing-tasks/{taskId}/events", s.requireAuth(http.HandlerFunc(s.recordMySigningTaskEvent)))
+	mux.Handle("POST /api/my/signing-tasks/{taskId}/attachments", s.requireAuth(http.HandlerFunc(s.uploadMySigningTaskAttachment)))
 	mux.Handle("POST /api/my/signing-tasks/{taskId}/sign", s.requireAuth(http.HandlerFunc(s.signMySigningTask)))
 	mux.Handle("POST /api/my/signing-tasks/{taskId}/reject", s.requireAuth(http.HandlerFunc(s.rejectMySigningTask)))
 	mux.HandleFunc("POST /api/public/signing/{token}/verify-otp", s.verifyExternalOTP)
 	mux.HandleFunc("GET /api/public/signing/{token}", s.getPublicSigningDocument)
 	mux.HandleFunc("GET /api/public/signing/{token}/pdf", s.getPublicSigningPDF)
+	mux.HandleFunc("POST /api/public/signing/{token}/events", s.recordPublicSigningTaskEvent)
+	mux.HandleFunc("POST /api/public/signing/{token}/attachments", s.uploadPublicSigningTaskAttachment)
 	mux.HandleFunc("POST /api/public/signing/{token}/sign", s.signPublicSigningTask)
 	mux.HandleFunc("POST /api/public/signing/{token}/reject", s.rejectPublicSigningTask)
 
@@ -81,7 +85,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		}
 		if r.Method == http.MethodOptions {

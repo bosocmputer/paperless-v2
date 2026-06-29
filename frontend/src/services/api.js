@@ -36,6 +36,12 @@ function withQuery(path, params = {}) {
     return qs ? `${path}?${qs}` : path;
 }
 
+function splitIdempotencyPayload(payload = {}) {
+    const { idempotencyKey, ...body } = payload;
+    const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
+    return { body, headers };
+}
+
 export const api = {
     login(username, password) {
         return request('/api/auth/login', {
@@ -171,15 +177,34 @@ export const api = {
         return request(`/api/my/signing-tasks/${taskId}`);
     },
     signMyTask(taskId, payload) {
+        const { body, headers } = splitIdempotencyPayload(payload);
         return request(`/api/my/signing-tasks/${taskId}/sign`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+        });
+    },
+    rejectMyTask(taskId, payload) {
+        const { body, headers } = splitIdempotencyPayload(payload);
+        return request(`/api/my/signing-tasks/${taskId}/reject`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+        });
+    },
+    recordMySigningTaskEvent(taskId, payload) {
+        return request(`/api/my/signing-tasks/${taskId}/events`, {
             method: 'POST',
             body: JSON.stringify(payload)
         });
     },
-    rejectMyTask(taskId, payload) {
-        return request(`/api/my/signing-tasks/${taskId}/reject`, {
+    uploadMyTaskAttachment(taskId, file, note = '') {
+        const form = new FormData();
+        form.set('file', file);
+        if (note) form.set('note', note);
+        return request(`/api/my/signing-tasks/${taskId}/attachments`, {
             method: 'POST',
-            body: JSON.stringify(payload)
+            body: form
         });
     },
     verifyExternalOTP(token, otp) {
@@ -194,17 +219,36 @@ export const api = {
         });
     },
     signPublicTask(token, sessionToken, payload) {
+        const { body, headers } = splitIdempotencyPayload(payload);
         return request(`/api/public/signing/${token}/sign`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}`, ...headers },
+            body: JSON.stringify(body)
+        });
+    },
+    rejectPublicTask(token, sessionToken, payload) {
+        const { body, headers } = splitIdempotencyPayload(payload);
+        return request(`/api/public/signing/${token}/reject`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}`, ...headers },
+            body: JSON.stringify(body)
+        });
+    },
+    recordPublicSigningTaskEvent(token, sessionToken, payload) {
+        return request(`/api/public/signing/${token}/events`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${sessionToken}` },
             body: JSON.stringify(payload)
         });
     },
-    rejectPublicTask(token, sessionToken, payload) {
-        return request(`/api/public/signing/${token}/reject`, {
+    uploadPublicTaskAttachment(token, sessionToken, file, note = '') {
+        const form = new FormData();
+        form.set('file', file);
+        if (note) form.set('note', note);
+        return request(`/api/public/signing/${token}/attachments`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${sessionToken}` },
-            body: JSON.stringify(payload)
+            body: form
         });
     },
     publicSigningPDFUrl(token) {

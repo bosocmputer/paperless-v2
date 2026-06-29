@@ -92,6 +92,15 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+func writeRawJSON(w http.ResponseWriter, status int, payload []byte) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	if len(payload) == 0 {
+		payload = []byte("{}")
+	}
+	_, _ = w.Write(payload)
+}
+
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, models.APIError{Error: code, Message: message})
 }

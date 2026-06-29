@@ -242,12 +242,12 @@ func (s *Store) FindSigningTaskByID(ctx context.Context, taskID string) (models.
 	return signer, err
 }
 
-func (s *Store) SignInternalTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent string) (SignTaskResult, error) {
-	return s.signTask(ctx, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, false)
+func (s *Store) SignInternalTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion string) (SignTaskResult, error) {
+	return s.signTask(ctx, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, false)
 }
 
-func (s *Store) SignExternalTask(ctx context.Context, taskID, signatureFileID, deviceID, ipAddress, userAgent string) (SignTaskResult, error) {
-	return s.signTask(ctx, taskID, "", signatureFileID, deviceID, ipAddress, userAgent, true)
+func (s *Store) SignExternalTask(ctx context.Context, taskID, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion string) (SignTaskResult, error) {
+	return s.signTask(ctx, taskID, "", signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, true)
 }
 
 func (s *Store) RejectInternalTask(ctx context.Context, taskID, username, reason, deviceID, ipAddress, userAgent string) (string, error) {
@@ -551,7 +551,7 @@ ORDER BY a.created_at DESC
 	return out, rows.Err()
 }
 
-func (s *Store) signTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent string, external bool) (SignTaskResult, error) {
+func (s *Store) signTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion string, external bool) (SignTaskResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return SignTaskResult{}, err
@@ -588,8 +588,10 @@ WHERE id = $1
 		return SignTaskResult{}, err
 	}
 	if err := insertSigningEvent(ctx, tx, signer.DocumentID, "", signer.SignerName, "signed", signer.PositionName+" เซ็นเอกสารแล้ว", ipAddress, userAgent, map[string]any{
-		"signerId": taskID,
-		"position": signer.PositionCode,
+		"signerId":         taskID,
+		"position":         signer.PositionCode,
+		"legalTextVersion": strings.TrimSpace(legalTextVersion),
+		"legalAccepted":    true,
 	}); err != nil {
 		return SignTaskResult{}, err
 	}
