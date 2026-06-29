@@ -12,6 +12,7 @@ const configs = ref([]);
 const templateStates = ref({});
 const loading = ref(false);
 const error = ref('');
+const searchQuery = ref('');
 
 const rows = computed(() => {
     const groups = new Map();
@@ -59,6 +60,15 @@ const rows = computed(() => {
 const readyCount = computed(() => rows.value.filter((row) => row.status.severity === 'success').length);
 const needsWorkCount = computed(() => rows.value.filter((row) => ['warn', 'danger'].includes(row.status.severity)).length);
 const noPdfCount = computed(() => rows.value.filter((row) => !row.template?.sampleFileId).length);
+const filteredRows = computed(() => {
+    const query = normalizeSearch(searchQuery.value);
+    if (!query) return rows.value;
+    return rows.value.filter((row) =>
+        normalizeSearch(
+            `${row.docFormatCode} ${formatName(row)} ${formatPattern(row)} ${row.status.label} ${statusHelper(row)} ${positionPreview(row)} ${pdfLabel(row)} ${pdfFileName(row)}`
+        ).includes(query)
+    );
+});
 
 onMounted(loadPage);
 
@@ -201,6 +211,10 @@ function positionPreview(row) {
 function sameCode(left, right) {
     return String(left || '').toLowerCase() === String(right || '').toLowerCase();
 }
+
+function normalizeSearch(value) {
+    return String(value || '').toLowerCase().trim();
+}
 </script>
 
 <template>
@@ -211,6 +225,7 @@ function sameCode(left, right) {
                 <p class="text-muted-color m-0">เลือกเอกสารที่ตั้งค่า Position แล้ว เพื่ออัปโหลด PDF และวางกรอบลายเซ็นของเอกสารนั้น</p>
             </div>
             <div class="header-actions">
+                <InputText v-model="searchQuery" type="search" placeholder="ค้นหา doc, PDF, สถานะ" class="w-full sm:w-80" />
                 <Button icon="pi pi-refresh" severity="secondary" outlined :loading="loading" aria-label="โหลดใหม่" @click="loadPage" />
                 <Button label="แก้ Config เอกสาร" icon="pi pi-file-edit" severity="secondary" outlined @click="openDocumentConfig" />
             </div>
@@ -237,13 +252,13 @@ function sameCode(left, right) {
             </div>
         </div>
 
-        <DataTable :value="rows" :loading="loading" dataKey="docFormatCode" responsiveLayout="scroll" stripedRows>
+        <DataTable :value="filteredRows" :loading="loading" dataKey="docFormatCode" responsiveLayout="scroll" stripedRows>
             <template #empty>
                 <div class="empty-state">
                     <i class="pi pi-file-edit"></i>
-                    <div class="font-semibold">ยังไม่มีเอกสารสำหรับตั้งค่ากรอบลายเซ็น</div>
-                    <p class="text-muted-color m-0">เพิ่ม Position ใน Config เอกสารก่อน แล้วกลับมาวางกรอบลายเซ็นจากหน้านี้</p>
-                    <Button label="ไปที่ Config เอกสาร" icon="pi pi-file-edit" class="mt-3" @click="openDocumentConfig" />
+                    <div class="font-semibold">{{ searchQuery ? 'ไม่พบ Template ที่ค้นหา' : 'ยังไม่มีเอกสารสำหรับตั้งค่ากรอบลายเซ็น' }}</div>
+                    <p class="text-muted-color m-0">{{ searchQuery ? 'ลองค้นหาด้วย doc code, ชื่อ PDF หรือสถานะอื่น' : 'เพิ่ม Position ใน Config เอกสารก่อน แล้วกลับมาวางกรอบลายเซ็นจากหน้านี้' }}</p>
+                    <Button v-if="!searchQuery" label="ไปที่ Config เอกสาร" icon="pi pi-file-edit" class="mt-3" @click="openDocumentConfig" />
                 </div>
             </template>
 

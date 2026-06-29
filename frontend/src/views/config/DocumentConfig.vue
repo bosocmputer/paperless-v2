@@ -25,6 +25,7 @@ const saving = ref(false);
 const dialogVisible = ref(false);
 const editingConfig = ref(null);
 const error = ref('');
+const searchQuery = ref('');
 const form = ref(emptyForm());
 
 const docFormatOptions = computed(() =>
@@ -62,6 +63,15 @@ const userOptions = computed(() => {
 const dialogTitle = computed(() => (editingConfig.value ? 'แก้ไข Config เอกสาร' : 'เพิ่ม Config เอกสาร'));
 const canAdd = computed(() => !loadingFormats.value && !loadingUsers.value && docFormatOptions.value.length > 0 && userOptions.value.length > 0);
 const loadingPage = computed(() => loadingFormats.value || loadingUsers.value || loadingConfigs.value);
+const filteredConfigs = computed(() => {
+    const query = normalizeSearch(searchQuery.value);
+    if (!query) return configs.value;
+    return configs.value.filter((config) =>
+        normalizeSearch(
+            `${config.docFormatCode} ${formatName(config.docFormatCode)} ${formatPattern(config.docFormatCode)} ${config.positionCode} ${config.positionName} ${config.user01} ${config.user02} ${config.user03} ${conditionLabel(config.conditionType)}`
+        ).includes(query)
+    );
+});
 
 onMounted(initializePage);
 
@@ -262,6 +272,10 @@ function sameCode(left, right) {
 function userValue(user) {
     return `${String(user.username || '').trim()}:${String(user.displayName || '').trim()}`;
 }
+
+function normalizeSearch(value) {
+    return String(value || '').toLowerCase().trim();
+}
 </script>
 
 <template>
@@ -271,7 +285,8 @@ function userValue(user) {
                 <div class="font-semibold text-xl mb-1">Config เอกสาร</div>
                 <p class="text-muted-color m-0">กำหนดลำดับ Position และผู้รับเอกสารตาม erp_doc_format จาก SML</p>
             </div>
-            <div class="flex gap-2">
+            <div class="flex flex-col lg:flex-row gap-2 lg:items-center">
+                <InputText v-model="searchQuery" type="search" placeholder="ค้นหา doc, position, user" class="w-full lg:w-80" />
                 <Button icon="pi pi-refresh" severity="secondary" outlined :loading="loadingPage" aria-label="โหลดใหม่" @click="initializePage" />
                 <Button label="ตั้งค่ากรอบลายเซ็น" icon="pi pi-pencil" severity="secondary" outlined @click="router.push({ name: 'signature-templates' })" />
                 <Button label="เพิ่ม Position" icon="pi pi-plus" :disabled="!canAdd" @click="openCreate" />
@@ -280,10 +295,10 @@ function userValue(user) {
 
         <Message v-if="error && !dialogVisible" severity="error" class="mb-4">{{ error }}</Message>
 
-        <DataTable :value="configs" :loading="loadingConfigs" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows sortField="sequenceNo" :sortOrder="1">
+        <DataTable :value="filteredConfigs" :loading="loadingConfigs" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows sortField="sequenceNo" :sortOrder="1">
             <template #empty>
                 <div class="py-6 text-center text-muted-color">
-                    {{ loadingFormats ? 'กำลังโหลด Doc Format จาก SML' : 'ยังไม่มี Config เอกสาร' }}
+                    {{ searchQuery ? 'ไม่พบ Config เอกสารที่ค้นหา' : loadingFormats ? 'กำลังโหลด Doc Format จาก SML' : 'ยังไม่มี Config เอกสาร' }}
                 </div>
             </template>
             <Column field="docFormatCode" header="erp_doc_format.code" sortable style="min-width: 13rem">

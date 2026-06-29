@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -86,6 +87,21 @@ func (s *Server) updateDocumentConfigStep(w http.ResponseWriter, r *http.Request
 		s.writeDocFormatValidationError(w, err)
 		return
 	}
+	current, err := s.store.FindDocumentConfigStepByID(r.Context(), id)
+	if errors.Is(err, store.ErrDocumentConfigNotFound) {
+		writeError(w, http.StatusNotFound, "document_config_not_found", "Document config was not found.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("load document config step failed", "error", err, "configID", id)
+		writeError(w, http.StatusInternalServerError, "document_config_update_failed", "Cannot update document config right now.")
+		return
+	}
+	if documentConfigTemplateBreakingChange(current, resolvedReq) {
+		if ok := s.ensureDocumentConfigStepHasNoTemplateBoxes(w, r, current, "changing doc/user/condition fields"); !ok {
+			return
+		}
+	}
 
 	step, err := s.store.UpdateDocumentConfigStep(r.Context(), id, resolvedReq)
 	if errors.Is(err, store.ErrDocumentConfigNotFound) {
@@ -114,6 +130,19 @@ func (s *Server) deleteDocumentConfigStep(w http.ResponseWriter, r *http.Request
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "missing_document_config_id", "Document config id is required.")
+		return
+	}
+	current, err := s.store.FindDocumentConfigStepByID(r.Context(), id)
+	if errors.Is(err, store.ErrDocumentConfigNotFound) {
+		writeError(w, http.StatusNotFound, "document_config_not_found", "Document config was not found.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("load document config step failed", "error", err, "configID", id)
+		writeError(w, http.StatusInternalServerError, "document_config_delete_failed", "Cannot delete document config right now.")
+		return
+	}
+	if ok := s.ensureDocumentConfigStepHasNoTemplateBoxes(w, r, current, "deleting this position"); !ok {
 		return
 	}
 
@@ -196,6 +225,43 @@ func validateDocumentConfigStep(req models.DocumentConfigStepRequest) string {
 		return "Condition must be 1, 2, or 3."
 	}
 	return ""
+}
+
+func documentConfigTemplateBreakingChange(current models.DocumentConfigStep, next models.DocumentConfigStepRequest) bool {
+	if !strings.EqualFold(current.ScreenCode, next.ScreenCode) {
+		return true
+	}
+	if !strings.EqualFold(current.DocFormatCode, next.DocFormatCode) {
+		return true
+	}
+	if !strings.EqualFold(current.PositionCode, next.PositionCode) {
+		return true
+	}
+	if current.ConditionType != next.ConditionType {
+		return true
+	}
+	return strings.TrimSpace(current.User01) != strings.TrimSpace(next.User01) ||
+		strings.TrimSpace(current.User02) != strings.TrimSpace(next.User02) ||
+		strings.TrimSpace(current.User03) != strings.TrimSpace(next.User03)
+}
+
+func (s *Server) ensureDocumentConfigStepHasNoTemplateBoxes(w http.ResponseWriter, r *http.Request, step models.DocumentConfigStep, action string) bool {
+	count, err := s.store.CountSignatureTemplateBoxesForConfig(r.Context(), step.ScreenCode, step.DocFormatCode, step.PositionCode)
+	if err != nil {
+		s.logger.Error("count signature template boxes for document config failed", "error", err, "configID", step.ID)
+		writeError(w, http.StatusInternalServerError, "document_config_reference_check_failed", "Cannot update document config right now.")
+		return false
+	}
+	if count == 0 {
+		return true
+	}
+	writeError(
+		w,
+		http.StatusConflict,
+		"document_config_in_signature_template",
+		fmt.Sprintf("Position %s (%s) of %s has %d signature box(es). Remove or update boxes in Signature Template before %s.", step.PositionCode, step.PositionName, step.DocFormatCode, count, action),
+	)
+	return false
 }
 
 func normalizeScreenCode(value string) string {

@@ -369,6 +369,45 @@ ORDER BY screen_code, lower(doc_format_code), sequence_no, position_code
 	return steps, rows.Err()
 }
 
+func (s *Store) FindDocumentConfigStepByID(ctx context.Context, id string) (models.DocumentConfigStep, error) {
+	step, err := scanDocumentConfigStep(s.pool.QueryRow(ctx, `
+SELECT id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+       sequence_no, condition_type, created_at, updated_at
+FROM document_config_steps
+WHERE id = $1
+`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.DocumentConfigStep{}, ErrDocumentConfigNotFound
+	}
+	return step, err
+}
+
+func (s *Store) ListDocumentConfigUserReferences(ctx context.Context, username string) ([]models.DocumentConfigStep, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+       sequence_no, condition_type, created_at, updated_at
+FROM document_config_steps
+WHERE lower(split_part(user01, ':', 1)) = lower($1)
+   OR lower(split_part(user02, ':', 1)) = lower($1)
+   OR lower(split_part(user03, ':', 1)) = lower($1)
+ORDER BY screen_code, lower(doc_format_code), sequence_no, position_code
+`, username)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	steps := []models.DocumentConfigStep{}
+	for rows.Next() {
+		step, err := scanDocumentConfigStep(rows)
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, step)
+	}
+	return steps, rows.Err()
+}
+
 func (s *Store) CreateDocumentConfigStep(ctx context.Context, req models.DocumentConfigStepRequest) (models.DocumentConfigStep, error) {
 	step, err := scanDocumentConfigStep(s.pool.QueryRow(ctx, `
 INSERT INTO document_config_steps (
@@ -426,6 +465,20 @@ func (s *Store) DeleteDocumentConfigStep(ctx context.Context, id string) error {
 		return ErrDocumentConfigNotFound
 	}
 	return nil
+}
+
+func (s *Store) CountSignatureTemplateBoxesForConfig(ctx context.Context, screenCode, docFormatCode, positionCode string) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, `
+SELECT count(*)
+FROM signature_template_boxes b
+JOIN signature_templates t ON t.id = b.template_id
+WHERE t.status IN ('draft', 'active')
+  AND t.screen_code = $1
+  AND lower(t.doc_format_code) = lower($2)
+  AND lower(b.position_code) = lower($3)
+`, screenCode, docFormatCode, positionCode).Scan(&count)
+	return count, err
 }
 
 func (s *Store) CreateUploadedFile(ctx context.Context, file models.UploadedFile) (models.UploadedFile, error) {

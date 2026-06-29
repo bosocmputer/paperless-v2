@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -92,6 +94,18 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !strings.EqualFold(req.Username, current.Username) || (current.Status == "active" && req.Status != "active") {
+		message, err := s.userDocumentConfigReferenceMessage(r.Context(), current)
+		if err != nil {
+			s.logger.Error("check user document config references failed", "error", err, "userID", id)
+			writeError(w, http.StatusInternalServerError, "user_reference_check_failed", "Cannot update user right now.")
+			return
+		}
+		if message != "" {
+			writeError(w, http.StatusConflict, "user_in_document_config", message)
+			return
+		}
+	}
 
 	user, err := s.store.UpdateUser(r.Context(), id, req)
 	if errors.Is(err, store.ErrUserNotFound) {
@@ -144,6 +158,16 @@ func (s *Server) deactivateUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "last_admin", "At least one active admin is required.")
 			return
 		}
+	}
+	message, err := s.userDocumentConfigReferenceMessage(r.Context(), user)
+	if err != nil {
+		s.logger.Error("check user document config references failed", "error", err, "userID", id)
+		writeError(w, http.StatusInternalServerError, "user_reference_check_failed", "Cannot deactivate user right now.")
+		return
+	}
+	if message != "" {
+		writeError(w, http.StatusConflict, "user_in_document_config", message)
+		return
 	}
 
 	update := models.UpdateUserRequest{
@@ -233,4 +257,26 @@ func validateUserFields(role, status string) string {
 		return "Status must be active or inactive."
 	}
 	return ""
+}
+
+func (s *Server) userDocumentConfigReferenceMessage(ctx context.Context, user models.User) (string, error) {
+	refs, err := s.store.ListDocumentConfigUserReferences(ctx, user.Username)
+	if err != nil {
+		return "", err
+	}
+	if len(refs) == 0 {
+		return "", nil
+	}
+	first := refs[0]
+	message := fmt.Sprintf(
+		"User %s is used in Config เอกสาร %s Position %s (%s). Replace this user in Config เอกสาร before changing username or deactivating.",
+		user.Username,
+		first.DocFormatCode,
+		first.PositionCode,
+		first.PositionName,
+	)
+	if len(refs) > 1 {
+		message = fmt.Sprintf("%s Also used by %d more position(s).", message, len(refs)-1)
+	}
+	return message, nil
 }

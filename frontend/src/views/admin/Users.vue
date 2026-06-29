@@ -12,6 +12,7 @@ const saving = ref(false);
 const dialogVisible = ref(false);
 const editingUser = ref(null);
 const error = ref('');
+const searchQuery = ref('');
 const form = ref(emptyForm());
 
 const roleOptions = [
@@ -26,6 +27,13 @@ const statusOptions = [
 
 const dialogTitle = computed(() => (editingUser.value ? 'แก้ไขผู้ใช้' : 'เพิ่มผู้ใช้'));
 const passwordHint = computed(() => (editingUser.value ? 'เว้นว่างไว้ถ้าไม่ต้องการเปลี่ยนรหัสผ่าน' : 'รหัสผ่านอย่างน้อย 6 ตัวอักษร'));
+const filteredUsers = computed(() => {
+    const query = normalizeSearch(searchQuery.value);
+    if (!query) return users.value;
+    return users.value.filter((user) =>
+        normalizeSearch(`${user.displayName} ${user.username} ${user.role} ${user.status}`).includes(query)
+    );
+});
 
 onMounted(loadUsers);
 
@@ -144,6 +152,10 @@ function roleSeverity(role) {
 function statusSeverity(status) {
     return status === 'active' ? 'success' : 'secondary';
 }
+
+function normalizeSearch(value) {
+    return String(value || '').toLowerCase().trim();
+}
 </script>
 
 <template>
@@ -153,14 +165,17 @@ function statusSeverity(status) {
                 <div class="font-semibold text-xl mb-1">User Management</div>
                 <p class="text-muted-color m-0">จัดการชื่อผู้ใช้ รหัสผ่าน และระดับสิทธิ์ admin/user</p>
             </div>
-            <Button label="เพิ่มผู้ใช้" icon="pi pi-plus" @click="openCreate" />
+            <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
+                <InputText v-model="searchQuery" type="search" placeholder="ค้นหา user, ชื่อ, สิทธิ์" class="w-full sm:w-72" />
+                <Button label="เพิ่มผู้ใช้" icon="pi pi-plus" @click="openCreate" />
+            </div>
         </div>
 
         <Message v-if="error && !dialogVisible" severity="error" class="mb-4">{{ error }}</Message>
 
-        <DataTable :value="users" :loading="loading" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows>
+        <DataTable :value="filteredUsers" :loading="loading" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows>
             <template #empty>
-                <div class="py-6 text-center text-muted-color">ยังไม่มีผู้ใช้</div>
+                <div class="py-6 text-center text-muted-color">{{ searchQuery ? 'ไม่พบผู้ใช้ที่ค้นหา' : 'ยังไม่มีผู้ใช้' }}</div>
             </template>
             <Column field="displayName" header="ชื่อ" sortable>
                 <template #body="{ data }">
@@ -231,4 +246,3 @@ function statusSeverity(status) {
         </form>
     </Dialog>
 </template>
-
