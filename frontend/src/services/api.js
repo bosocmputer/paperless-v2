@@ -6,7 +6,7 @@ async function request(path, options = {}) {
     if (!isFormData) headers.set('Content-Type', 'application/json');
 
     const token = localStorage.getItem('paperless_token');
-    if (token) headers.set('Authorization', `Bearer ${token}`);
+    if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
 
     const response = await fetch(`${API_BASE}${path}`, {
         ...options,
@@ -76,6 +76,16 @@ export const api = {
     getSMLDocFormat(docFormatCode) {
         return request(withQuery('/api/sml/doc-format', { doc_format_code: docFormatCode }));
     },
+    listSMLDocumentCandidates(params = {}) {
+        return request(
+            withQuery('/api/sml/document-candidates', {
+                doc_format_code: params.docFormatCode,
+                search: params.search,
+                page: params.page,
+                size: params.size
+            })
+        );
+    },
     listDocumentConfigs(params) {
         return request(
             withQuery('/api/document-configs', {
@@ -127,6 +137,78 @@ export const api = {
     },
     signatureTemplateSamplePDFUrl(id) {
         return `/api/signature-templates/${id}/sample-pdf`;
+    },
+    listSigningDocuments() {
+        return request('/api/signing-documents');
+    },
+    createSigningDocument(payload) {
+        const form = new FormData();
+        form.set('docFormatCode', payload.docFormatCode);
+        form.set('docNo', payload.docNo);
+        if (payload.confirmLocked) form.set('confirmLocked', '1');
+        form.set('file', payload.file);
+        return request('/api/signing-documents', {
+            method: 'POST',
+            body: form
+        });
+    },
+    getSigningDocument(id) {
+        return request(`/api/signing-documents/${id}`);
+    },
+    signingDocumentPDFUrl(id, version = 'current') {
+        return withQuery(`/api/signing-documents/${id}/pdf`, { version });
+    },
+    retrySigningDocumentLock(id) {
+        return request(`/api/signing-documents/${id}/retry-sml-lock`, { method: 'POST' });
+    },
+    regenerateExternalToken(signerId) {
+        return request(`/api/signing-documents/external-token/${signerId}/regenerate`, { method: 'POST' });
+    },
+    listMySigningTasks() {
+        return request('/api/my/signing-tasks');
+    },
+    getMySigningTask(taskId) {
+        return request(`/api/my/signing-tasks/${taskId}`);
+    },
+    signMyTask(taskId, payload) {
+        return request(`/api/my/signing-tasks/${taskId}/sign`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+    rejectMyTask(taskId, payload) {
+        return request(`/api/my/signing-tasks/${taskId}/reject`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+    verifyExternalOTP(token, otp) {
+        return request(`/api/public/signing/${token}/verify-otp`, {
+            method: 'POST',
+            body: JSON.stringify({ otp })
+        });
+    },
+    getPublicSigningDocument(token, sessionToken) {
+        return request(`/api/public/signing/${token}`, {
+            headers: { Authorization: `Bearer ${sessionToken}` }
+        });
+    },
+    signPublicTask(token, sessionToken, payload) {
+        return request(`/api/public/signing/${token}/sign`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify(payload)
+        });
+    },
+    rejectPublicTask(token, sessionToken, payload) {
+        return request(`/api/public/signing/${token}/reject`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${sessionToken}` },
+            body: JSON.stringify(payload)
+        });
+    },
+    publicSigningPDFUrl(token) {
+        return `/api/public/signing/${token}/pdf`;
     },
     authHeaders() {
         const token = localStorage.getItem('paperless_token');

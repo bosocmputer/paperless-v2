@@ -42,8 +42,36 @@ const router = createRouter({
                     name: 'signature-template',
                     component: () => import('@/views/config/SignatureTemplateDesigner.vue'),
                     meta: { role: 'admin' }
+                },
+                {
+                    path: '/signing/documents',
+                    name: 'signing-documents',
+                    component: () => import('@/views/signing/SigningDocuments.vue'),
+                    meta: { role: 'admin' }
+                },
+                {
+                    path: '/signing/documents/:id',
+                    name: 'signing-document-detail',
+                    component: () => import('@/views/signing/SigningDocumentDetail.vue'),
+                    meta: { role: 'admin' }
+                },
+                {
+                    path: '/signing/tasks',
+                    name: 'my-signing-tasks',
+                    component: () => import('@/views/signing/MySigningTasks.vue')
+                },
+                {
+                    path: '/signing/tasks/:taskId',
+                    name: 'my-signing-task',
+                    component: () => import('@/views/signing/SigningTask.vue')
                 }
             ]
+        },
+        {
+            path: '/external/sign/:token',
+            name: 'public-signing',
+            component: () => import('@/views/signing/PublicSigning.vue'),
+            meta: { public: true }
         },
         {
             path: '/auth/login',
@@ -64,6 +92,8 @@ const router = createRouter({
 });
 
 router.beforeEach(async (to) => {
+    if (to.name === 'public-signing') return true;
+
     if (to.meta.public) {
         if (authStore.isAuthenticated()) return { name: 'dashboard' };
         return true;

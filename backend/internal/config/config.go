@@ -24,7 +24,10 @@ type Config struct {
 	SMLPaperlessTimeout time.Duration
 	FileStorageDir      string
 	MaxUploadMB         int64
+	MaxAttachmentMB     int64
 	MaxTemplatePages    int
+	PublicBaseURL       string
+	TelegramBotToken    string
 	SeedSuperAdmin      models.SeedUser
 }
 
@@ -43,6 +46,8 @@ func Load() (Config, error) {
 		SMLPaperlessAPIKey: getenv("SML_PAPERLESS_API_KEY", ""),
 		SMLPaperlessTenant: strings.ToLower(getenv("SML_PAPERLESS_TENANT", "sml1_2026")),
 		FileStorageDir:     getenv("FILE_STORAGE_DIR", "/app/uploads"),
+		PublicBaseURL:      strings.TrimRight(getenv("PUBLIC_BASE_URL", ""), "/"),
+		TelegramBotToken:   getenv("TELEGRAM_BOT_TOKEN", ""),
 		SeedSuperAdmin: models.SeedUser{
 			DisplayName: getenv("SEED_SUPERADMIN_NAME", "System Administrator"),
 			Username:    getenv("SEED_SUPERADMIN_USERNAME", "superadmin"),
@@ -72,6 +77,12 @@ func Load() (Config, error) {
 		return Config{}, errors.New("MAX_UPLOAD_MB must be a positive integer")
 	}
 	cfg.MaxUploadMB = int64(maxUploadMB)
+
+	maxAttachmentMB, err := strconv.Atoi(getenv("MAX_ATTACHMENT_MB", "10"))
+	if err != nil || maxAttachmentMB <= 0 {
+		return Config{}, errors.New("MAX_ATTACHMENT_MB must be a positive integer")
+	}
+	cfg.MaxAttachmentMB = int64(maxAttachmentMB)
 
 	maxTemplatePages, err := strconv.Atoi(getenv("MAX_TEMPLATE_PAGES", "20"))
 	if err != nil || maxTemplatePages <= 0 {

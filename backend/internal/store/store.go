@@ -27,6 +27,12 @@ var (
 	ErrSignatureRevisionConflict = errors.New("signature template revision conflict")
 	ErrSignatureTemplateNotDraft = errors.New("signature template is not draft")
 	ErrSignatureTemplateArchived = errors.New("signature template is archived")
+	ErrSigningDocumentNotFound   = errors.New("signing document not found")
+	ErrSigningDocumentDuplicate  = errors.New("signing document already exists")
+	ErrSigningTaskNotFound       = errors.New("signing task not found")
+	ErrSigningTaskUnavailable    = errors.New("signing task is not available")
+	ErrExternalTokenNotFound     = errors.New("external signing token not found")
+	ErrExternalTokenInvalid      = errors.New("external signing token invalid")
 )
 
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
@@ -177,6 +183,174 @@ ON signature_template_boxes (template_id, lower(position_code), signer_slot);
 
 CREATE INDEX IF NOT EXISTS signature_template_boxes_lookup_idx
 ON signature_template_boxes (template_id, page_no, lower(position_code), signer_slot);
+
+CREATE TABLE IF NOT EXISTS signing_documents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    screen_code TEXT NOT NULL,
+    doc_format_code TEXT NOT NULL,
+    doc_no TEXT NOT NULL,
+    sml_table TEXT NOT NULL DEFAULT '',
+    trans_flag INTEGER NOT NULL DEFAULT 0,
+    party_code TEXT NOT NULL DEFAULT '',
+    party_name TEXT NOT NULL DEFAULT '',
+    party_type TEXT NOT NULL DEFAULT '',
+    doc_date DATE,
+    total_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+    sml_is_lock_record INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'rejected', 'completed', 'completed_lock_failed', 'cancelled')),
+    current_version INTEGER NOT NULL DEFAULT 1 CHECK (current_version > 0),
+    original_file_id UUID REFERENCES uploaded_files(id),
+    current_file_id UUID REFERENCES uploaded_files(id),
+    final_file_id UUID REFERENCES uploaded_files(id),
+    signature_template_id UUID REFERENCES signature_templates(id),
+    config_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+    template_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ,
+    locked_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS signing_documents_active_doc_unique_idx
+ON signing_documents (lower(doc_format_code), doc_no)
+WHERE status IN ('draft', 'in_progress', 'completed_lock_failed');
+
+CREATE INDEX IF NOT EXISTS signing_documents_status_idx
+ON signing_documents (status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS signing_document_versions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES signing_documents(id) ON DELETE CASCADE,
+    version_no INTEGER NOT NULL CHECK (version_no > 0),
+    file_id UUID NOT NULL REFERENCES uploaded_files(id),
+    kind TEXT NOT NULL CHECK (kind IN ('original', 'current', 'final')),
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS signing_document_versions_unique_idx
+ON signing_document_versions (document_id, version_no, kind);
+
+CREATE TABLE IF NOT EXISTS signing_document_steps (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES signing_documents(id) ON DELETE CASCADE,
+    position_code TEXT NOT NULL,
+    position_name TEXT NOT NULL,
+    sequence_no DOUBLE PRECISION NOT NULL CHECK (sequence_no > 0),
+    condition_type INTEGER NOT NULL CHECK (condition_type IN (1, 2, 3)),
+    user01 TEXT NOT NULL DEFAULT '',
+    user02 TEXT NOT NULL DEFAULT '',
+    user03 TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK (status IN ('waiting', 'pending', 'completed', 'rejected', 'skipped')),
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS signing_document_steps_lookup_idx
+ON signing_document_steps (document_id, sequence_no);
+
+CREATE TABLE IF NOT EXISTS signing_document_signers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES signing_documents(id) ON DELETE CASCADE,
+    step_id UUID NOT NULL REFERENCES signing_document_steps(id) ON DELETE CASCADE,
+    position_code TEXT NOT NULL,
+    position_name TEXT NOT NULL,
+    sequence_no DOUBLE PRECISION NOT NULL CHECK (sequence_no > 0),
+    condition_type INTEGER NOT NULL CHECK (condition_type IN (1, 2, 3)),
+    signer_slot INTEGER NOT NULL CHECK (signer_slot > 0),
+    signer_type TEXT NOT NULL CHECK (signer_type IN ('any', 'internal', 'external')),
+    signer_user TEXT NOT NULL DEFAULT '',
+    signer_name TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK (status IN ('waiting', 'pending', 'signed', 'rejected', 'skipped')),
+    page_no INTEGER NOT NULL CHECK (page_no > 0),
+    x_ratio DOUBLE PRECISION NOT NULL,
+    y_ratio DOUBLE PRECISION NOT NULL,
+    width_ratio DOUBLE PRECISION NOT NULL,
+    height_ratio DOUBLE PRECISION NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    signature_file_id UUID REFERENCES uploaded_files(id),
+    signed_at TIMESTAMPTZ,
+    rejected_at TIMESTAMPTZ,
+    reject_reason TEXT NOT NULL DEFAULT '',
+    device_id TEXT NOT NULL DEFAULT '',
+    ip_address TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    external_token_id UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS signing_document_signers_user_idx
+ON signing_document_signers (lower(signer_user), status, sequence_no);
+
+CREATE INDEX IF NOT EXISTS signing_document_signers_doc_idx
+ON signing_document_signers (document_id, sequence_no, position_code, signer_slot);
+
+CREATE TABLE IF NOT EXISTS signing_document_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES signing_documents(id) ON DELETE CASCADE,
+    actor_user_id UUID REFERENCES users(id),
+    actor_label TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    ip_address TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS signing_document_events_doc_idx
+ON signing_document_events (document_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS signing_document_attachments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES signing_documents(id) ON DELETE CASCADE,
+    signer_id UUID REFERENCES signing_document_signers(id) ON DELETE SET NULL,
+    file_id UUID NOT NULL REFERENCES uploaded_files(id),
+    note TEXT NOT NULL DEFAULT '',
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS signing_document_attachments_doc_idx
+ON signing_document_attachments (document_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS external_signing_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES signing_documents(id) ON DELETE CASCADE,
+    signer_id UUID NOT NULL REFERENCES signing_document_signers(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL,
+    otp_hash TEXT NOT NULL,
+    session_hash TEXT NOT NULL DEFAULT '',
+    session_expires_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts > 0),
+    status TEXT NOT NULL CHECK (status IN ('active', 'verified', 'locked', 'used', 'revoked', 'expired')),
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    verified_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS external_signing_tokens_token_hash_idx
+ON external_signing_tokens (token_hash);
+
+CREATE INDEX IF NOT EXISTS external_signing_tokens_signer_idx
+ON external_signing_tokens (signer_id, status);
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    key TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    actor_user_id UUID REFERENCES users(id),
+    response_status INTEGER NOT NULL DEFAULT 0,
+    response_body JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idempotency_keys_unique_idx
+ON idempotency_keys (scope, key, COALESCE(actor_user_id::text, ''));
 `)
 	return err
 }

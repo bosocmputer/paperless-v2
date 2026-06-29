@@ -12,9 +12,14 @@ const model = ref([
                 to: '/'
             },
             {
-                label: 'Inbox',
+                label: 'เอกสารรอเซ็น',
                 icon: 'pi pi-fw pi-inbox',
-                to: '/pages/empty'
+                to: '/signing/tasks'
+            },
+            {
+                label: 'เอกสารเพื่อเซ็น',
+                icon: 'pi pi-fw pi-send',
+                to: '/signing/documents'
             },
             {
                 label: 'Config เอกสาร',
