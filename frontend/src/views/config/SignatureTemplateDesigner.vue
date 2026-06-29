@@ -48,6 +48,7 @@ let renderTask = null;
 let resizeObserver = null;
 let fitWidthTimer = null;
 let pointerCleanup = null;
+let discardNavigationConfirmed = false;
 
 const template = computed(() => active.value || draft.value);
 const canEdit = computed(() => !!template.value && template.value.status !== 'archived');
@@ -121,6 +122,11 @@ onBeforeUnmount(() => {
 });
 
 onBeforeRouteLeave((_to, _from, next) => {
+    if (discardNavigationConfirmed) {
+        discardNavigationConfirmed = false;
+        next();
+        return;
+    }
     if (!dirty.value || window.confirm('ยังไม่ได้บันทึกการแก้ไขกรอบลายเซ็น ต้องการออกจากหน้านี้หรือไม่?')) {
         next();
         return;
@@ -708,7 +714,30 @@ function scrollBoxIntoView(box) {
     scroll.scrollTo({ top, left, behavior: 'smooth' });
 }
 
-function goBackToConfig() {
+function requestBackNavigation() {
+    if (!dirty.value) {
+        goBackToConfig();
+        return;
+    }
+    confirm.require({
+        message: 'มีการแก้ไขกรอบลายเซ็นที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้และทิ้งการแก้ไขหรือไม่?',
+        header: 'ยังไม่ได้บันทึก',
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: 'อยู่หน้านี้ต่อ',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ออกโดยไม่บันทึก',
+            severity: 'danger'
+        },
+        accept: () => goBackToConfig({ discard: true })
+    });
+}
+
+function goBackToConfig(options = {}) {
+    if (options.discard) discardNavigationConfirmed = true;
     router.push({ name: 'document-config' });
 }
 
@@ -748,7 +777,7 @@ function recordDesignerEvent(event, extra = {}) {
     <div class="signature-designer">
         <div class="editor-bar">
             <div class="editor-title">
-                <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="goBackToConfig" />
+                <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="requestBackNavigation" />
                 <div class="min-w-0">
                     <div class="doc-heading">
                         <span>ตั้งค่ากรอบลายเซ็น {{ docFormatCode }}</span>
