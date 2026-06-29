@@ -48,6 +48,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/signature-templates/{id}/sample-pdf", s.requireAdmin(http.HandlerFunc(s.getSignatureTemplateSamplePDF)))
 	mux.Handle("PUT /api/signature-templates/{id}/boxes", s.requireAdmin(http.HandlerFunc(s.saveSignatureTemplateBoxes)))
 	mux.Handle("POST /api/signature-templates/{id}/publish", s.requireAdmin(http.HandlerFunc(s.publishSignatureTemplate)))
+	mux.Handle("POST /api/signature-templates/{id}/designer-events", s.requireAdmin(http.HandlerFunc(s.recordSignatureTemplateDesignerEvent)))
 
 	return s.recover(s.cors(mux))
 }

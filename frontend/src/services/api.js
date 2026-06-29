@@ -116,6 +116,12 @@ export const api = {
             body: JSON.stringify(payload)
         });
     },
+    recordSignatureDesignerEvent(id, payload) {
+        return request(`/api/signature-templates/${id}/designer-events`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
     publishSignatureTemplate(id) {
         return request(`/api/signature-templates/${id}/publish`, { method: 'POST' });
     },

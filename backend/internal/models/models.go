@@ -139,6 +139,23 @@ type SaveSignatureBoxesRequest struct {
 	Boxes    []SignatureTemplateBoxRequest `json:"boxes"`
 }
 
+type SignatureDesignerViewport struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+}
+
+type SignatureDesignerEventRequest struct {
+	Event                string                    `json:"event"`
+	SessionID            string                    `json:"sessionId"`
+	DocFormatCode        string                    `json:"docFormatCode"`
+	PositionCode         string                    `json:"positionCode"`
+	ConditionType        int                       `json:"conditionType"`
+	ElapsedMS            int64                     `json:"elapsedMs"`
+	BoxCount             int                       `json:"boxCount"`
+	ValidationIssueCount int                       `json:"validationIssueCount"`
+	Viewport             SignatureDesignerViewport `json:"viewport"`
+}
+
 type SignatureValidationIssue struct {
 	Code         string `json:"code"`
 	PositionCode string `json:"positionCode,omitempty"`

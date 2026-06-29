@@ -20,6 +20,24 @@ import (
 	"github.com/ledongthuc/pdf"
 )
 
+const maxSignatureDesignerEventBytes int64 = 8 * 1024
+
+var (
+	errSignatureDesignerEventTooLarge = errors.New("signature designer event payload too large")
+	errSignatureDesignerEventInvalid  = errors.New("signature designer event payload invalid")
+	signatureDesignerEventNames       = map[string]bool{
+		"designer_open":     true,
+		"box_add":           true,
+		"box_delete":        true,
+		"save_attempt":      true,
+		"save_success":      true,
+		"save_error":        true,
+		"upload_confirm":    true,
+		"pdf_render_error":  true,
+		"revision_conflict": true,
+	}
+)
+
 func (s *Server) getSignatureTemplateState(w http.ResponseWriter, r *http.Request) {
 	docFormatCode := strings.TrimSpace(r.URL.Query().Get("doc_format_code"))
 	if docFormatCode == "" {
@@ -292,8 +310,132 @@ func (s *Server) publishSignatureTemplate(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"template": published})
 }
 
+func (s *Server) recordSignatureTemplateDesignerEvent(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing_template_id", "Template id is required.")
+		return
+	}
+
+	req, err := decodeSignatureDesignerEventPayload(r.Body, maxSignatureDesignerEventBytes)
+	if errors.Is(err, errSignatureDesignerEventTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "designer_event_too_large", "Designer event payload is too large.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_designer_event", "Designer event payload is invalid.")
+		return
+	}
+
+	template, err := s.store.FindSignatureTemplateByID(r.Context(), id)
+	if errors.Is(err, store.ErrSignatureTemplateNotFound) {
+		writeError(w, http.StatusNotFound, "signature_template_not_found", "Signature template was not found.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("load signature template before designer event failed", "error", err, "templateID", id)
+		writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load signature template right now.")
+		return
+	}
+
+	metadata, err := normalizeSignatureDesignerEventMetadata(req, template)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_designer_event", "Designer event payload is invalid.")
+		return
+	}
+
+	actor, _ := currentUser(r)
+	if err := s.store.WriteAuditWithMetadata(r.Context(), actor.ID, "signature_template.designer_event", "signature_template", template.ID, clientIP(r), r.UserAgent(), metadata); err != nil {
+		s.logger.Warn("write signature designer event audit failed", "error", err, "templateID", template.ID)
+		writeError(w, http.StatusInternalServerError, "designer_event_failed", "Cannot record designer event right now.")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func isPDFBytes(data []byte) bool {
 	return len(data) >= 5 && string(data[:5]) == "%PDF-"
+}
+
+func decodeSignatureDesignerEventPayload(reader io.Reader, maxBytes int64) (models.SignatureDesignerEventRequest, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return models.SignatureDesignerEventRequest{}, err
+	}
+	if int64(len(data)) > maxBytes {
+		return models.SignatureDesignerEventRequest{}, errSignatureDesignerEventTooLarge
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var req models.SignatureDesignerEventRequest
+	if err := decoder.Decode(&req); err != nil {
+		return models.SignatureDesignerEventRequest{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return models.SignatureDesignerEventRequest{}, errSignatureDesignerEventInvalid
+	}
+	return req, nil
+}
+
+func normalizeSignatureDesignerEventMetadata(req models.SignatureDesignerEventRequest, template models.SignatureTemplate) (map[string]any, error) {
+	event := strings.TrimSpace(req.Event)
+	if !signatureDesignerEventNames[event] {
+		return nil, errSignatureDesignerEventInvalid
+	}
+
+	metadata := map[string]any{
+		"event":                event,
+		"sessionId":            truncateForMetadata(req.SessionID, 80),
+		"docFormatCode":        template.DocFormatCode,
+		"screenCode":           template.ScreenCode,
+		"positionCode":         truncateForMetadata(req.PositionCode, 40),
+		"conditionType":        safeConditionType(req.ConditionType),
+		"elapsedMs":            clampInt64(req.ElapsedMS, 0, 24*60*60*1000),
+		"boxCount":             clampInt(req.BoxCount, 0, 1000),
+		"validationIssueCount": clampInt(req.ValidationIssueCount, 0, 1000),
+		"viewport": map[string]any{
+			"width":  clampInt(req.Viewport.Width, 0, 10000),
+			"height": clampInt(req.Viewport.Height, 0, 10000),
+		},
+	}
+	return metadata, nil
+}
+
+func safeConditionType(value int) int {
+	if value == 1 || value == 2 || value == 3 {
+		return value
+	}
+	return 0
+}
+
+func truncateForMetadata(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit]
+}
+
+func clampInt(value, min, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
+func clampInt64(value, min, max int64) int64 {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
 
 func readPDFPageCount(data []byte) (int, error) {

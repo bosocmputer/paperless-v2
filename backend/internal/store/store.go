@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -321,6 +322,25 @@ func (s *Store) WriteAudit(ctx context.Context, actorUserID, action, targetType,
 INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, ip_address, user_agent)
 VALUES ($1, $2, $3, $4, $5, $6)
 `, actor, action, targetType, targetID, ipAddress, userAgent)
+	return err
+}
+
+func (s *Store) WriteAuditWithMetadata(ctx context.Context, actorUserID, action, targetType, targetID, ipAddress, userAgent string, metadata map[string]any) error {
+	var actor any
+	if actorUserID != "" {
+		actor = actorUserID
+	}
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, ip_address, user_agent, metadata)
+VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+`, actor, action, targetType, targetID, ipAddress, userAgent, string(metadataJSON))
 	return err
 }
 

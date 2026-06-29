@@ -2,8 +2,8 @@
 import { api } from '@/services/api';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
-import { computed, nextTick, onMounted, ref, shallowRef, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
@@ -31,12 +31,23 @@ const selectedBoxKey = ref('');
 const fileInput = ref(null);
 const canvasRef = ref(null);
 const overlayRef = ref(null);
+const viewerRef = ref(null);
 const pdfDoc = shallowRef(null);
 const currentPage = ref(1);
 const pageCount = ref(0);
 const zoom = ref(1.2);
+const fitWidthActive = ref(false);
 const pageSize = ref({ width: 0, height: 0 });
 const maxTemplatePages = ref(20);
+
+const designerSessionId = makeDesignerSessionId();
+const openedAt = Date.now();
+let designerOpenRecorded = false;
+let renderSequence = 0;
+let renderTask = null;
+let resizeObserver = null;
+let fitWidthTimer = null;
+let pointerCleanup = null;
 
 const template = computed(() => active.value || draft.value);
 const canEdit = computed(() => !!template.value && template.value.status !== 'archived');
@@ -51,12 +62,71 @@ const selectedBoxSignerTypeLabel = computed(() => {
     if (selectedBox.value.signerType === 'external') return 'บุคคลภายนอก';
     return 'User ภายใน';
 });
-const currentPageBoxes = computed(() => boxes.value.filter((box) => Number(box.pageNo) === Number(currentPage.value)));
+const boxesByPosition = computed(() => groupBoxesBy((box) => box.positionCode));
+const boxesByPage = computed(() => groupBoxesBy((box) => Number(box.pageNo)));
+const currentPageBoxes = computed(() => boxesByPage.value.get(Number(currentPage.value)) || []);
 const validationIssues = computed(() => validateBoxes());
+const validationByPosition = computed(() => {
+    const grouped = new Map();
+    validationIssues.value.forEach((issue) => {
+        const key = issue.positionCode || '_global';
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(issue);
+    });
+    return grouped;
+});
+const stepViews = computed(() =>
+    configs.value.map((step) => {
+        const stepBoxes = boxesByPosition.value.get(step.positionCode) || [];
+        const required = requiredBoxesForStep(step);
+        return {
+            ...step,
+            users: stepUsers(step),
+            boxes: stepBoxes,
+            required,
+            issues: validationByPosition.value.get(step.positionCode) || [],
+            isActive: selectedPositionCode.value === step.positionCode,
+            isComplete: required > 0 && stepBoxes.length >= required && !(validationByPosition.value.get(step.positionCode) || []).length
+        };
+    })
+);
 const canSave = computed(() => canEdit.value && !saving.value && !!template.value);
 const storedPageCount = computed(() => Number(template.value?.sampleFile?.pageCount || pageCount.value || 0));
+const requiredBoxCount = computed(() => configs.value.reduce((total, step) => total + requiredBoxesForStep(step), 0));
+const boxProgressLabel = computed(() => `${boxes.value.length}/${requiredBoxCount.value || 0}`);
+const validationStatusLabel = computed(() => (validationIssues.value.length === 0 ? 'ผ่านเงื่อนไข' : `${validationIssues.value.length} จุดต้องแก้`));
+const validationStatusSeverity = computed(() => (validationIssues.value.length === 0 ? 'success' : 'warn'));
+const canAddBoxes = computed(() => canEdit.value && !!template.value?.sampleFileId);
+const docTitle = computed(() => docFormat.value?.name_1 || docFormat.value?.name_2 || 'Signature Template Designer');
+const pdfMetaLabel = computed(() => {
+    if (rendering.value) return 'กำลัง render PDF';
+    if (!pageSize.value.width) return '';
+    return `${Math.round(pageSize.value.width)} x ${Math.round(pageSize.value.height)} px · ${storedPageCount.value || pageCount.value} หน้า`;
+});
 
-onMounted(loadState);
+onMounted(async () => {
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    await loadState();
+    await nextTick();
+    setupResizeObserver();
+});
+
+onBeforeUnmount(() => {
+    window.removeEventListener('beforeunload', handleBeforeUnload);
+    cleanupPointerListeners();
+    cancelRenderTask();
+    destroyPDF();
+    if (resizeObserver) resizeObserver.disconnect();
+    if (fitWidthTimer) clearTimeout(fitWidthTimer);
+});
+
+onBeforeRouteLeave((_to, _from, next) => {
+    if (!dirty.value || window.confirm('ยังไม่ได้บันทึกการแก้ไขกรอบลายเซ็น ต้องการออกจากหน้านี้หรือไม่?')) {
+        next();
+        return;
+    }
+    next(false);
+});
 
 watch([currentPage, zoom], async () => {
     if (pdfDoc.value) await renderPage();
@@ -77,7 +147,12 @@ async function loadState() {
         selectedBoxKey.value = '';
         dirty.value = false;
         await nextTick();
-        if (template.value?.id) await loadPDF();
+        if (template.value?.id) {
+            await loadPDF();
+            recordDesignerOpen();
+        } else {
+            await destroyPDF();
+        }
     } catch (err) {
         error.value = err.message;
         toast.add({ severity: 'error', summary: 'โหลด Template ไม่สำเร็จ', detail: err.message, life: 4000 });
@@ -87,9 +162,14 @@ async function loadState() {
 }
 
 async function loadPDF() {
-    if (!template.value?.sampleFileId) return;
+    if (!template.value?.sampleFileId) {
+        await destroyPDF();
+        return;
+    }
     rendering.value = true;
     try {
+        cancelRenderTask();
+        if (pdfDoc.value?.destroy) await pdfDoc.value.destroy().catch(() => {});
         const loadingTask = pdfjsLib.getDocument({
             url: api.signatureTemplateSamplePDFUrl(template.value.id),
             httpHeaders: api.authHeaders()
@@ -101,8 +181,10 @@ async function loadPDF() {
             toast.add({ severity: 'warn', summary: 'PDF มีหลายหน้าเกินกำหนด', detail: `รองรับสูงสุด ${maxTemplatePages.value} หน้า`, life: 5000 });
         }
         await renderPage();
+        if (fitWidthActive.value) scheduleFitWidth();
     } catch (err) {
         error.value = err.message || 'Cannot render PDF preview.';
+        recordDesignerEvent('pdf_render_error');
         toast.add({ severity: 'error', summary: 'แสดง PDF ไม่สำเร็จ', detail: err.message || error.value, life: 4000 });
     } finally {
         rendering.value = false;
@@ -111,9 +193,12 @@ async function loadPDF() {
 
 async function renderPage() {
     if (!pdfDoc.value || !canvasRef.value) return;
+    const sequence = ++renderSequence;
+    cancelRenderTask();
     rendering.value = true;
     try {
         const page = await pdfDoc.value.getPage(currentPage.value);
+        if (sequence !== renderSequence) return;
         const viewport = page.getViewport({ scale: zoom.value });
         const canvas = canvasRef.value;
         const context = canvas.getContext('2d');
@@ -122,10 +207,38 @@ async function renderPage() {
         canvas.style.width = `${viewport.width}px`;
         canvas.style.height = `${viewport.height}px`;
         pageSize.value = { width: viewport.width, height: viewport.height };
-        await page.render({ canvasContext: context, viewport }).promise;
+        renderTask = page.render({ canvasContext: context, viewport });
+        await renderTask.promise;
+    } catch (err) {
+        if (err?.name === 'RenderingCancelledException') return;
+        error.value = err.message || 'Cannot render PDF preview.';
+        recordDesignerEvent('pdf_render_error');
+        toast.add({ severity: 'error', summary: 'แสดง PDF ไม่สำเร็จ', detail: error.value, life: 4000 });
     } finally {
-        rendering.value = false;
+        if (sequence === renderSequence) {
+            renderTask = null;
+            rendering.value = false;
+        }
     }
+}
+
+function cancelRenderTask() {
+    if (!renderTask) return;
+    try {
+        renderTask.cancel();
+    } catch {
+        // PDF.js can throw if the render already completed.
+    }
+    renderTask = null;
+}
+
+async function destroyPDF() {
+    cancelRenderTask();
+    const doc = pdfDoc.value;
+    pdfDoc.value = null;
+    pageCount.value = 0;
+    pageSize.value = { width: 0, height: 0 };
+    if (doc?.destroy) await doc.destroy().catch(() => {});
 }
 
 function triggerUpload() {
@@ -147,14 +260,18 @@ async function handleFileChange(event) {
                 outlined: true
             },
             acceptProps: {
-                label: 'แทนที่ PDF',
+                label: 'แทนที่ PDF และล้างกรอบ',
                 severity: 'danger'
             },
-            accept: () => uploadSamplePDF(file)
+            accept: () => {
+                recordDesignerEvent('upload_confirm');
+                uploadSamplePDF(file);
+            }
         });
         return;
     }
 
+    recordDesignerEvent('upload_confirm');
     await uploadSamplePDF(file);
 }
 
@@ -168,6 +285,7 @@ async function uploadSamplePDF(file) {
         boxes.value = withClientKeys(result.template?.boxes || []);
         dirty.value = false;
         currentPage.value = 1;
+        selectedBoxKey.value = '';
         toast.add({ severity: 'success', summary: 'อัปโหลด PDF แล้ว', life: 2500 });
         await loadState();
     } catch (err) {
@@ -179,11 +297,12 @@ async function uploadSamplePDF(file) {
 }
 
 function addBox(step) {
+    selectedPositionCode.value = step.positionCode;
     if (!canEdit.value || !template.value?.sampleFileId) {
         toast.add({ severity: 'warn', summary: 'ต้องอัปโหลด PDF ตัวอย่างก่อน', life: 3500 });
         return;
     }
-    const existing = boxes.value.filter((box) => box.positionCode === step.positionCode);
+    const existing = boxesByPosition.value.get(step.positionCode) || [];
     const box = {
         clientKey: makeClientKey(),
         positionCode: step.positionCode,
@@ -218,6 +337,7 @@ function addBox(step) {
     boxes.value.push(box);
     selectBox(box);
     dirty.value = true;
+    recordDesignerEvent('box_add', { positionCode: step.positionCode, conditionType: Number(step.conditionType) });
 }
 
 function deleteBox(box) {
@@ -240,15 +360,18 @@ function deleteBox(box) {
 }
 
 function removeBox(box) {
+    const step = configs.value.find((item) => item.positionCode === box.positionCode);
     boxes.value = boxes.value.filter((item) => item.clientKey !== box.clientKey);
     if (selectedBoxKey.value === box.clientKey) selectedBoxKey.value = '';
     dirty.value = true;
+    recordDesignerEvent('box_delete', { positionCode: box.positionCode, conditionType: Number(step?.conditionType || 0) });
 }
 
 function selectBox(box) {
     if (!box) return;
     selectedBoxKey.value = box.clientKey;
     selectedPositionCode.value = box.positionCode;
+    if (Number(box.pageNo) !== Number(currentPage.value)) currentPage.value = Number(box.pageNo);
 }
 
 function updateBoxLabel(box, value) {
@@ -313,6 +436,7 @@ function boxStyle(box) {
 function startBoxPointer(event, box, mode) {
     selectBox(box);
     if (!canEdit.value || !overlayRef.value) return;
+    cleanupPointerListeners();
     event.preventDefault();
     event.stopPropagation();
     const rect = overlayRef.value.getBoundingClientRect();
@@ -344,13 +468,21 @@ function startBoxPointer(event, box, mode) {
         latestEvent = moveEvent;
         if (!frame) frame = requestAnimationFrame(applyMove);
     };
-    const onUp = () => {
+    const onUp = () => cleanupPointerListeners();
+
+    pointerCleanup = () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
         if (frame) cancelAnimationFrame(frame);
+        frame = null;
+        pointerCleanup = null;
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+}
+
+function cleanupPointerListeners() {
+    if (pointerCleanup) pointerCleanup();
 }
 
 async function saveTemplate(showToast = true) {
@@ -360,6 +492,8 @@ async function saveTemplate(showToast = true) {
         return null;
     }
 
+    const selectedSnapshot = selectedBox.value ? boxSnapshot(selectedBox.value) : null;
+    recordDesignerEvent('save_attempt');
     saving.value = true;
     error.value = '';
     try {
@@ -382,12 +516,15 @@ async function saveTemplate(showToast = true) {
         active.value = result.template;
         draft.value = null;
         boxes.value = withClientKeys(result.template?.boxes || []);
+        restoreSelectedBox(selectedSnapshot);
         dirty.value = false;
+        recordDesignerEvent('save_success');
         if (showToast) toast.add({ severity: 'success', summary: 'บันทึกแล้ว', life: 2500 });
         return result.template;
     } catch (err) {
         const detail = err.status === 409 ? 'template ถูกแก้จากที่อื่นแล้ว กรุณา refresh' : err.message;
         error.value = detail;
+        recordDesignerEvent(err.status === 409 ? 'revision_conflict' : 'save_error');
         toast.add({ severity: 'error', summary: 'บันทึกไม่สำเร็จ', detail, life: 4500 });
         return null;
     } finally {
@@ -455,8 +592,43 @@ function validateBoxes() {
     return issues;
 }
 
+function setupResizeObserver() {
+    if (!viewerRef.value || typeof ResizeObserver === 'undefined') return;
+    resizeObserver = new ResizeObserver(() => {
+        if (fitWidthActive.value) scheduleFitWidth();
+    });
+    resizeObserver.observe(viewerRef.value);
+}
+
+function scheduleFitWidth() {
+    if (fitWidthTimer) clearTimeout(fitWidthTimer);
+    fitWidthTimer = setTimeout(() => fitPDFToWidth(), 80);
+}
+
+function fitPDFToWidth() {
+    if (!viewerRef.value || !pageSize.value.width || !zoom.value) return;
+    const baseWidth = pageSize.value.width / zoom.value;
+    const availableWidth = Math.max(320, viewerRef.value.clientWidth - 40);
+    zoom.value = Number(clamp(availableWidth / baseWidth, 0.6, 2).toFixed(2));
+}
+
+function activateFitWidth() {
+    fitWidthActive.value = true;
+    fitPDFToWidth();
+}
+
+function setZoom(value) {
+    fitWidthActive.value = false;
+    zoom.value = Number(clamp(value, 0.6, 2).toFixed(2));
+}
+
 function stepUsers(step) {
     return [step.user01, step.user02, step.user03].map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function requiredBoxesForStep(step) {
+    if (Number(step.conditionType) === 2) return stepUsers(step).length;
+    return 1;
 }
 
 function conditionLabel(value) {
@@ -471,12 +643,27 @@ function conditionSeverity(value) {
     return 'secondary';
 }
 
+function groupBoxesBy(getKey) {
+    const grouped = new Map();
+    boxes.value.forEach((box) => {
+        const key = getKey(box);
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(box);
+    });
+    return grouped;
+}
+
 function withClientKeys(items) {
     return items.map((item) => ({ ...item, clientKey: item.id || makeClientKey() }));
 }
 
 function makeClientKey() {
     return `box_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function makeDesignerSessionId() {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+    return `designer_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
 function clamp(value, min, max) {
@@ -487,55 +674,120 @@ function formatDate(value) {
     if (!value) return '-';
     return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
+
+function boxSnapshot(box) {
+    return {
+        positionCode: box.positionCode,
+        signerSlot: Number(box.signerSlot),
+        signerUser: box.signerUser || '',
+        signerType: box.signerType
+    };
+}
+
+function restoreSelectedBox(snapshot) {
+    if (!snapshot) return;
+    const match =
+        boxes.value.find(
+            (box) =>
+                box.positionCode === snapshot.positionCode &&
+                Number(box.signerSlot) === snapshot.signerSlot &&
+                (box.signerUser || '') === snapshot.signerUser &&
+                box.signerType === snapshot.signerType
+        ) || boxes.value.find((box) => box.positionCode === snapshot.positionCode);
+    if (match) selectBox(match);
+}
+
+function goBackToConfig() {
+    router.push({ name: 'document-config' });
+}
+
+function handleBeforeUnload(event) {
+    if (!dirty.value) return;
+    event.preventDefault();
+    event.returnValue = '';
+}
+
+function recordDesignerOpen() {
+    if (designerOpenRecorded) return;
+    designerOpenRecorded = true;
+    recordDesignerEvent('designer_open');
+}
+
+function recordDesignerEvent(event, extra = {}) {
+    const id = template.value?.id;
+    if (!id) return;
+    const payload = {
+        event,
+        sessionId: designerSessionId,
+        docFormatCode: docFormatCode.value,
+        elapsedMs: Date.now() - openedAt,
+        boxCount: boxes.value.length,
+        validationIssueCount: validationIssues.value.length,
+        viewport: {
+            width: window.innerWidth || 0,
+            height: window.innerHeight || 0
+        },
+        ...extra
+    };
+    void api.recordSignatureDesignerEvent(id, payload).catch(() => {});
+}
 </script>
 
 <template>
-    <div class="flex flex-col gap-4">
-        <div class="card">
-            <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-                <div>
-                    <div class="flex items-center gap-2 mb-2">
-                        <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="router.push({ name: 'document-config' })" />
-                        <div>
-                            <div class="font-semibold text-xl">ตั้งค่ากรอบลายเซ็น {{ docFormatCode }}</div>
-                            <p class="text-muted-color m-0">{{ docFormat?.name_1 || docFormat?.name_2 || 'Signature Template Designer' }}</p>
-                        </div>
-                    </div>
-                    <div class="flex flex-wrap gap-2">
+    <div class="signature-designer">
+        <div class="editor-bar">
+            <div class="editor-title">
+                <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="goBackToConfig" />
+                <div class="min-w-0">
+                    <div class="doc-heading">
+                        <span>ตั้งค่ากรอบลายเซ็น {{ docFormatCode }}</span>
+                        <Tag :value="boxProgressLabel" :severity="validationStatusSeverity" />
+                        <Tag :value="validationStatusLabel" :severity="validationStatusSeverity" />
                         <Tag v-if="dirty" value="ยังไม่ได้บันทึก" severity="warn" />
-                        <span class="text-sm text-muted-color">แก้ไขล่าสุด {{ formatDate(template?.updatedAt) }}</span>
+                    </div>
+                    <div class="doc-subtitle">
+                        <span class="truncate">{{ docTitle }}</span>
+                        <span>แก้ไขล่าสุด {{ formatDate(template?.updatedAt) }}</span>
                     </div>
                 </div>
+            </div>
 
-                <div class="flex flex-wrap gap-2">
-                    <input ref="fileInput" type="file" accept="application/pdf,.pdf" class="hidden" @change="handleFileChange" />
-                    <Button label="อัปโหลด PDF" icon="pi pi-upload" severity="secondary" outlined :loading="uploading" @click="triggerUpload" />
-                    <Button label="บันทึก" icon="pi pi-save" :disabled="!canSave" :loading="saving" @click="saveTemplate()" />
-                </div>
+            <div class="editor-actions">
+                <input ref="fileInput" type="file" accept="application/pdf,.pdf" class="hidden" @change="handleFileChange" />
+                <Button label="อัปโหลด PDF" icon="pi pi-upload" severity="secondary" outlined :loading="uploading" @click="triggerUpload" />
+                <Button label="บันทึก" icon="pi pi-save" :disabled="!canSave" :loading="saving" @click="saveTemplate()" />
             </div>
         </div>
 
         <Message v-if="error" severity="error">{{ error }}</Message>
 
-        <div class="grid grid-cols-1 xl:grid-cols-12 gap-4">
-            <div class="xl:col-span-8 card">
-                <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
-                    <div class="flex items-center gap-2">
-                        <Select v-model="currentPage" :options="pageOptions" optionLabel="label" optionValue="value" :disabled="pageOptions.length === 0" style="min-width: 8rem" />
-                        <Button icon="pi pi-search-minus" severity="secondary" outlined :disabled="zoom <= 0.6" aria-label="Zoom out" @click="zoom = Number((zoom - 0.1).toFixed(2))" />
-                        <span class="text-sm text-muted-color w-16 text-center">{{ Math.round(zoom * 100) }}%</span>
-                        <Button icon="pi pi-search-plus" severity="secondary" outlined :disabled="zoom >= 2" aria-label="Zoom in" @click="zoom = Number((zoom + 0.1).toFixed(2))" />
+        <div class="editor-main">
+            <section class="pdf-workspace">
+                <div class="pdf-toolbar">
+                    <div class="toolbar-group">
+                        <Select v-model="currentPage" :options="pageOptions" optionLabel="label" optionValue="value" :disabled="pageOptions.length === 0" class="page-select" />
+                        <Button icon="pi pi-search-minus" severity="secondary" outlined :disabled="zoom <= 0.6" aria-label="Zoom out" @click="setZoom(zoom - 0.1)" />
+                        <span class="zoom-value">{{ Math.round(zoom * 100) }}%</span>
+                        <Button icon="pi pi-search-plus" severity="secondary" outlined :disabled="zoom >= 2" aria-label="Zoom in" @click="setZoom(zoom + 0.1)" />
+                        <Button label="Fit width" icon="pi pi-arrows-h" severity="secondary" outlined :disabled="!pageSize.width" @click="activateFitWidth" />
+                        <Button label="100%" severity="secondary" outlined :disabled="!pageSize.width" @click="setZoom(1)" />
                     </div>
-                    <span class="text-sm text-muted-color">{{ rendering ? 'กำลัง render PDF' : pageSize.width ? `${Math.round(pageSize.width)} x ${Math.round(pageSize.height)} px · ${storedPageCount || pageCount} หน้า` : '' }}</span>
+                    <span class="pdf-meta">{{ pdfMetaLabel }}</span>
                 </div>
 
-                <div v-if="!template?.sampleFileId" class="signature-empty">
+                <div v-if="loading" class="signature-empty compact">
+                    <i class="pi pi-spin pi-spinner text-3xl text-muted-color"></i>
+                    <div class="font-semibold mt-3">กำลังโหลด Template</div>
+                </div>
+
+                <div v-else-if="!template?.sampleFileId" class="signature-empty">
                     <i class="pi pi-file-pdf text-4xl text-muted-color"></i>
                     <div class="font-semibold mt-3">อัปโหลด PDF ตัวอย่างก่อน</div>
                     <p class="text-muted-color m-0">ใช้ไฟล์ PDF ของเอกสารจริงเพื่อกำหนดตำแหน่งลายเซ็น</p>
+                    <Button label="อัปโหลด PDF" icon="pi pi-upload" class="mt-3" :loading="uploading" @click="triggerUpload" />
                 </div>
 
-                <div v-else class="pdf-scroll">
+                <div v-else ref="viewerRef" class="pdf-scroll">
                     <div class="pdf-page-shell">
                         <canvas ref="canvasRef" class="pdf-canvas"></canvas>
                         <div ref="overlayRef" class="pdf-overlay">
@@ -548,7 +800,7 @@ function formatDate(value) {
                                 @pointerdown="startBoxPointer($event, box, 'move')"
                             >
                                 <div class="signature-box-label">{{ box.label || box.signerUser || box.positionCode }}</div>
-                                <button v-if="canEdit" class="signature-box-delete" type="button" @click.stop="deleteBox(box)">
+                                <button v-if="canEdit" class="signature-box-delete" type="button" aria-label="ลบกรอบ" @pointerdown.stop @click.stop="deleteBox(box)">
                                     <i class="pi pi-times"></i>
                                 </button>
                                 <span v-if="canEdit" class="signature-box-handle" @pointerdown="startBoxPointer($event, box, 'resize')"></span>
@@ -556,59 +808,25 @@ function formatDate(value) {
                         </div>
                     </div>
                 </div>
-            </div>
+            </section>
 
-            <div class="xl:col-span-4 flex flex-col gap-4">
-                <div class="card">
-                    <div class="font-semibold text-lg mb-3">Position</div>
-                    <div class="flex flex-col gap-3">
-                        <div v-for="step in configs" :key="step.id" class="position-row" :class="{ active: selectedPositionCode === step.positionCode }" @click="selectedPositionCode = step.positionCode">
-                            <div class="flex items-start justify-between gap-2">
-                                <div>
-                                    <div class="font-semibold">{{ step.positionCode }} - {{ step.positionName }}</div>
-                                    <div class="text-sm text-muted-color">{{ stepUsers(step).join(', ') || 'ไม่มี user' }}</div>
-                                </div>
-                                <Tag :value="conditionLabel(step.conditionType)" :severity="conditionSeverity(step.conditionType)" />
-                            </div>
-                            <Button label="เพิ่มกรอบ" icon="pi pi-plus" size="small" class="mt-3" :disabled="!canEdit || !template?.sampleFileId" @click.stop="addBox(step)" />
+            <aside class="inspector">
+                <section class="inspector-panel selected-panel">
+                    <div class="panel-title">
+                        <div>
+                            <div class="font-semibold">รายละเอียดกรอบที่เลือก</div>
+                            <div v-if="selectedBoxStep" class="text-sm text-muted-color">{{ selectedBoxStep.positionCode }} - {{ selectedBoxStep.positionName }}</div>
                         </div>
                     </div>
-                </div>
 
-                <div class="card">
-                    <div class="font-semibold text-lg mb-3">Validation</div>
-                    <Message v-if="validationIssues.length === 0" severity="success">กรอบลายเซ็นครบตามเงื่อนไข</Message>
-                    <div v-else class="flex flex-col gap-2">
-                        <Message v-for="issue in validationIssues" :key="`${issue.code}-${issue.positionCode}-${issue.message}`" severity="warn">
-                            {{ issue.message }}
-                        </Message>
+                    <div v-if="!selectedBox" class="selected-empty">
+                        <i class="pi pi-mouse-pointer text-muted-color"></i>
+                        <span>เลือกกรอบจาก PDF หรือจากรายการด้านล่างเพื่อแก้รายละเอียด</span>
                     </div>
-                </div>
 
-                <div class="card">
-                    <div class="font-semibold text-lg mb-3">กล่องบนหน้าปัจจุบัน</div>
-                    <div v-if="currentPageBoxes.length === 0" class="text-muted-color">ยังไม่มีกรอบในหน้านี้</div>
-                    <div v-else class="flex flex-col gap-2">
-                        <button
-                            v-for="box in currentPageBoxes"
-                            :key="box.clientKey"
-                            type="button"
-                            class="box-list-item"
-                            :class="{ active: selectedBoxKey === box.clientKey }"
-                            @click="selectBox(box)"
-                        >
-                            <span>{{ box.label || box.signerUser || box.positionCode }}</span>
-                            <small>{{ box.positionCode }} / {{ box.signerType }}</small>
-                        </button>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="font-semibold text-lg mb-3">รายละเอียดกรอบที่เลือก</div>
-                    <div v-if="!selectedBox" class="text-muted-color">เลือกกรอบจากหน้า PDF หรือรายการด้านบนเพื่อดูรายละเอียด</div>
-                    <div v-else class="flex flex-col gap-4">
-                        <div class="flex flex-col gap-2 min-w-0">
-                            <label :for="`box-label-${selectedBox.clientKey}`" class="font-medium">ข้อความบนกรอบ</label>
+                    <div v-else class="selected-form">
+                        <div class="field-row full">
+                            <label :for="`box-label-${selectedBox.clientKey}`">ข้อความบนกรอบ</label>
                             <InputText
                                 :id="`box-label-${selectedBox.clientKey}`"
                                 :modelValue="selectedBox.label"
@@ -616,12 +834,11 @@ function formatDate(value) {
                                 :disabled="!canEdit"
                                 @update:modelValue="updateBoxLabel(selectedBox, $event)"
                             />
-                            <small class="text-muted-color">ใช้แสดงบนกรอบและช่วยตรวจตอนวางตำแหน่ง</small>
                         </div>
 
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div class="flex flex-col gap-2">
-                                <label :for="`box-page-${selectedBox.clientKey}`" class="font-medium">หน้า PDF</label>
+                        <div class="field-grid">
+                            <div class="field-row">
+                                <label :for="`box-page-${selectedBox.clientKey}`">หน้า PDF</label>
                                 <Select
                                     :id="`box-page-${selectedBox.clientKey}`"
                                     :modelValue="Number(selectedBox.pageNo)"
@@ -632,14 +849,14 @@ function formatDate(value) {
                                     @update:modelValue="updateBoxPage(selectedBox, $event)"
                                 />
                             </div>
-                            <div class="flex flex-col gap-2">
-                                <span class="font-medium">ประเภท</span>
+                            <div class="field-row">
+                                <span>ประเภท</span>
                                 <Tag :value="selectedBoxSignerTypeLabel" :severity="conditionSeverity(selectedBoxStep?.conditionType)" class="w-fit" />
                             </div>
                         </div>
 
-                        <div v-if="Number(selectedBoxStep?.conditionType) === 2" class="flex flex-col gap-2">
-                            <label :for="`box-user-${selectedBox.clientKey}`" class="font-medium">ผู้ลงนาม</label>
+                        <div v-if="Number(selectedBoxStep?.conditionType) === 2" class="field-row full">
+                            <label :for="`box-user-${selectedBox.clientKey}`">ผู้ลงนาม</label>
                             <Select
                                 :id="`box-user-${selectedBox.clientKey}`"
                                 :modelValue="selectedBox.signerUser"
@@ -652,9 +869,9 @@ function formatDate(value) {
                             <small class="text-muted-color">Condition “ทุกคน” ต้องมี user ไม่ซ้ำกันใน position เดียวกัน</small>
                         </div>
 
-                        <div class="grid grid-cols-2 gap-3">
-                            <div class="flex flex-col gap-2">
-                                <label :for="`box-x-${selectedBox.clientKey}`" class="font-medium">X (%)</label>
+                        <div class="ratio-grid">
+                            <div class="field-row">
+                                <label :for="`box-x-${selectedBox.clientKey}`">X (%)</label>
                                 <input
                                     :id="`box-x-${selectedBox.clientKey}`"
                                     type="number"
@@ -667,8 +884,8 @@ function formatDate(value) {
                                     @input="updateBoxRatio(selectedBox, 'xRatio', $event.target.value)"
                                 />
                             </div>
-                            <div class="flex flex-col gap-2">
-                                <label :for="`box-y-${selectedBox.clientKey}`" class="font-medium">Y (%)</label>
+                            <div class="field-row">
+                                <label :for="`box-y-${selectedBox.clientKey}`">Y (%)</label>
                                 <input
                                     :id="`box-y-${selectedBox.clientKey}`"
                                     type="number"
@@ -681,8 +898,8 @@ function formatDate(value) {
                                     @input="updateBoxRatio(selectedBox, 'yRatio', $event.target.value)"
                                 />
                             </div>
-                            <div class="flex flex-col gap-2">
-                                <label :for="`box-width-${selectedBox.clientKey}`" class="font-medium">กว้าง (%)</label>
+                            <div class="field-row">
+                                <label :for="`box-width-${selectedBox.clientKey}`">กว้าง (%)</label>
                                 <input
                                     :id="`box-width-${selectedBox.clientKey}`"
                                     type="number"
@@ -695,8 +912,8 @@ function formatDate(value) {
                                     @input="updateBoxRatio(selectedBox, 'widthRatio', $event.target.value)"
                                 />
                             </div>
-                            <div class="flex flex-col gap-2">
-                                <label :for="`box-height-${selectedBox.clientKey}`" class="font-medium">สูง (%)</label>
+                            <div class="field-row">
+                                <label :for="`box-height-${selectedBox.clientKey}`">สูง (%)</label>
                                 <input
                                     :id="`box-height-${selectedBox.clientKey}`"
                                     type="number"
@@ -711,28 +928,211 @@ function formatDate(value) {
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
+                </section>
+
+                <section class="inspector-panel">
+                    <div class="panel-title">
+                        <div>
+                            <div class="font-semibold">ขั้นตอนและกรอบ</div>
+                            <div class="text-sm text-muted-color">{{ boxProgressLabel }} กรอบตามเงื่อนไข</div>
+                        </div>
+                        <Tag :value="validationStatusLabel" :severity="validationStatusSeverity" />
+                    </div>
+
+                    <Message v-if="!template?.sampleFileId" severity="warn" class="mb-3">ต้องอัปโหลด PDF ก่อนจึงจะเพิ่มกรอบได้</Message>
+
+                    <div class="step-list">
+                        <div
+                            v-for="step in stepViews"
+                            :key="step.id || step.positionCode"
+                            class="step-row"
+                            :class="{ active: step.isActive, invalid: step.issues.length > 0, complete: step.isComplete }"
+                            @click="selectedPositionCode = step.positionCode"
+                        >
+                            <div class="step-head">
+                                <div class="min-w-0">
+                                    <div class="step-name">{{ step.positionCode }} - {{ step.positionName }}</div>
+                                    <div class="step-users">{{ step.users.join(', ') || 'ไม่มี user' }}</div>
+                                </div>
+                                <Tag :value="conditionLabel(step.conditionType)" :severity="conditionSeverity(step.conditionType)" />
+                            </div>
+
+                            <div class="step-status-row">
+                                <span :class="['box-count', { ok: step.isComplete, warn: step.issues.length > 0 }]">{{ step.boxes.length }}/{{ step.required }}</span>
+                                <Button
+                                    label="เพิ่มกรอบ"
+                                    icon="pi pi-plus"
+                                    size="small"
+                                    :disabled="!canAddBoxes"
+                                    @click.stop="addBox(step)"
+                                />
+                            </div>
+
+                            <small v-if="!canAddBoxes" class="text-muted-color">ต้องอัปโหลด PDF ก่อน</small>
+
+                            <div v-if="step.boxes.length" class="step-box-list">
+                                <button
+                                    v-for="box in step.boxes"
+                                    :key="box.clientKey"
+                                    type="button"
+                                    class="box-list-item"
+                                    :class="{ active: selectedBoxKey === box.clientKey }"
+                                    @click.stop="selectBox(box)"
+                                >
+                                    <span>{{ box.label || box.signerUser || box.positionCode }}</span>
+                                    <small>หน้า {{ box.pageNo }} / {{ box.signerType }}</small>
+                                </button>
+                            </div>
+
+                            <div v-if="step.issues.length" class="step-issues">
+                                <div v-for="issue in step.issues" :key="`${issue.code}-${issue.message}`" class="issue-line">
+                                    <i class="pi pi-exclamation-triangle"></i>
+                                    <span>{{ issue.message }}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section v-if="validationByPosition.get('_global')?.length" class="inspector-panel">
+                    <div class="font-semibold mb-3">แจ้งเตือน Template</div>
+                    <div class="step-issues">
+                        <div v-for="issue in validationByPosition.get('_global')" :key="`${issue.code}-${issue.message}`" class="issue-line">
+                            <i class="pi pi-exclamation-triangle"></i>
+                            <span>{{ issue.message }}</span>
+                        </div>
+                    </div>
+                </section>
+            </aside>
         </div>
     </div>
 </template>
 
 <style scoped>
-.pdf-scroll {
-    overflow: auto;
-    max-height: calc(100vh - 16rem);
-    background: var(--surface-ground);
+.signature-designer {
+    display: flex;
+    min-height: calc(100dvh - 8rem);
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.editor-bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    min-height: 64px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
     border: 1px solid var(--surface-border);
     border-radius: 8px;
-    padding: 1rem;
+    background: var(--surface-card);
+    padding: 0.65rem 0.85rem;
+}
+
+.editor-title {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.65rem;
+}
+
+.doc-heading {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-color);
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.doc-subtitle {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    color: var(--text-color-secondary);
+    font-size: 0.82rem;
+}
+
+.editor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+.editor-main {
+    display: grid;
+    min-height: calc(100dvh - 13rem);
+    align-items: start;
+    gap: 0.75rem;
+    grid-template-columns: minmax(0, 1fr) minmax(380px, 420px);
+}
+
+.pdf-workspace,
+.inspector-panel {
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: var(--surface-card);
+}
+
+.pdf-workspace {
+    min-width: 0;
+    padding: 0.75rem;
+}
+
+.pdf-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding-bottom: 0.75rem;
+}
+
+.toolbar-group {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.page-select {
+    min-width: 8rem;
+}
+
+.zoom-value {
+    width: 3.4rem;
+    text-align: center;
+    color: var(--text-color-secondary);
+    font-size: 0.875rem;
+}
+
+.pdf-meta {
+    white-space: nowrap;
+    color: var(--text-color-secondary);
+    font-size: 0.875rem;
+}
+
+.pdf-scroll {
+    height: calc(100dvh - 18rem);
+    min-height: 34rem;
+    overflow: auto;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: var(--surface-ground);
+    padding: 0.85rem;
 }
 
 .pdf-page-shell {
     position: relative;
     display: inline-block;
-    line-height: 0;
     background: white;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+    line-height: 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
 }
 
 .pdf-canvas {
@@ -746,17 +1146,19 @@ function formatDate(value) {
 
 .signature-box {
     position: absolute;
+    min-width: 32px;
+    min-height: 24px;
     border: 2px solid var(--primary-color);
     background: color-mix(in srgb, var(--primary-color) 14%, transparent);
     cursor: move;
     line-height: 1.2;
-    min-width: 32px;
-    min-height: 24px;
 }
 
 .signature-box.selected {
     border-color: var(--p-orange-500, #f59e0b);
-    background: rgba(245, 158, 11, 0.18);
+    background: rgba(245, 158, 11, 0.2);
+    outline: 2px solid rgba(245, 158, 11, 0.22);
+    outline-offset: 2px;
 }
 
 .signature-box.readonly {
@@ -764,13 +1166,13 @@ function formatDate(value) {
 }
 
 .signature-box-label {
+    overflow: hidden;
+    padding: 0.25rem;
     color: var(--primary-700, #1d4ed8);
     font-size: 0.75rem;
     font-weight: 700;
-    padding: 0.25rem;
-    white-space: nowrap;
-    overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .signature-box-delete {
@@ -798,44 +1200,238 @@ function formatDate(value) {
 }
 
 .signature-empty {
-    min-height: 28rem;
-    border: 1px dashed var(--surface-border);
-    border-radius: 8px;
     display: flex;
+    min-height: 32rem;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    text-align: center;
     gap: 0.25rem;
+    border: 1px dashed var(--surface-border);
+    border-radius: 8px;
+    text-align: center;
 }
 
-.position-row,
-.box-list-item {
-    width: 100%;
-    text-align: left;
+.signature-empty.compact {
+    min-height: 22rem;
+}
+
+.inspector {
+    display: flex;
+    max-height: calc(100dvh - 13rem);
+    flex-direction: column;
+    gap: 0.75rem;
+    overflow: auto;
+}
+
+.inspector-panel {
+    padding: 0.9rem;
+}
+
+.selected-panel {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+
+.panel-title {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.selected-empty {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-color-secondary);
+    font-size: 0.9rem;
+}
+
+.selected-form,
+.step-list,
+.step-box-list,
+.step-issues {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+
+.field-grid,
+.ratio-grid {
+    display: grid;
+    gap: 0.65rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ratio-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.field-row {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-size: 0.86rem;
+}
+
+.field-row.full {
+    grid-column: 1 / -1;
+}
+
+.field-row label,
+.field-row > span {
+    color: var(--text-color);
+    font-weight: 600;
+}
+
+.step-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
     border: 1px solid var(--surface-border);
     border-radius: 8px;
     background: var(--surface-card);
     padding: 0.75rem;
 }
 
-.position-row.active,
-.box-list-item.active {
+.step-row.active {
     border-color: var(--primary-color);
-    background: color-mix(in srgb, var(--primary-color) 8%, var(--surface-card));
+    background: color-mix(in srgb, var(--primary-color) 7%, var(--surface-card));
+}
+
+.step-row.invalid {
+    border-color: var(--p-orange-300, #fbbf24);
+}
+
+.step-row.complete:not(.active) {
+    border-color: color-mix(in srgb, var(--green-500, #22c55e) 55%, var(--surface-border));
+}
+
+.step-head,
+.step-status-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.step-status-row {
+    align-items: center;
+}
+
+.step-name {
+    color: var(--text-color);
+    font-weight: 700;
+}
+
+.step-users {
+    color: var(--text-color-secondary);
+    font-size: 0.82rem;
+}
+
+.box-count {
+    display: inline-flex;
+    min-width: 3.25rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: var(--surface-ground);
+    padding: 0.25rem 0.55rem;
+    color: var(--text-color-secondary);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.box-count.ok {
+    background: color-mix(in srgb, var(--green-500, #22c55e) 12%, var(--surface-card));
+    color: var(--green-700, #15803d);
+}
+
+.box-count.warn {
+    background: color-mix(in srgb, var(--orange-500, #f97316) 12%, var(--surface-card));
+    color: var(--orange-700, #c2410c);
 }
 
 .box-list-item {
     display: flex;
+    width: 100%;
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: var(--surface-card);
+    padding: 0.55rem 0.65rem;
+    color: var(--text-color);
     cursor: pointer;
+    text-align: left;
 }
 
-@media (max-width: 960px) {
+.box-list-item.active {
+    border-color: var(--p-orange-500, #f59e0b);
+    background: rgba(245, 158, 11, 0.12);
+}
+
+.box-list-item small {
+    color: var(--text-color-secondary);
+    white-space: nowrap;
+}
+
+.issue-line {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.45rem;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--orange-500, #f97316) 10%, var(--surface-card));
+    padding: 0.5rem 0.6rem;
+    color: var(--orange-800, #9a3412);
+    font-size: 0.84rem;
+}
+
+@media (max-width: 1200px) {
+    .editor-main {
+        grid-template-columns: 1fr;
+    }
+
+    .inspector {
+        max-height: none;
+        overflow: visible;
+    }
+
+    .selected-panel {
+        position: static;
+    }
+}
+
+@media (max-width: 768px) {
+    .editor-bar,
+    .pdf-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .editor-actions,
+    .toolbar-group {
+        justify-content: flex-start;
+    }
+
     .pdf-scroll {
-        max-height: 70vh;
+        height: 70vh;
+        min-height: 28rem;
+    }
+
+    .field-grid,
+    .ratio-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 520px) {
+    .ratio-grid {
+        grid-template-columns: 1fr;
     }
 }
 </style>
