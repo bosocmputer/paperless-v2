@@ -686,62 +686,58 @@ function formatDate(value) {
                         <div class="grid grid-cols-2 gap-3">
                             <div class="flex flex-col gap-2">
                                 <label :for="`box-x-${selectedBox.clientKey}`" class="font-medium">X (%)</label>
-                                <InputNumber
-                                    :inputId="`box-x-${selectedBox.clientKey}`"
-                                    :modelValue="ratioPercent(selectedBox, 'xRatio')"
-                                    suffix="%"
-                                    :min="0"
-                                    :max="100"
-                                    :minFractionDigits="0"
-                                    :maxFractionDigits="2"
+                                <input
+                                    :id="`box-x-${selectedBox.clientKey}`"
+                                    type="number"
+                                    class="p-inputtext p-component w-full"
+                                    :value="ratioPercent(selectedBox, 'xRatio')"
+                                    min="0"
+                                    max="100"
+                                    step="0.01"
                                     :disabled="!isDraft"
-                                    inputClass="w-full"
-                                    @update:modelValue="updateBoxRatio(selectedBox, 'xRatio', $event)"
+                                    @input="updateBoxRatio(selectedBox, 'xRatio', $event.target.value)"
                                 />
                             </div>
                             <div class="flex flex-col gap-2">
                                 <label :for="`box-y-${selectedBox.clientKey}`" class="font-medium">Y (%)</label>
-                                <InputNumber
-                                    :inputId="`box-y-${selectedBox.clientKey}`"
-                                    :modelValue="ratioPercent(selectedBox, 'yRatio')"
-                                    suffix="%"
-                                    :min="0"
-                                    :max="100"
-                                    :minFractionDigits="0"
-                                    :maxFractionDigits="2"
+                                <input
+                                    :id="`box-y-${selectedBox.clientKey}`"
+                                    type="number"
+                                    class="p-inputtext p-component w-full"
+                                    :value="ratioPercent(selectedBox, 'yRatio')"
+                                    min="0"
+                                    max="100"
+                                    step="0.01"
                                     :disabled="!isDraft"
-                                    inputClass="w-full"
-                                    @update:modelValue="updateBoxRatio(selectedBox, 'yRatio', $event)"
+                                    @input="updateBoxRatio(selectedBox, 'yRatio', $event.target.value)"
                                 />
                             </div>
                             <div class="flex flex-col gap-2">
                                 <label :for="`box-width-${selectedBox.clientKey}`" class="font-medium">กว้าง (%)</label>
-                                <InputNumber
-                                    :inputId="`box-width-${selectedBox.clientKey}`"
-                                    :modelValue="ratioPercent(selectedBox, 'widthRatio')"
-                                    suffix="%"
-                                    :min="3"
-                                    :max="100"
-                                    :minFractionDigits="0"
-                                    :maxFractionDigits="2"
+                                <input
+                                    :id="`box-width-${selectedBox.clientKey}`"
+                                    type="number"
+                                    class="p-inputtext p-component w-full"
+                                    :value="ratioPercent(selectedBox, 'widthRatio')"
+                                    min="3"
+                                    max="100"
+                                    step="0.01"
                                     :disabled="!isDraft"
-                                    inputClass="w-full"
-                                    @update:modelValue="updateBoxRatio(selectedBox, 'widthRatio', $event)"
+                                    @input="updateBoxRatio(selectedBox, 'widthRatio', $event.target.value)"
                                 />
                             </div>
                             <div class="flex flex-col gap-2">
                                 <label :for="`box-height-${selectedBox.clientKey}`" class="font-medium">สูง (%)</label>
-                                <InputNumber
-                                    :inputId="`box-height-${selectedBox.clientKey}`"
-                                    :modelValue="ratioPercent(selectedBox, 'heightRatio')"
-                                    suffix="%"
-                                    :min="3"
-                                    :max="100"
-                                    :minFractionDigits="0"
-                                    :maxFractionDigits="2"
+                                <input
+                                    :id="`box-height-${selectedBox.clientKey}`"
+                                    type="number"
+                                    class="p-inputtext p-component w-full"
+                                    :value="ratioPercent(selectedBox, 'heightRatio')"
+                                    min="3"
+                                    max="100"
+                                    step="0.01"
                                     :disabled="!isDraft"
-                                    inputClass="w-full"
-                                    @update:modelValue="updateBoxRatio(selectedBox, 'heightRatio', $event)"
+                                    @input="updateBoxRatio(selectedBox, 'heightRatio', $event.target.value)"
                                 />
                             </div>
                         </div>
