@@ -335,7 +335,7 @@ function addBox(step) {
     }
 
     boxes.value.push(box);
-    selectBox(box);
+    selectBox(box, { scrollIntoView: true });
     dirty.value = true;
     recordDesignerEvent('box_add', { positionCode: step.positionCode, conditionType: Number(step.conditionType) });
 }
@@ -367,11 +367,12 @@ function removeBox(box) {
     recordDesignerEvent('box_delete', { positionCode: box.positionCode, conditionType: Number(step?.conditionType || 0) });
 }
 
-function selectBox(box) {
+function selectBox(box, options = {}) {
     if (!box) return;
     selectedBoxKey.value = box.clientKey;
     selectedPositionCode.value = box.positionCode;
     if (Number(box.pageNo) !== Number(currentPage.value)) currentPage.value = Number(box.pageNo);
+    if (options.scrollIntoView) nextTick(() => scrollBoxIntoView(box));
 }
 
 function updateBoxLabel(box, value) {
@@ -697,6 +698,16 @@ function restoreSelectedBox(snapshot) {
     if (match) selectBox(match);
 }
 
+function scrollBoxIntoView(box) {
+    const scroll = viewerRef.value;
+    if (!scroll || !pageSize.value.width || !pageSize.value.height) return;
+    const maxTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    const maxLeft = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
+    const top = clamp(box.yRatio * pageSize.value.height - scroll.clientHeight * 0.35, 0, maxTop);
+    const left = clamp(box.xRatio * pageSize.value.width - scroll.clientWidth * 0.25, 0, maxLeft);
+    scroll.scrollTo({ top, left, behavior: 'smooth' });
+}
+
 function goBackToConfig() {
     router.push({ name: 'document-config' });
 }
@@ -977,7 +988,7 @@ function recordDesignerEvent(event, extra = {}) {
                                     type="button"
                                     class="box-list-item"
                                     :class="{ active: selectedBoxKey === box.clientKey }"
-                                    @click.stop="selectBox(box)"
+                                    @click.stop="selectBox(box, { scrollIntoView: true })"
                                 >
                                     <span>{{ box.label || box.signerUser || box.positionCode }}</span>
                                     <small>หน้า {{ box.pageNo }} / {{ box.signerType }}</small>
