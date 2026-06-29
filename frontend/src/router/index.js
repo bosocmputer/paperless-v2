@@ -13,12 +13,14 @@ const router = createRouter({
                 {
                     path: '/signing/tasks',
                     name: 'my-signing-tasks',
-                    component: () => import('@/views/signing/MySigningTasks.vue')
+                    component: () => import('@/views/signing/MySigningTasks.vue'),
+                    meta: { role: 'user' }
                 },
                 {
                     path: '/signing/tasks/:taskId',
                     name: 'my-signing-task',
-                    component: () => import('@/views/signing/SigningTask.vue')
+                    component: () => import('@/views/signing/SigningTask.vue'),
+                    meta: { role: 'user' }
                 }
             ]
         },

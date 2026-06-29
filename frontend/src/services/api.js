@@ -147,6 +147,9 @@ export const api = {
     listSigningDocuments() {
         return request('/api/signing-documents');
     },
+    getAdminDashboard() {
+        return request('/api/admin/dashboard');
+    },
     createSigningDocument(payload) {
         const form = new FormData();
         form.set('docFormatCode', payload.docFormatCode);

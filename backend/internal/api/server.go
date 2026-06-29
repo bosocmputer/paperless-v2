@@ -50,6 +50,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("PUT /api/signature-templates/{id}/boxes", s.requireAdmin(http.HandlerFunc(s.saveSignatureTemplateBoxes)))
 	mux.Handle("POST /api/signature-templates/{id}/publish", s.requireAdmin(http.HandlerFunc(s.publishSignatureTemplate)))
 	mux.Handle("POST /api/signature-templates/{id}/designer-events", s.requireAdmin(http.HandlerFunc(s.recordSignatureTemplateDesignerEvent)))
+	mux.Handle("GET /api/admin/dashboard", s.requireAdmin(http.HandlerFunc(s.getAdminDashboard)))
 	mux.Handle("GET /api/signing-documents", s.requireAdmin(http.HandlerFunc(s.listSigningDocuments)))
 	mux.Handle("POST /api/signing-documents", s.requireAdmin(http.HandlerFunc(s.createSigningDocument)))
 	mux.Handle("GET /api/signing-documents/{id}", s.requireAdmin(http.HandlerFunc(s.getSigningDocument)))

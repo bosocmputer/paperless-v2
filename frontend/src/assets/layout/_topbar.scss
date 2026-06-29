@@ -32,6 +32,22 @@
             width: 3rem;
         }
 
+        span:last-child {
+            display: grid;
+            line-height: 1.1;
+        }
+
+        strong {
+            font-size: 1.15rem;
+            font-weight: 700;
+        }
+
+        small {
+            font-size: 0.78rem;
+            color: var(--text-color-secondary);
+            font-weight: 500;
+        }
+
         &:focus-visible {
             @include focused();
         }

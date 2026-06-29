@@ -21,7 +21,7 @@ const model = computed(() => {
 
     return [
         {
-            label: 'PaperLess',
+            label: 'Admin Console',
             items: [
                 {
                     label: 'Dashboard',
@@ -29,32 +29,32 @@ const model = computed(() => {
                     to: '/'
                 },
                 {
-                    label: 'เอกสารรอเซ็น',
-                    icon: 'pi pi-fw pi-inbox',
-                    to: '/signing/tasks'
-                },
-                {
                     label: 'เอกสารเพื่อเซ็น',
                     icon: 'pi pi-fw pi-send',
                     to: '/signing/documents'
-                },
+                }
+            ]
+        },
+        {
+            label: 'ตั้งค่าเอกสาร',
+            items: [
                 {
                     label: 'Config เอกสาร',
                     icon: 'pi pi-fw pi-file-edit',
                     to: '/config/documents'
                 },
                 {
-                    label: 'ตั้งค่ากรอบลายเซ็น',
+                    label: 'กรอบลายเซ็น',
                     icon: 'pi pi-fw pi-pencil',
                     to: '/config/signature-templates'
                 }
             ]
         },
         {
-            label: 'Admin',
+            label: 'ระบบ',
             items: [
                 {
-                    label: 'Users',
+                    label: 'ผู้ใช้งาน',
                     icon: 'pi pi-fw pi-users',
                     to: '/admin/users'
                 }

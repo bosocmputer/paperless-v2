@@ -209,6 +209,23 @@ type SigningDocument struct {
 	PrintEvents         []SigningDocumentPrintEvent `json:"printEvents,omitempty"`
 }
 
+type AdminDashboard struct {
+	Totals          SigningDocumentTotals `json:"totals"`
+	RecentDocuments []SigningDocument     `json:"recentDocuments"`
+	NeedsAttention  []SigningDocument     `json:"needsAttention"`
+}
+
+type SigningDocumentTotals struct {
+	Total                   int `json:"total"`
+	Draft                   int `json:"draft"`
+	InProgress              int `json:"inProgress"`
+	Rejected                int `json:"rejected"`
+	Completed               int `json:"completed"`
+	CompletedEvidenceFailed int `json:"completedEvidenceFailed"`
+	CompletedLockFailed     int `json:"completedLockFailed"`
+	Cancelled               int `json:"cancelled"`
+}
+
 type SigningDocumentStep struct {
 	ID            string     `json:"id"`
 	DocumentID    string     `json:"documentId"`

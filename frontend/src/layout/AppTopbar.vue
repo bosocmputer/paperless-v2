@@ -1,12 +1,15 @@
 <script setup>
 import { authStore } from '@/stores/auth';
 import { useLayout } from '@/layout/composables/layout';
+import { computed } from 'vue';
 import { useRouter } from 'vue-router';
 import AppConfigurator from './AppConfigurator.vue';
 
 const router = useRouter();
 const { toggleMenu, toggleDarkMode, isDarkTheme } = useLayout();
 const showThemeConfigurator = import.meta.env.DEV || import.meta.env.VITE_ENABLE_THEME_CONFIG === 'true';
+const homeRoute = computed(() => (authStore.user?.role === 'user' ? { name: 'my-signing-tasks' } : { name: 'dashboard' }));
+const consoleLabel = computed(() => (authStore.user?.role === 'admin' ? 'Admin Console' : 'เอกสารรอเซ็น'));
 
 async function logout() {
     await authStore.logout();
@@ -20,11 +23,14 @@ async function logout() {
             <button class="layout-menu-button layout-topbar-action" @click="toggleMenu">
                 <i class="pi pi-bars"></i>
             </button>
-            <router-link to="/" class="layout-topbar-logo">
+            <router-link :to="homeRoute" class="layout-topbar-logo">
                 <span class="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-primary text-primary-contrast">
                     <i class="pi pi-file-edit text-xl"></i>
                 </span>
-                <span>PaperLess</span>
+                <span>
+                    <strong>PaperLess</strong>
+                    <small>{{ consoleLabel }}</small>
+                </span>
             </router-link>
         </div>
 

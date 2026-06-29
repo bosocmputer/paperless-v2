@@ -52,6 +52,16 @@ func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"documents": documents})
 }
 
+func (s *Server) getAdminDashboard(w http.ResponseWriter, r *http.Request) {
+	dashboard, err := s.store.GetAdminDashboard(r.Context())
+	if err != nil {
+		s.logger.Error("admin dashboard failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "admin_dashboard_failed", "Cannot load admin dashboard right now.")
+		return
+	}
+	writeJSON(w, http.StatusOK, dashboard)
+}
+
 func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 	actor, _ := currentUser(r)
 	maxBytes := s.cfg.MaxUploadMB * 1024 * 1024

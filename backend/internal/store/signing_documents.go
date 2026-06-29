@@ -169,6 +169,77 @@ ORDER BY d.updated_at DESC, d.created_at DESC
 	if err != nil {
 		return nil, err
 	}
+	return scanSigningDocumentRows(rows)
+}
+
+func (s *Store) GetAdminDashboard(ctx context.Context) (models.AdminDashboard, error) {
+	var dashboard models.AdminDashboard
+	rows, err := s.pool.Query(ctx, `
+SELECT status, COUNT(*)::int
+FROM signing_documents
+GROUP BY status
+`)
+	if err != nil {
+		return dashboard, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			return dashboard, err
+		}
+		dashboard.Totals.Total += count
+		switch status {
+		case "draft":
+			dashboard.Totals.Draft = count
+		case "in_progress":
+			dashboard.Totals.InProgress = count
+		case "rejected":
+			dashboard.Totals.Rejected = count
+		case "completed":
+			dashboard.Totals.Completed = count
+		case "completed_evidence_failed":
+			dashboard.Totals.CompletedEvidenceFailed = count
+		case "completed_lock_failed":
+			dashboard.Totals.CompletedLockFailed = count
+		case "cancelled":
+			dashboard.Totals.Cancelled = count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return dashboard, err
+	}
+
+	needsAttention, err := s.listSigningDocumentsByQuery(ctx, `
+WHERE d.status IN ('completed_evidence_failed', 'completed_lock_failed')
+ORDER BY d.updated_at DESC, d.created_at DESC
+LIMIT 5
+`)
+	if err != nil {
+		return dashboard, err
+	}
+	recent, err := s.listSigningDocumentsByQuery(ctx, `
+ORDER BY d.updated_at DESC, d.created_at DESC
+LIMIT 6
+`)
+	if err != nil {
+		return dashboard, err
+	}
+	dashboard.NeedsAttention = needsAttention
+	dashboard.RecentDocuments = recent
+	return dashboard, nil
+}
+
+func (s *Store) listSigningDocumentsByQuery(ctx context.Context, suffix string, args ...any) ([]models.SigningDocument, error) {
+	rows, err := s.pool.Query(ctx, signingDocumentSelect()+suffix, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanSigningDocumentRows(rows)
+}
+
+func scanSigningDocumentRows(rows pgx.Rows) ([]models.SigningDocument, error) {
 	defer rows.Close()
 	documents := []models.SigningDocument{}
 	for rows.Next() {
