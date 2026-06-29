@@ -22,6 +22,11 @@ const model = ref([
                 to: '/config/documents'
             },
             {
+                label: 'ตั้งค่ากรอบลายเซ็น',
+                icon: 'pi pi-fw pi-pencil',
+                to: '/config/signature-templates'
+            },
+            {
                 label: 'Audit Trail',
                 icon: 'pi pi-fw pi-history',
                 to: '/pages/empty'

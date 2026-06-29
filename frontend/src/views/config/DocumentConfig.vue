@@ -273,6 +273,7 @@ function userValue(user) {
             </div>
             <div class="flex gap-2">
                 <Button icon="pi pi-refresh" severity="secondary" outlined :loading="loadingPage" aria-label="โหลดใหม่" @click="initializePage" />
+                <Button label="ตั้งค่ากรอบลายเซ็น" icon="pi pi-pencil" severity="secondary" outlined @click="router.push({ name: 'signature-templates' })" />
                 <Button label="เพิ่ม Position" icon="pi pi-plus" :disabled="!canAdd" @click="openCreate" />
             </div>
         </div>
@@ -309,11 +310,11 @@ function userValue(user) {
                     <Tag :value="conditionLabel(data.conditionType)" :severity="conditionSeverity(data.conditionType)" />
                 </template>
             </Column>
-            <Column header="จัดการ" style="width: 13rem">
+            <Column header="จัดการ" style="min-width: 18rem">
                 <template #body="{ data }">
-                    <div class="flex gap-2">
+                    <div class="flex flex-wrap gap-2">
                         <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ไข Config เอกสาร" @click="openEdit(data)" />
-                        <Button icon="pi pi-file-edit" severity="info" rounded outlined aria-label="ตั้งค่ากรอบลายเซ็น" @click="openSignatureTemplate(data.docFormatCode)" />
+                        <Button label="กรอบลายเซ็น" icon="pi pi-pencil" severity="info" outlined @click="openSignatureTemplate(data.docFormatCode)" />
                         <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบ Config เอกสาร" @click="confirmDelete(data)" />
                     </div>
                 </template>
