@@ -206,6 +206,7 @@ type SigningDocument struct {
 	Signers             []SigningDocumentSigner     `json:"signers,omitempty"`
 	Events              []SigningDocumentEvent      `json:"events,omitempty"`
 	Attachments         []SigningDocumentAttachment `json:"attachments,omitempty"`
+	PrintEvents         []SigningDocumentPrintEvent `json:"printEvents,omitempty"`
 }
 
 type SigningDocumentStep struct {
@@ -276,9 +277,32 @@ type SigningDocumentAttachment struct {
 	File       UploadedFile `json:"file"`
 }
 
+type SigningDocumentPrintEvent struct {
+	ID              string       `json:"id"`
+	DocumentID      string       `json:"documentId"`
+	FileID          string       `json:"fileId"`
+	Channel         string       `json:"channel"`
+	PrinterName     string       `json:"printerName"`
+	DeviceIDHash    string       `json:"deviceIdHash"`
+	ClientTimezone  string       `json:"clientTimezone"`
+	FinalFileSHA256 string       `json:"finalFileSha256"`
+	PrintedBy       string       `json:"printedBy"`
+	IPAddress       string       `json:"ipAddress"`
+	UserAgent       string       `json:"userAgent"`
+	PrintedAt       time.Time    `json:"printedAt"`
+	File            UploadedFile `json:"file"`
+}
+
 type CreateSigningDocumentRequest struct {
 	DocFormatCode string `json:"docFormatCode"`
 	DocNo         string `json:"docNo"`
+}
+
+type CreatePrintCopyRequest struct {
+	Channel        string `json:"channel"`
+	DeviceID       string `json:"deviceId"`
+	PrinterName    string `json:"printerName"`
+	ClientTimezone string `json:"clientTimezone"`
 }
 
 type SignTaskRequest struct {

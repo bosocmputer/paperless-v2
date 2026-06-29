@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	signingLegalTextVersion = "thai-eta-v1"
-	signingLegalText        = "ข้าพเจ้ายืนยันการลงลายเซ็นอิเล็กทรอนิกส์นี้ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ และยอมรับให้ใช้เป็นหลักฐานประกอบเอกสารนี้"
+	signingLegalTextVersion = "thai-eta-2544-v2"
+	signingLegalText        = "เอกสารนี้จัดทำและลงนามในรูปแบบอิเล็กทรอนิกส์ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ผู้ลงนามยืนยันความถูกต้องของเนื้อหาและยอมรับผลผูกพันทางกฎหมายทุกประการ"
 	maxSigningEventBytes    = 8 * 1024
 )
 
@@ -206,6 +206,143 @@ func (s *Server) retrySigningDocumentLock(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "lock": metadata})
+}
+
+func (s *Server) retrySigningDocumentFinalPDF(w http.ResponseWriter, r *http.Request) {
+	documentID := strings.TrimSpace(r.PathValue("id"))
+	document, err := s.store.FindSigningDocumentByID(r.Context(), documentID)
+	if errors.Is(err, store.ErrSigningDocumentNotFound) {
+		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	if document.Status != "completed_evidence_failed" {
+		writeError(w, http.StatusBadRequest, "document_not_evidence_failed", "Document is not waiting for final PDF retry.")
+		return
+	}
+	finalOK, lockOK := s.finalizeCompletedDocument(r.Context(), documentID, clientIP(r), r.UserAgent())
+	if !finalOK {
+		writeError(w, http.StatusBadGateway, "final_pdf_failed", "Final PDF evidence generation failed. You can retry again.")
+		return
+	}
+	updated, _ := s.store.FindSigningDocumentByID(r.Context(), documentID)
+	writeJSON(w, http.StatusOK, map[string]any{"document": s.withExternalURLs(r, updated), "lockOk": lockOK})
+}
+
+func (s *Server) createSigningDocumentPrintCopy(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
+	documentID := strings.TrimSpace(r.PathValue("id"))
+	var req models.CreatePrintCopyRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 32<<10)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
+		return
+	}
+	req = normalizePrintCopyRequest(req)
+	document, err := s.store.FindSigningDocumentByID(r.Context(), documentID)
+	if errors.Is(err, store.ErrSigningDocumentNotFound) {
+		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	if document.Status != "completed" {
+		switch document.Status {
+		case "completed_evidence_failed":
+			writeError(w, http.StatusConflict, "final_evidence_required", "Final PDF evidence is not ready. Retry Final PDF first.")
+		case "completed_lock_failed":
+			writeError(w, http.StatusConflict, "sml_lock_required", "SML lock is not complete. Retry SML Lock before printing the official copy.")
+		default:
+			writeError(w, http.StatusConflict, "document_not_completed", "Document must be completed before printing the official copy.")
+		}
+		return
+	}
+	if document.FinalFile == nil || document.FinalFile.StoragePath == "" {
+		writeError(w, http.StatusConflict, "final_pdf_required", "Final PDF was not found.")
+		return
+	}
+
+	printedAt := time.Now()
+	deviceIDHash := shortHash(req.DeviceID)
+	printedBy := strings.TrimSpace(actor.DisplayName)
+	if printedBy == "" {
+		printedBy = actor.Username
+	}
+	printed, err := createPrintCopyPDF(document.FinalFile.StoragePath, document.FinalFile.PageCount, printEvidencePage{
+		Document:        document,
+		PrintedAt:       printedAt,
+		PrintedBy:       printedBy,
+		Channel:         req.Channel,
+		PrinterName:     req.PrinterName,
+		DeviceIDHash:    deviceIDHash,
+		ClientTimezone:  req.ClientTimezone,
+		IPAddress:       clientIP(r),
+		UserAgent:       r.UserAgent(),
+		FinalFileSHA256: document.FinalFile.SHA256,
+	})
+	if err != nil {
+		s.logger.Error("create print copy pdf failed", "error", err, "documentID", document.ID)
+		writeError(w, http.StatusInternalServerError, "print_copy_failed", "Cannot create print copy right now.")
+		return
+	}
+	pageCount := document.FinalFile.PageCount + 1
+	if count, err := readPDFPageCount(printed); err == nil && count > 0 {
+		pageCount = count
+	}
+	name := fmt.Sprintf("%s-print-copy-%s.pdf", strings.TrimSuffix(filepath.Base(document.FinalFile.OriginalName), filepath.Ext(document.FinalFile.OriginalName)), printedAt.Format("20060102150405"))
+	uploaded, err := s.storeUploadedBytes(r.Context(), printed, name, "print-copy.pdf", "application/pdf", ".pdf", pageCount, actor.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "print_copy_store_failed", "Cannot store print copy right now.")
+		return
+	}
+	printEvent, err := s.store.CreateSigningDocumentPrintEvent(r.Context(), store.CreatePrintEventInput{
+		DocumentID:      document.ID,
+		FileID:          uploaded.ID,
+		Channel:         req.Channel,
+		PrinterName:     req.PrinterName,
+		DeviceIDHash:    deviceIDHash,
+		ClientTimezone:  req.ClientTimezone,
+		FinalFileSHA256: document.FinalFile.SHA256,
+		PrintedBy:       actor.ID,
+		PrintedByLabel:  printedBy,
+		IPAddress:       clientIP(r),
+		UserAgent:       r.UserAgent(),
+	})
+	if err != nil {
+		s.logger.Error("record print copy failed", "error", err, "documentID", document.ID)
+		writeError(w, http.StatusInternalServerError, "print_event_failed", "Cannot record print event right now.")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"printCopyId": printEvent.ID,
+		"fileUrl":     fmt.Sprintf("/api/signing-documents/%s/print-copies/%s/pdf", document.ID, printEvent.ID),
+		"printEvent":  printEvent,
+	})
+}
+
+func (s *Server) getSigningDocumentPrintCopyPDF(w http.ResponseWriter, r *http.Request) {
+	documentID := strings.TrimSpace(r.PathValue("id"))
+	printCopyID := strings.TrimSpace(r.PathValue("printCopyId"))
+	printEvent, err := s.store.FindSigningDocumentPrintEvent(r.Context(), documentID, printCopyID)
+	if errors.Is(err, store.ErrSigningDocumentNotFound) {
+		writeError(w, http.StatusNotFound, "print_copy_not_found", "Print copy was not found.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "print_copy_failed", "Cannot load print copy right now.")
+		return
+	}
+	if printEvent.File.StoragePath == "" {
+		writeError(w, http.StatusNotFound, "pdf_not_found", "PDF was not found.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", printEvent.File.OriginalName))
+	http.ServeFile(w, r, printEvent.File.StoragePath)
 }
 
 func (s *Server) regenerateExternalToken(w http.ResponseWriter, r *http.Request) {
@@ -568,14 +705,14 @@ func (s *Server) writeTaskMutationResult(w http.ResponseWriter, r *http.Request,
 		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot sign document right now.")
 		return
 	}
-	if err := s.refreshStampedPDF(r.Context(), result.DocumentID, result.Completed); err != nil {
+	if err := s.refreshStampedPDF(r.Context(), result.DocumentID, false); err != nil {
 		s.logger.Error("stamp signing document pdf failed", "error", err, "documentID", result.DocumentID)
 		_ = s.store.AddSigningEvent(context.Background(), result.DocumentID, "", "", "pdf_stamp_failed", "สร้าง PDF พร้อมลายเซ็นไม่สำเร็จ", clientIP(r), r.UserAgent(), map[string]any{
 			"error": err.Error(),
 		})
 	}
 	if result.Completed {
-		s.lockCompletedDocument(r.Context(), result.DocumentID, "")
+		s.finalizeCompletedDocument(r.Context(), result.DocumentID, clientIP(r), r.UserAgent())
 	}
 	document, _ := s.store.FindSigningDocumentByID(r.Context(), result.DocumentID)
 	payload := map[string]any{"document": document}
@@ -748,6 +885,45 @@ func (s *Server) lockCompletedDocument(ctx context.Context, documentID, docNo st
 	}
 	_ = s.store.MarkDocumentLockResult(context.Background(), documentID, true, metadata)
 	return true, metadata
+}
+
+func (s *Server) finalizeCompletedDocument(ctx context.Context, documentID, ipAddress, userAgent string) (bool, bool) {
+	start := time.Now()
+	if err := s.refreshStampedPDF(ctx, documentID, true); err != nil {
+		s.logger.Error("final pdf evidence failed", "error", err, "documentID", documentID)
+		_ = s.store.MarkDocumentEvidenceFailed(context.Background(), documentID, map[string]any{
+			"error":     truncateForMetadata(err.Error(), 500),
+			"elapsedMs": time.Since(start).Milliseconds(),
+		})
+		return false, false
+	}
+	ok, _ := s.lockCompletedDocument(ctx, documentID, "")
+	_ = s.store.AddSigningEvent(context.Background(), documentID, "", "", "final_pdf_metrics", "บันทึก metric การสร้าง final PDF", ipAddress, userAgent, map[string]any{
+		"elapsedMs": time.Since(start).Milliseconds(),
+		"lockOk":    ok,
+	})
+	return true, ok
+}
+
+func normalizePrintCopyRequest(req models.CreatePrintCopyRequest) models.CreatePrintCopyRequest {
+	req.Channel = strings.ToLower(strings.TrimSpace(req.Channel))
+	if req.Channel == "" {
+		req.Channel = "web"
+	}
+	if req.Channel != "web" && req.Channel != "app" {
+		req.Channel = "web"
+	}
+	req.PrinterName = truncateForMetadata(req.PrinterName, 120)
+	if req.PrinterName == "" {
+		if req.Channel == "web" {
+			req.PrinterName = "not_available_web_browser"
+		} else {
+			req.PrinterName = "not_provided"
+		}
+	}
+	req.ClientTimezone = truncateForMetadata(req.ClientTimezone, 80)
+	req.DeviceID = truncateForMetadata(req.DeviceID, 160)
+	return req
 }
 
 func (s *Server) readAndStorePDFUpload(w http.ResponseWriter, r *http.Request, fieldName, actorID, fallbackName string) (models.UploadedFile, error) {

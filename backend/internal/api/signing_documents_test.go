@@ -115,3 +115,20 @@ func TestDetectSigningAttachmentTypePDF(t *testing.T) {
 		t.Fatalf("unexpected PDF metadata %s %s %d", contentType, ext, pageCount)
 	}
 }
+
+func TestNormalizePrintCopyRequestWebDefaultsPrinterName(t *testing.T) {
+	req := normalizePrintCopyRequest(models.CreatePrintCopyRequest{
+		Channel:        "WEB",
+		DeviceID:       strings.Repeat("d", 200),
+		ClientTimezone: "Asia/Bangkok",
+	})
+	if req.Channel != "web" {
+		t.Fatalf("expected web channel, got %q", req.Channel)
+	}
+	if req.PrinterName != "not_available_web_browser" {
+		t.Fatalf("expected web printer fallback, got %q", req.PrinterName)
+	}
+	if len(req.DeviceID) != 160 {
+		t.Fatalf("expected bounded device id, got %d", len(req.DeviceID))
+	}
+}

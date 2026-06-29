@@ -32,6 +32,20 @@ type SignTaskResult struct {
 	Completed  bool
 }
 
+type CreatePrintEventInput struct {
+	DocumentID      string
+	FileID          string
+	Channel         string
+	PrinterName     string
+	DeviceIDHash    string
+	ClientTimezone  string
+	FinalFileSHA256 string
+	PrintedBy       string
+	PrintedByLabel  string
+	IPAddress       string
+	UserAgent       string
+}
+
 func (s *Store) CreateSigningDocument(ctx context.Context, input CreateSigningDocumentInput) (models.SigningDocument, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -191,10 +205,15 @@ func (s *Store) FindSigningDocumentByID(ctx context.Context, id string) (models.
 	if err != nil {
 		return models.SigningDocument{}, err
 	}
+	printEvents, err := s.ListSigningDocumentPrintEvents(ctx, id)
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
 	doc.Steps = steps
 	doc.Signers = signers
 	doc.Events = events
 	doc.Attachments = attachments
+	doc.PrintEvents = printEvents
 	return doc, nil
 }
 
@@ -280,6 +299,18 @@ WHERE id = $1
 		message = "Lock SML ไม่สำเร็จ"
 	}
 	return s.AddSigningEvent(ctx, documentID, "", "", action, message, "", "", metadata)
+}
+
+func (s *Store) MarkDocumentEvidenceFailed(ctx context.Context, documentID string, metadata map[string]any) error {
+	_, err := s.pool.Exec(ctx, `
+UPDATE signing_documents
+SET status = 'completed_evidence_failed', updated_at = now()
+WHERE id = $1
+`, documentID)
+	if err != nil {
+		return err
+	}
+	return s.AddSigningEvent(ctx, documentID, "", "", "final_pdf_failed", "สร้าง Final PDF/evidence ไม่สำเร็จ", "", "", metadata)
 }
 
 func (s *Store) UpdateSigningDocumentPDF(ctx context.Context, documentID string, file models.UploadedFile, final bool) error {
@@ -549,6 +580,80 @@ ORDER BY a.created_at DESC
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListSigningDocumentPrintEvents(ctx context.Context, documentID string) ([]models.SigningDocumentPrintEvent, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT p.id::text, p.document_id::text, p.file_id::text, p.channel, p.printer_name, p.device_id_hash,
+       p.client_timezone, p.final_file_sha256, COALESCE(p.printed_by::text,''), p.ip_address, p.user_agent, p.printed_at,
+       f.id::text, f.original_name, f.stored_name, f.storage_path, f.content_type, f.size_bytes, f.page_count, f.sha256, COALESCE(f.created_by::text,''), f.created_at
+FROM signing_document_print_events p
+JOIN uploaded_files f ON f.id = p.file_id
+WHERE p.document_id = $1
+ORDER BY p.printed_at DESC
+`, documentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.SigningDocumentPrintEvent{}
+	for rows.Next() {
+		item, err := scanSigningDocumentPrintEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) FindSigningDocumentPrintEvent(ctx context.Context, documentID, printEventID string) (models.SigningDocumentPrintEvent, error) {
+	item, err := scanSigningDocumentPrintEvent(s.pool.QueryRow(ctx, `
+SELECT p.id::text, p.document_id::text, p.file_id::text, p.channel, p.printer_name, p.device_id_hash,
+       p.client_timezone, p.final_file_sha256, COALESCE(p.printed_by::text,''), p.ip_address, p.user_agent, p.printed_at,
+       f.id::text, f.original_name, f.stored_name, f.storage_path, f.content_type, f.size_bytes, f.page_count, f.sha256, COALESCE(f.created_by::text,''), f.created_at
+FROM signing_document_print_events p
+JOIN uploaded_files f ON f.id = p.file_id
+WHERE p.document_id = $1 AND p.id = $2
+`, documentID, printEventID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.SigningDocumentPrintEvent{}, ErrSigningDocumentNotFound
+	}
+	return item, err
+}
+
+func (s *Store) CreateSigningDocumentPrintEvent(ctx context.Context, input CreatePrintEventInput) (models.SigningDocumentPrintEvent, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return models.SigningDocumentPrintEvent{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var id string
+	if err := tx.QueryRow(ctx, `
+INSERT INTO signing_document_print_events (
+    document_id, file_id, channel, printer_name, device_id_hash, client_timezone,
+    final_file_sha256, printed_by, ip_address, user_agent
+)
+VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,'')::uuid,$9,$10)
+RETURNING id::text
+`, input.DocumentID, input.FileID, input.Channel, input.PrinterName, input.DeviceIDHash, input.ClientTimezone,
+		input.FinalFileSHA256, input.PrintedBy, input.IPAddress, input.UserAgent).Scan(&id); err != nil {
+		return models.SigningDocumentPrintEvent{}, err
+	}
+	if err := insertSigningEvent(ctx, tx, input.DocumentID, input.PrintedBy, input.PrintedByLabel, "document_printed", "พิมพ์เอกสาร official copy", input.IPAddress, input.UserAgent, map[string]any{
+		"printEventId":    id,
+		"channel":         input.Channel,
+		"printerName":     input.PrinterName,
+		"finalFileSha256": input.FinalFileSHA256,
+		"clientTimezone":  input.ClientTimezone,
+	}); err != nil {
+		return models.SigningDocumentPrintEvent{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return models.SigningDocumentPrintEvent{}, err
+	}
+	return s.FindSigningDocumentPrintEvent(ctx, input.DocumentID, id)
 }
 
 func (s *Store) signTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion string, external bool) (SignTaskResult, error) {
@@ -941,6 +1046,15 @@ func scanSigningDocumentEvent(row rowScanner) (models.SigningDocumentEvent, erro
 		_ = json.Unmarshal(metadataBytes, &event.Metadata)
 	}
 	return event, nil
+}
+
+func scanSigningDocumentPrintEvent(row rowScanner) (models.SigningDocumentPrintEvent, error) {
+	var item models.SigningDocumentPrintEvent
+	err := row.Scan(&item.ID, &item.DocumentID, &item.FileID, &item.Channel, &item.PrinterName, &item.DeviceIDHash,
+		&item.ClientTimezone, &item.FinalFileSHA256, &item.PrintedBy, &item.IPAddress, &item.UserAgent, &item.PrintedAt,
+		&item.File.ID, &item.File.OriginalName, &item.File.StoredName, &item.File.StoragePath, &item.File.ContentType,
+		&item.File.SizeBytes, &item.File.PageCount, &item.File.SHA256, &item.File.CreatedBy, &item.File.CreatedAt)
+	return item, err
 }
 
 type signingEventWriter interface {

@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS signing_documents (
     doc_date DATE,
     total_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
     sml_is_lock_record INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'rejected', 'completed', 'completed_lock_failed', 'cancelled')),
+    status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'rejected', 'completed', 'completed_evidence_failed', 'completed_lock_failed', 'cancelled')),
     current_version INTEGER NOT NULL DEFAULT 1 CHECK (current_version > 0),
     original_file_id UUID REFERENCES uploaded_files(id),
     current_file_id UUID REFERENCES uploaded_files(id),
@@ -219,9 +219,18 @@ CREATE TABLE IF NOT EXISTS signing_documents (
     locked_at TIMESTAMPTZ
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS signing_documents_active_doc_unique_idx
+ALTER TABLE signing_documents
+DROP CONSTRAINT IF EXISTS signing_documents_status_check;
+
+ALTER TABLE signing_documents
+ADD CONSTRAINT signing_documents_status_check
+CHECK (status IN ('draft', 'in_progress', 'rejected', 'completed', 'completed_evidence_failed', 'completed_lock_failed', 'cancelled'));
+
+DROP INDEX IF EXISTS signing_documents_active_doc_unique_idx;
+
+CREATE UNIQUE INDEX signing_documents_active_doc_unique_idx
 ON signing_documents (lower(doc_format_code), doc_no)
-WHERE status IN ('draft', 'in_progress', 'completed_lock_failed');
+WHERE status IN ('draft', 'in_progress', 'completed_evidence_failed', 'completed_lock_failed');
 
 CREATE INDEX IF NOT EXISTS signing_documents_status_idx
 ON signing_documents (status, updated_at DESC);
@@ -321,6 +330,24 @@ CREATE TABLE IF NOT EXISTS signing_document_attachments (
 
 CREATE INDEX IF NOT EXISTS signing_document_attachments_doc_idx
 ON signing_document_attachments (document_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS signing_document_print_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES signing_documents(id) ON DELETE CASCADE,
+    file_id UUID NOT NULL REFERENCES uploaded_files(id),
+    channel TEXT NOT NULL CHECK (channel IN ('web', 'app')),
+    printer_name TEXT NOT NULL DEFAULT '',
+    device_id_hash TEXT NOT NULL DEFAULT '',
+    client_timezone TEXT NOT NULL DEFAULT '',
+    final_file_sha256 TEXT NOT NULL DEFAULT '',
+    printed_by UUID REFERENCES users(id),
+    ip_address TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    printed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS signing_document_print_events_doc_idx
+ON signing_document_print_events (document_id, printed_at DESC);
 
 CREATE TABLE IF NOT EXISTS external_signing_tokens (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

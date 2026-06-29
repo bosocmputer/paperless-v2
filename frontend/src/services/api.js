@@ -167,6 +167,18 @@ export const api = {
     retrySigningDocumentLock(id) {
         return request(`/api/signing-documents/${id}/retry-sml-lock`, { method: 'POST' });
     },
+    retrySigningDocumentFinalPDF(id) {
+        return request(`/api/signing-documents/${id}/retry-final-pdf`, { method: 'POST' });
+    },
+    createSigningDocumentPrintCopy(id, payload) {
+        return request(`/api/signing-documents/${id}/print-copies`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+    signingDocumentPrintCopyPDFUrl(id, printCopyId) {
+        return `/api/signing-documents/${id}/print-copies/${printCopyId}/pdf`;
+    },
     regenerateExternalToken(signerId) {
         return request(`/api/signing-documents/external-token/${signerId}/regenerate`, { method: 'POST' });
     },

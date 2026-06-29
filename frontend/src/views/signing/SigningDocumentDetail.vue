@@ -12,6 +12,8 @@ const document = ref(null);
 const loading = ref(false);
 const pdfUrl = ref('');
 const retryingLock = ref(false);
+const retryingFinalPDF = ref(false);
+const printing = ref(false);
 const tokenDialog = ref(false);
 const generatedToken = ref(null);
 
@@ -29,6 +31,7 @@ const importantEvents = computed(() =>
         .map((event) => ({ ...event, view: movementEventView(event) }))
         .filter((event) => event.view)
 );
+const printEvents = computed(() => document.value?.printEvents || []);
 
 onMounted(loadPage);
 onBeforeUnmount(() => {
@@ -70,6 +73,55 @@ async function retryLock() {
     }
 }
 
+async function retryFinalPDF() {
+    retryingFinalPDF.value = true;
+    try {
+        const result = await api.retrySigningDocumentFinalPDF(document.value.id);
+        toast.add({
+            severity: result.lockOk ? 'success' : 'warn',
+            summary: result.lockOk ? 'Final PDF และ Lock SML สำเร็จ' : 'Final PDF สำเร็จ แต่ Lock SML ยังไม่สำเร็จ',
+            life: 3200
+        });
+        await loadPage();
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'สร้าง Final PDF ไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        retryingFinalPDF.value = false;
+    }
+}
+
+async function printOfficialCopy() {
+    if (!document.value?.id) return;
+    const popup = window.open('', '_blank');
+    printing.value = true;
+    try {
+        const deviceId = getAdminDeviceId();
+        const result = await api.createSigningDocumentPrintCopy(document.value.id, {
+            channel: 'web',
+            deviceId,
+            clientTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || ''
+        });
+        const fileUrl = result.fileUrl || api.signingDocumentPrintCopyPDFUrl(document.value.id, result.printCopyId);
+        const response = await fetch(fileUrl, { headers: api.authHeaders() });
+        if (!response.ok) throw new Error('โหลดไฟล์พิมพ์ไม่สำเร็จ');
+        const blob = await response.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        if (popup) {
+            popup.location.href = objectUrl;
+        } else {
+            window.open(objectUrl, '_blank');
+        }
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+        toast.add({ severity: 'success', summary: 'สร้างไฟล์พิมพ์แล้ว', life: 2500 });
+        await loadPage();
+    } catch (err) {
+        if (popup) popup.close();
+        toast.add({ severity: 'error', summary: 'พิมพ์เอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        printing.value = false;
+    }
+}
+
 async function generateExternal(signer) {
     try {
         const result = await api.regenerateExternalToken(signer.id);
@@ -79,6 +131,16 @@ async function generateExternal(signer) {
     } catch (err) {
         toast.add({ severity: 'error', summary: 'สร้าง public link ไม่สำเร็จ', detail: err.message, life: 4000 });
     }
+}
+
+function getAdminDeviceId() {
+    const key = 'paperless_admin_device_id';
+    let value = localStorage.getItem(key);
+    if (!value) {
+        value = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        localStorage.setItem(key, value);
+    }
+    return value;
 }
 
 async function copy(value) {
@@ -92,6 +154,7 @@ function statusSeverity(status) {
         waiting: 'secondary',
         signed: 'success',
         completed: 'success',
+        completed_evidence_failed: 'warn',
         rejected: 'danger',
         skipped: 'secondary',
         in_progress: 'info',
@@ -131,7 +194,19 @@ function movementEventView(event) {
             title: 'เซ็นครบทุกขั้นตอน',
             icon: 'pi pi-verified',
             severity: 'success',
-            detail: event.message || 'เอกสารพร้อมสรุปผลและ lock SML'
+            detail: event.message || 'เอกสารพร้อมสร้าง Final PDF'
+        },
+        final_pdf_ready: {
+            title: 'Final PDF พร้อมหลักฐานแล้ว',
+            icon: 'pi pi-file-check',
+            severity: 'success',
+            detail: 'สร้าง PDF พร้อมลายเซ็นและ Evidence Appendix แล้ว'
+        },
+        final_pdf_failed: {
+            title: 'Final PDF ไม่สำเร็จ',
+            icon: 'pi pi-file-excel',
+            severity: 'danger',
+            detail: 'ต้องกด Retry Final PDF ก่อน lock SML หรือพิมพ์เอกสาร'
         },
         sml_lock_success: {
             title: 'Lock SML สำเร็จ',
@@ -150,6 +225,12 @@ function movementEventView(event) {
             icon: 'pi pi-file-excel',
             severity: 'danger',
             detail: 'ต้องตรวจสอบก่อนให้ผู้ใช้เปิดเอกสารต่อ'
+        },
+        document_printed: {
+            title: 'พิมพ์เอกสารแล้ว',
+            icon: 'pi pi-print',
+            severity: 'info',
+            detail: `สร้าง official print copy${metadata.printerName ? ` (${metadata.printerName})` : ''}`
         }
     };
     return labels[action] || null;
@@ -170,7 +251,9 @@ function formatDate(value) {
                 <span>{{ document?.docFormatCode }} · {{ document?.partyName || document?.partyCode || '-' }}</span>
             </div>
             <Tag v-if="document" :value="document.status" :severity="statusSeverity(document.status)" />
+            <Button v-if="document?.status === 'completed_evidence_failed'" label="Retry Final PDF" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
             <Button v-if="document?.status === 'completed_lock_failed'" label="Retry SML Lock" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
+            <Button v-if="document?.status === 'completed'" label="พิมพ์เอกสาร" icon="pi pi-print" severity="primary" :loading="printing" @click="printOfficialCopy" />
             <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
         </div>
 
@@ -212,6 +295,26 @@ function formatDate(value) {
                                     <Button v-if="signer.signerType === 'external' && signer.status !== 'signed'" icon="pi pi-key" rounded outlined aria-label="สร้าง OTP" @click="generateExternal(signer)" />
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="info-block">
+                    <div class="block-head">
+                        <div>
+                            <div class="block-title">ประวัติพิมพ์</div>
+                            <small>Official print copy</small>
+                        </div>
+                        <Tag :value="`${printEvents.length} ครั้ง`" severity="secondary" />
+                    </div>
+                    <div v-if="printEvents.length === 0" class="empty-log">ยังไม่มีการพิมพ์ official copy</div>
+                    <div v-else class="print-list">
+                        <div v-for="item in printEvents" :key="item.id" class="print-row">
+                            <span>
+                                <strong>{{ formatDate(item.printedAt) }}</strong>
+                                <small>{{ item.channel }} · {{ item.printerName }}</small>
+                            </span>
+                            <Tag :value="item.file?.sha256 ? item.file.sha256.slice(0, 10) : '-'" severity="secondary" />
                         </div>
                     </div>
                 </div>
@@ -272,6 +375,7 @@ function formatDate(value) {
     min-height: 4rem;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.75rem;
     padding: 0.65rem 0.75rem;
     background: var(--surface-card);
@@ -288,6 +392,7 @@ function formatDate(value) {
 }
 .bar-title span,
 .signer-row small,
+.print-row small,
 .event-line small {
     color: var(--text-color-secondary);
 }
@@ -371,6 +476,24 @@ dd {
 .signer-list {
     display: grid;
     gap: 0.5rem;
+}
+.print-list {
+    display: grid;
+    gap: 0.5rem;
+}
+.print-row {
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 0.65rem 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+.print-row span {
+    display: grid;
+    gap: 0.15rem;
+    min-width: 0;
 }
 .signer-actions {
     display: flex;
