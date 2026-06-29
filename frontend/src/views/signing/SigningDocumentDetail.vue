@@ -24,6 +24,11 @@ const signersByStep = computed(() => {
     });
     return [...groups.values()].sort((a, b) => Number(a.step.sequenceNo || 0) - Number(b.step.sequenceNo || 0));
 });
+const importantEvents = computed(() =>
+    (document.value?.events || [])
+        .map((event) => ({ ...event, view: movementEventView(event) }))
+        .filter((event) => event.view)
+);
 
 onMounted(loadPage);
 onBeforeUnmount(() => {
@@ -100,6 +105,56 @@ function conditionLabel(value) {
     return 'บุคคลภายนอก';
 }
 
+function movementEventView(event) {
+    const action = String(event?.action || '');
+    const metadata = event?.metadata || {};
+    const labels = {
+        document_created: {
+            title: 'สร้างเอกสารเพื่อเซ็น',
+            icon: 'pi pi-send',
+            severity: 'info',
+            detail: event.message || 'เริ่ม workflow เอกสารนี้'
+        },
+        signed: {
+            title: `${event.actorLabel || 'ผู้เซ็น'} เซ็นแล้ว`,
+            icon: 'pi pi-check',
+            severity: 'success',
+            detail: event.message || 'เซ็นเอกสารแล้ว'
+        },
+        rejected: {
+            title: `${event.actorLabel || 'ผู้เซ็น'} ปฏิเสธเอกสาร`,
+            icon: 'pi pi-times',
+            severity: 'danger',
+            detail: metadata.reason ? `เหตุผล: ${metadata.reason}` : event.message || 'เอกสารถูกปฏิเสธ'
+        },
+        document_completed: {
+            title: 'เซ็นครบทุกขั้นตอน',
+            icon: 'pi pi-verified',
+            severity: 'success',
+            detail: event.message || 'เอกสารพร้อมสรุปผลและ lock SML'
+        },
+        sml_lock_success: {
+            title: 'Lock SML สำเร็จ',
+            icon: 'pi pi-lock',
+            severity: 'success',
+            detail: 'อัปเดตเอกสารกลับไปที่ SML แล้ว'
+        },
+        sml_lock_failed: {
+            title: 'Lock SML ไม่สำเร็จ',
+            icon: 'pi pi-exclamation-triangle',
+            severity: 'danger',
+            detail: 'เอกสารเซ็นครบแล้ว แต่ยังต้อง retry lock SML'
+        },
+        pdf_stamp_failed: {
+            title: 'สร้าง PDF ลายเซ็นไม่สำเร็จ',
+            icon: 'pi pi-file-excel',
+            severity: 'danger',
+            detail: 'ต้องตรวจสอบก่อนให้ผู้ใช้เปิดเอกสารต่อ'
+        }
+    };
+    return labels[action] || null;
+}
+
 function formatDate(value) {
     if (!value) return '-';
     return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
@@ -162,12 +217,24 @@ function formatDate(value) {
                 </div>
 
                 <div class="info-block">
-                    <div class="block-title">Movement Log</div>
-                    <Timeline :value="document?.events || []" align="left" class="compact-timeline">
+                    <div class="block-head">
+                        <div>
+                            <div class="block-title">Movement Log</div>
+                            <small>แสดงเฉพาะเหตุการณ์สำคัญ</small>
+                        </div>
+                        <Tag :value="`${importantEvents.length} รายการ`" severity="secondary" />
+                    </div>
+                    <div v-if="importantEvents.length === 0" class="empty-log">ยังไม่มีเหตุการณ์สำคัญ</div>
+                    <Timeline v-else :value="importantEvents" align="left" class="compact-timeline">
                         <template #content="{ item }">
                             <div class="event-line">
-                                <strong>{{ item.action }}</strong>
-                                <span>{{ item.message }}</span>
+                                <div class="event-title">
+                                    <span class="event-icon" :class="`event-${item.view.severity}`">
+                                        <i :class="item.view.icon"></i>
+                                    </span>
+                                    <strong>{{ item.view.title }}</strong>
+                                </div>
+                                <span>{{ item.view.detail }}</span>
                                 <small>{{ formatDate(item.createdAt) }}</small>
                             </div>
                         </template>
@@ -264,6 +331,16 @@ function formatDate(value) {
 .block-title {
     font-weight: 700;
 }
+.block-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+.block-head small,
+.empty-log {
+    color: var(--text-color-secondary);
+}
 dl {
     display: grid;
     grid-template-columns: 7rem 1fr;
@@ -302,7 +379,42 @@ dd {
 }
 .event-line {
     display: grid;
-    gap: 0.15rem;
+    gap: 0.2rem;
+    padding-bottom: 0.2rem;
+}
+.event-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+.event-icon {
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 999px;
+    display: inline-grid;
+    place-items: center;
+    font-size: 0.82rem;
+    flex: 0 0 auto;
+}
+.event-success {
+    color: var(--green-700, #15803d);
+    background: var(--green-100, #dcfce7);
+}
+.event-info {
+    color: var(--blue-700, #1d4ed8);
+    background: var(--blue-100, #dbeafe);
+}
+.event-danger {
+    color: var(--red-700, #b91c1c);
+    background: var(--red-100, #fee2e2);
+}
+.empty-log {
+    min-height: 3.5rem;
+    display: grid;
+    place-items: center;
+    border: 1px dashed var(--surface-border);
+    border-radius: 8px;
+    padding: 0.75rem;
 }
 .token-box {
     display: grid;
