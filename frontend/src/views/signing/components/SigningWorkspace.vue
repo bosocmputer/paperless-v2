@@ -111,6 +111,18 @@ watch(
     { immediate: true }
 );
 
+watch(
+    () => [props.loading, props.task?.id],
+    async ([loading, taskId], oldValue = []) => {
+        const previousTaskId = oldValue[1];
+        if (!loading && taskId) {
+            await nextTick();
+            setupSignatureCanvas(taskId !== previousTaskId);
+        }
+    },
+    { immediate: true }
+);
+
 watch([currentPage, zoom], async () => {
     if (pdfDoc.value) await renderCurrentPage();
 });
@@ -210,9 +222,14 @@ function zoomOut() {
     zoom.value = clamp(zoom.value - 0.15, 0.45, 2.5);
 }
 
-function setupSignatureCanvas() {
+function setupSignatureCanvas(force = false) {
     if (!signCanvas.value) return;
+    if (signCtx && !force) return;
     const rect = signCanvas.value.getBoundingClientRect();
+    if (rect.width <= 0) {
+        window.requestAnimationFrame(() => setupSignatureCanvas(force));
+        return;
+    }
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     signCanvas.value.width = Math.floor(rect.width * ratio);
     signCanvas.value.height = Math.floor(188 * ratio);
