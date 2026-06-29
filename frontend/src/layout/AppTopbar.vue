@@ -48,6 +48,7 @@ async function logout() {
             <button
                 class="layout-topbar-menu-button layout-topbar-action"
                 v-styleclass="{ selector: '@next', enterFromClass: 'hidden', enterActiveClass: 'p-anchored-overlay-enter-active', leaveToClass: 'hidden', leaveActiveClass: 'p-anchored-overlay-leave-active', hideOnOutsideClick: true }"
+                aria-label="Open account menu"
             >
                 <i class="pi pi-ellipsis-v"></i>
             </button>
@@ -62,7 +63,7 @@ async function logout() {
                         <i class="pi pi-shield"></i>
                         <span>{{ authStore.user?.role }}</span>
                     </span>
-                    <button type="button" class="layout-topbar-action" @click="logout">
+                    <button type="button" class="layout-topbar-action" aria-label="ออกจากระบบ" @click="logout">
                         <i class="pi pi-sign-out"></i>
                         <span>ออกจากระบบ</span>
                     </button>
@@ -71,4 +72,3 @@ async function logout() {
         </div>
     </div>
 </template>
-
