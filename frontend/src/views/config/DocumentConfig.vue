@@ -5,443 +5,552 @@ import { useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
+const router = useRouter();
 const confirm = useConfirm();
 const toast = useToast();
-const router = useRouter();
 
-const conditionOptions = [
-    { label: '1 - คนใดคนหนึ่ง', value: 1, severity: 'info' },
-    { label: '2 - ทุกคน', value: 2, severity: 'warn' },
-    { label: '3 - บุคคลภายนอก', value: 3, severity: 'secondary' }
-];
-
+const workflows = ref([]);
 const docFormats = ref([]);
-const users = ref([]);
-const configs = ref([]);
+const loading = ref(false);
 const loadingFormats = ref(false);
-const loadingUsers = ref(false);
-const loadingConfigs = ref(false);
-const saving = ref(false);
-const dialogVisible = ref(false);
-const editingConfig = ref(null);
 const error = ref('');
 const searchQuery = ref('');
-const form = ref(emptyForm());
+const createVisible = ref(false);
+const selectedNewDocFormat = ref('');
+const copyVisible = ref(false);
+const copyTarget = ref(null);
+const copySourceDocFormat = ref('');
+const copyPreview = ref(null);
+const loadingCopyPreview = ref(false);
+const copying = ref(false);
 
-const docFormatOptions = computed(() =>
-    docFormats.value.map((format) => ({
-        label: `${format.code} - ${format.name_1 || format.name_2 || format.format || 'ไม่มีชื่อเอกสาร'}`,
-        value: format.code,
-        format
-    }))
-);
-
-const userOptions = computed(() => {
-    const options = users.value
-        .filter((user) => user.status === 'active')
-        .map((user) => ({
-            label: `${user.username}:${user.displayName}`,
-            value: userValue(user),
-            user
+const configuredCodes = computed(() => new Set(workflows.value.map((item) => normalizeCode(item.docFormatCode))));
+const availableDocFormatOptions = computed(() =>
+    docFormats.value
+        .filter((format) => format.code && !configuredCodes.value.has(normalizeCode(format.code)))
+        .map((format) => ({
+            label: `${format.code} - ${docFormatName(format)}`,
+            value: format.code
         }))
-        .sort((left, right) => left.value.localeCompare(right.value, 'th'));
-
-    const existingValues = new Set(options.map((option) => option.value));
-    [...configs.value, form.value].forEach((item) => {
-        [item.user01, item.user02, item.user03].forEach((value) => {
-            const normalized = String(value || '').trim();
-            if (normalized && !existingValues.has(normalized)) {
-                existingValues.add(normalized);
-                options.push({ label: normalized, value: normalized });
-            }
-        });
-    });
-
-    return options;
-});
-
-const dialogTitle = computed(() => (editingConfig.value ? 'แก้ไข Config เอกสาร' : 'เพิ่ม Config เอกสาร'));
-const canAdd = computed(() => !loadingFormats.value && !loadingUsers.value && docFormatOptions.value.length > 0 && userOptions.value.length > 0);
-const loadingPage = computed(() => loadingFormats.value || loadingUsers.value || loadingConfigs.value);
-const filteredConfigs = computed(() => {
+        .sort((left, right) => left.value.localeCompare(right.value, 'th'))
+);
+const workflowOptions = computed(() =>
+    workflows.value
+        .filter((workflow) => !copyTarget.value || !sameCode(workflow.docFormatCode, copyTarget.value.docFormatCode))
+        .map((workflow) => ({
+            label: `${workflow.docFormatCode} - ${docFormatName(workflow.docFormat)} (${workflow.stepCount} ขั้นตอน)`,
+            value: workflow.docFormatCode
+        }))
+);
+const filteredWorkflows = computed(() => {
     const query = normalizeSearch(searchQuery.value);
-    if (!query) return configs.value;
-    return configs.value.filter((config) =>
-        normalizeSearch(
-            `${config.docFormatCode} ${formatName(config.docFormatCode)} ${formatPattern(config.docFormatCode)} ${config.positionCode} ${config.positionName} ${config.user01} ${config.user02} ${config.user03} ${conditionLabel(config.conditionType)}`
-        ).includes(query)
+    if (!query) return workflows.value;
+    return workflows.value.filter((workflow) =>
+        normalizeSearch(`${workflow.docFormatCode} ${docFormatName(workflow.docFormat)} ${workflow.screenCode} ${conditionSummaryText(workflow)} ${workflow.stepCount}`).includes(query)
     );
 });
+const hasWorkflows = computed(() => workflows.value.length > 0);
 
-onMounted(initializePage);
+onMounted(loadPage);
 
-function emptyForm(docFormatCode = '') {
-    const code = docFormatCode || docFormats.value[0]?.code || '';
-    return {
-        docFormatCode: code,
-        positionCode: '',
-        positionName: '',
-        user01: '',
-        user02: '',
-        user03: '',
-        sequenceNo: nextSequenceNo(code),
-        conditionType: 1
-    };
-}
-
-function nextSequenceNo(docFormatCode = '') {
-    const max = configs.value.reduce((current, item) => {
-        if (docFormatCode && !sameCode(item.docFormatCode, docFormatCode)) return current;
-        return Math.max(current, Number(item.sequenceNo || 0));
-    }, 0);
-    return max + 1;
-}
-
-async function initializePage() {
-    await Promise.all([loadDocFormats(), loadUsers(), loadConfigs()]);
+async function loadPage() {
+    loading.value = true;
+    error.value = '';
+    try {
+        const [workflowResult] = await Promise.all([api.listDocumentConfigWorkflows(), loadDocFormats()]);
+        workflows.value = workflowResult.workflows || [];
+        if (workflowResult.smlWarning) {
+            toast.add({ severity: 'warn', summary: 'โหลดชื่อเอกสารจาก SML ไม่ครบ', detail: workflowResult.smlWarning, life: 4500 });
+        }
+    } catch (err) {
+        error.value = err.message;
+        toast.add({ severity: 'error', summary: 'โหลด Workflow ไม่สำเร็จ', detail: err.message, life: 4500 });
+    } finally {
+        loading.value = false;
+    }
 }
 
 async function loadDocFormats() {
     loadingFormats.value = true;
-    error.value = '';
     try {
         const result = await api.listSMLDocFormats();
         docFormats.value = result.docFormats || [];
-        if (!form.value.docFormatCode && docFormats.value.length > 0) {
-            form.value.docFormatCode = docFormats.value[0].code;
-        }
     } catch (err) {
         docFormats.value = [];
-        error.value = err.message;
-        toast.add({ severity: 'error', summary: 'โหลด Doc Format ไม่สำเร็จ', detail: err.message, life: 4000 });
+        toast.add({ severity: 'warn', summary: 'โหลด Doc Format จาก SML ไม่สำเร็จ', detail: err.message, life: 4500 });
     } finally {
         loadingFormats.value = false;
     }
 }
 
-async function loadUsers() {
-    loadingUsers.value = true;
-    error.value = '';
-    try {
-        const result = await api.listUsers();
-        users.value = result.users || [];
-    } catch (err) {
-        users.value = [];
-        error.value = err.message;
-        toast.add({ severity: 'error', summary: 'โหลด User ไม่สำเร็จ', detail: err.message, life: 4000 });
-    } finally {
-        loadingUsers.value = false;
-    }
+function openWorkflow(docFormatCode) {
+    router.push({ name: 'document-config-workflow', params: { docFormatCode } });
 }
 
-async function loadConfigs() {
-    loadingConfigs.value = true;
-    error.value = '';
-    try {
-        const result = await api.listDocumentConfigs();
-        configs.value = result.configs || [];
-    } catch (err) {
-        error.value = err.message;
-        toast.add({ severity: 'error', summary: 'โหลด Config ไม่สำเร็จ', detail: err.message, life: 4000 });
-    } finally {
-        loadingConfigs.value = false;
-    }
-}
-
-function openCreate() {
-    editingConfig.value = null;
-    form.value = emptyForm();
-    dialogVisible.value = true;
-}
-
-function openEdit(config) {
-    editingConfig.value = config;
-    form.value = {
-        docFormatCode: config.docFormatCode,
-        positionCode: config.positionCode,
-        positionName: config.positionName,
-        user01: config.user01,
-        user02: config.user02,
-        user03: config.user03,
-        sequenceNo: Number(config.sequenceNo),
-        conditionType: config.conditionType
-    };
-    dialogVisible.value = true;
-}
-
-function openSignatureTemplate(docFormatCode) {
+function openPreset(docFormatCode) {
     router.push({ name: 'signature-template', params: { docFormatCode } });
 }
 
-function handleDocFormatChange() {
-    if (editingConfig.value) return;
-    form.value.sequenceNo = nextSequenceNo(form.value.docFormatCode);
+function openCreate() {
+    selectedNewDocFormat.value = availableDocFormatOptions.value[0]?.value || '';
+    createVisible.value = true;
 }
 
-function closeDialog() {
-    if (saving.value) return;
-    dialogVisible.value = false;
+function createWorkflow() {
+    if (!selectedNewDocFormat.value) return;
+    createVisible.value = false;
+    openWorkflow(selectedNewDocFormat.value);
 }
 
-async function saveConfig() {
-    saving.value = true;
-    error.value = '';
+function openCopy(workflow) {
+    copyTarget.value = workflow;
+    copySourceDocFormat.value = workflowOptions.value[0]?.value || '';
+    copyPreview.value = null;
+    copyVisible.value = true;
+    if (copySourceDocFormat.value) loadCopyPreview();
+}
+
+async function loadCopyPreview() {
+    if (!copySourceDocFormat.value) {
+        copyPreview.value = null;
+        return;
+    }
+    loadingCopyPreview.value = true;
     try {
-        const payload = {
-            docFormatCode: form.value.docFormatCode,
-            positionCode: form.value.positionCode,
-            positionName: form.value.positionName,
-            user01: form.value.user01 || '',
-            user02: form.value.user02 || '',
-            user03: form.value.user03 || '',
-            sequenceNo: Number(form.value.sequenceNo),
-            conditionType: Number(form.value.conditionType)
-        };
-
-        if (editingConfig.value) {
-            await api.updateDocumentConfig(editingConfig.value.id, payload);
-            toast.add({ severity: 'success', summary: 'บันทึก Config แล้ว', life: 2500 });
-        } else {
-            await api.createDocumentConfig(payload);
-            toast.add({ severity: 'success', summary: 'เพิ่ม Config แล้ว', life: 2500 });
-        }
-
-        dialogVisible.value = false;
-        await loadConfigs();
+        const result = await api.getDocumentConfigWorkflow(copySourceDocFormat.value);
+        copyPreview.value = result.workflow;
     } catch (err) {
-        error.value = err.message;
-        toast.add({ severity: 'error', summary: 'บันทึกไม่สำเร็จ', detail: err.message, life: 4000 });
+        copyPreview.value = null;
+        toast.add({ severity: 'error', summary: 'โหลด Preview ไม่สำเร็จ', detail: err.message, life: 3500 });
     } finally {
-        saving.value = false;
+        loadingCopyPreview.value = false;
     }
 }
 
-function confirmDelete(config) {
+function confirmCopy() {
+    if (!copyTarget.value || !copySourceDocFormat.value || !copyPreview.value) return;
     confirm.require({
-        message: `ลบ Position ${config.positionCode} (${config.positionName}) ใช่ไหม?`,
-        header: 'ลบ Config เอกสาร',
-        icon: 'pi pi-exclamation-triangle',
-        rejectProps: {
-            label: 'ยกเลิก',
-            severity: 'secondary',
-            outlined: true
-        },
-        acceptProps: {
-            label: 'ลบ Config',
-            severity: 'danger'
-        },
-        accept: () => deleteConfig(config)
+        message: `คัดลอก Workflow จาก ${copySourceDocFormat.value} มาแทน ${copyTarget.value.docFormatCode}? ขั้นตอนเดิมของ ${copyTarget.value.docFormatCode} จะถูกแทนที่ทั้งหมด`,
+        header: 'ยืนยันคัดลอก Workflow',
+        icon: 'pi pi-copy',
+        acceptLabel: 'คัดลอก Workflow',
+        rejectLabel: 'ยกเลิก',
+        accept: copyWorkflow
     });
 }
 
-async function deleteConfig(config) {
+async function copyWorkflow() {
+    if (!copyTarget.value || !copySourceDocFormat.value) return;
+    copying.value = true;
     try {
-        await api.deleteDocumentConfig(config.id);
-        toast.add({ severity: 'success', summary: 'ลบ Config แล้ว', life: 2500 });
-        await loadConfigs();
+        await api.copyDocumentConfigWorkflow(copyTarget.value.docFormatCode, {
+            sourceDocFormatCode: copySourceDocFormat.value,
+            revision: copyTarget.value.revision
+        });
+        toast.add({ severity: 'success', summary: 'คัดลอก Workflow แล้ว', life: 2500 });
+        copyVisible.value = false;
+        await loadPage();
     } catch (err) {
-        toast.add({ severity: 'error', summary: 'ลบไม่สำเร็จ', detail: err.message, life: 4000 });
+        const severity = err.status === 409 ? 'warn' : 'error';
+        toast.add({ severity, summary: err.status === 409 ? 'มีคนแก้ Workflow นี้แล้ว' : 'คัดลอกไม่สำเร็จ', detail: err.message, life: 4500 });
+    } finally {
+        copying.value = false;
     }
 }
 
-function conditionLabel(value) {
-    return conditionOptions.find((option) => option.value === Number(value))?.label || value;
+function docFormatName(format = {}) {
+    return format.name_1 || format.name_2 || format.format || 'ไม่มีชื่อเอกสาร';
 }
 
-function conditionSeverity(value) {
-    return conditionOptions.find((option) => option.value === Number(value))?.severity || 'secondary';
+function conditionSummary(workflow) {
+    const counts = workflow.conditionCounts || {};
+    return [
+        { label: 'คนใดคนหนึ่ง', value: Number(counts['1'] || 0), severity: 'info' },
+        { label: 'ทุกคน', value: Number(counts['2'] || 0), severity: 'warn' },
+        { label: 'ภายนอก', value: Number(counts['3'] || 0), severity: 'secondary' }
+    ].filter((item) => item.value > 0);
 }
 
-function formatDetail(code) {
-    return docFormats.value.find((item) => sameCode(item.code, code));
+function conditionSummaryText(workflow) {
+    return conditionSummary(workflow)
+        .map((item) => `${item.label} ${item.value}`)
+        .join(' ');
 }
 
-function formatName(code) {
-    const format = formatDetail(code);
-    return format?.name_1 || format?.name_2 || format?.format || '-';
-}
-
-function formatPattern(code) {
-    return formatDetail(code)?.format || 'ไม่มี format';
-}
-
-function sameCode(left, right) {
-    return String(left || '').toLowerCase() === String(right || '').toLowerCase();
-}
-
-function userValue(user) {
-    return `${String(user.username || '').trim()}:${String(user.displayName || '').trim()}`;
+function formatDateTime(value) {
+    if (!value) return '-';
+    return new Intl.DateTimeFormat('th-TH', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    }).format(new Date(value));
 }
 
 function normalizeSearch(value) {
-    return String(value || '').toLowerCase().trim();
+    return String(value || '').trim().toLowerCase();
+}
+
+function normalizeCode(value) {
+    return String(value || '').trim().toUpperCase();
+}
+
+function sameCode(left, right) {
+    return normalizeCode(left) === normalizeCode(right);
 }
 </script>
 
 <template>
-    <div class="card">
-        <div class="flex flex-col xl:flex-row xl:items-start justify-between gap-4 mb-6">
+    <div class="document-config-page">
+        <section class="page-heading">
             <div>
-                <div class="font-semibold text-xl mb-1">Config เอกสาร</div>
-                <p class="text-muted-color m-0">กำหนดลำดับ Position และผู้รับเอกสารตาม erp_doc_format จาก SML</p>
+                <h1>Config เอกสาร</h1>
+                <p>ตั้งค่า workflow ต่อชนิดเอกสารครั้งเดียว แล้วใช้ซ้ำตอนสร้างเอกสารเพื่อเซ็น</p>
             </div>
-            <div class="flex flex-col lg:flex-row gap-2 lg:items-center">
-                <InputText v-model="searchQuery" type="search" placeholder="ค้นหา doc, position, user" class="w-full lg:w-80" />
-                <Button icon="pi pi-refresh" severity="secondary" outlined :loading="loadingPage" aria-label="โหลดใหม่" @click="initializePage" />
-                <Button label="Preset กรอบลายเซ็น" icon="pi pi-pencil" severity="secondary" outlined @click="router.push({ name: 'signature-templates' })" />
-                <Button label="เพิ่ม Position" icon="pi pi-plus" :disabled="!canAdd" @click="openCreate" />
+            <div class="heading-actions">
+                <Button label="เพิ่ม Workflow" icon="pi pi-plus" :disabled="loading || loadingFormats || availableDocFormatOptions.length === 0" @click="openCreate" />
+            </div>
+        </section>
+
+        <Message v-if="availableDocFormatOptions.length === 0 && !loading && docFormats.length > 0" severity="info" :closable="false">
+            Doc Format จาก SML ถูกตั้งค่า Workflow ครบแล้ว ถ้าต้องเพิ่มชนิดใหม่ให้เพิ่มใน SML ก่อน
+        </Message>
+        <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
+
+        <section class="workflow-toolbar">
+            <span class="p-input-icon-left workflow-search">
+                <i class="pi pi-search" />
+                <InputText v-model="searchQuery" placeholder="ค้นหา PO, ชื่อเอกสาร, เงื่อนไข" />
+            </span>
+            <Button label="โหลดใหม่" icon="pi pi-refresh" outlined :loading="loading" @click="loadPage" />
+        </section>
+
+        <div v-if="loading" class="workflow-grid">
+            <div v-for="index in 6" :key="index" class="workflow-card">
+                <Skeleton width="8rem" height="1.5rem" />
+                <Skeleton width="100%" height="1rem" class="mt-3" />
+                <Skeleton width="70%" height="1rem" class="mt-2" />
             </div>
         </div>
 
-        <Message v-if="error && !dialogVisible" severity="error" class="mb-4">{{ error }}</Message>
+        <div v-else-if="!hasWorkflows" class="empty-state">
+            <i class="pi pi-file-edit" />
+            <h2>ยังไม่มี Workflow เอกสาร</h2>
+            <p>เริ่มจากเลือก Doc Format จาก SML แล้วเพิ่มขั้นตอนผู้เซ็นเป็นชุดเดียว</p>
+            <Button label="เพิ่ม Workflow" icon="pi pi-plus" :disabled="availableDocFormatOptions.length === 0" @click="openCreate" />
+        </div>
 
-        <DataTable :value="filteredConfigs" :loading="loadingConfigs" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows sortField="sequenceNo" :sortOrder="1">
-            <template #empty>
-                <div class="py-6 text-center text-muted-color">
-                    {{ searchQuery ? 'ไม่พบ Config เอกสารที่ค้นหา' : loadingFormats ? 'กำลังโหลด Doc Format จาก SML' : 'ยังไม่มี Config เอกสาร' }}
-                </div>
-            </template>
-            <Column field="docFormatCode" header="erp_doc_format.code" sortable style="min-width: 13rem">
-                <template #body="{ data }">
-                    <div class="font-medium text-surface-900 dark:text-surface-0">{{ data.docFormatCode }}</div>
-                    <div class="text-sm text-muted-color">{{ formatName(data.docFormatCode) }}</div>
-                    <div class="text-xs text-muted-color">{{ formatPattern(data.docFormatCode) }}</div>
-                </template>
-            </Column>
-            <Column field="positionCode" header="รหัส Position" sortable style="min-width: 9rem" />
-            <Column field="positionName" header="ชื่อ Position" sortable style="min-width: 12rem" />
-            <Column field="user01" header="User01" style="min-width: 12rem" />
-            <Column field="user02" header="User02" style="min-width: 12rem">
-                <template #body="{ data }">{{ data.user02 || '-' }}</template>
-            </Column>
-            <Column field="user03" header="User03" style="min-width: 12rem">
-                <template #body="{ data }">{{ data.user03 || '-' }}</template>
-            </Column>
-            <Column field="sequenceNo" header="ลำดับ" sortable style="min-width: 8rem">
-                <template #body="{ data }">{{ Number(data.sequenceNo).toFixed(2) }}</template>
-            </Column>
-            <Column field="conditionType" header="เงื่อนไข" sortable style="min-width: 12rem">
-                <template #body="{ data }">
-                    <Tag :value="conditionLabel(data.conditionType)" :severity="conditionSeverity(data.conditionType)" />
-                </template>
-            </Column>
-            <Column header="จัดการ" style="min-width: 18rem">
-                <template #body="{ data }">
-                    <div class="flex flex-wrap gap-2">
-                        <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ไข Config เอกสาร" @click="openEdit(data)" />
-                        <Button label="Preset กรอบลายเซ็น" icon="pi pi-pencil" severity="info" outlined @click="openSignatureTemplate(data.docFormatCode)" />
-                        <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบ Config เอกสาร" @click="confirmDelete(data)" />
+        <div v-else-if="filteredWorkflows.length === 0" class="empty-state">
+            <i class="pi pi-search" />
+            <h2>ไม่พบ Workflow ที่ค้นหา</h2>
+            <p>ลองค้นด้วยรหัสเอกสาร เช่น PO หรือชื่อเอกสารจาก SML</p>
+        </div>
+
+        <div v-else class="workflow-grid">
+            <article v-for="workflow in filteredWorkflows" :key="workflow.docFormatCode" class="workflow-card">
+                <div class="workflow-card-top">
+                    <div>
+                        <div class="doc-code">{{ workflow.docFormatCode }}</div>
+                        <h2>{{ docFormatName(workflow.docFormat) }}</h2>
+                        <p>{{ workflow.screenCode || '-' }}</p>
                     </div>
-                </template>
-            </Column>
-        </DataTable>
-    </div>
+                    <Tag v-if="workflow.warningCount > 0" severity="warn" :value="`${workflow.warningCount} warning`" />
+                    <Tag v-else severity="success" value="พร้อมใช้งาน" />
+                </div>
 
-    <Dialog v-model:visible="dialogVisible" modal :header="dialogTitle" :style="{ width: 'min(54rem, 94vw)' }" @hide="closeDialog">
-        <form class="flex flex-col gap-4" @submit.prevent="saveConfig">
-            <Message v-if="error && dialogVisible" severity="error">{{ error }}</Message>
+                <div class="workflow-stats">
+                    <div>
+                        <strong>{{ workflow.stepCount }}</strong>
+                        <span>ขั้นตอน</span>
+                    </div>
+                    <div>
+                        <strong>{{ workflow.userCount }}</strong>
+                        <span>ผู้เกี่ยวข้อง</span>
+                    </div>
+                    <div>
+                        <strong>{{ formatDateTime(workflow.updatedAt) }}</strong>
+                        <span>แก้ไขล่าสุด</span>
+                    </div>
+                </div>
 
-            <div class="flex flex-col gap-2">
-                <label for="dialogDocFormat" class="font-medium">erp_doc_format.code</label>
-                <Select
-                    id="dialogDocFormat"
-                    v-model="form.docFormatCode"
-                    :options="docFormatOptions"
-                    optionLabel="label"
-                    optionValue="value"
-                    :loading="loadingFormats"
-                    :disabled="loadingFormats || docFormatOptions.length === 0"
-                    filter
-                    @change="handleDocFormatChange"
-                >
-                    <template #value="{ value, placeholder }">
-                        <span v-if="value">{{ value }} - {{ formatName(value) }}</span>
-                        <span v-else>{{ placeholder }}</span>
-                    </template>
-                    <template #option="{ option }">
-                        <div class="flex flex-col">
-                            <span class="font-medium">{{ option.format.code }} - {{ option.format.name_1 || option.format.name_2 || '-' }}</span>
-                            <span class="text-sm text-muted-color">{{ option.format.format || 'ไม่มี format' }}</span>
+                <div class="condition-tags">
+                    <Tag v-for="item in conditionSummary(workflow)" :key="item.label" :severity="item.severity" :value="`${item.label} ${item.value}`" rounded />
+                    <Tag v-if="conditionSummary(workflow).length === 0" severity="secondary" value="ยังไม่มีขั้นตอน" rounded />
+                </div>
+
+                <div class="workflow-actions">
+                    <Button label="แก้ Workflow" icon="pi pi-pencil" @click="openWorkflow(workflow.docFormatCode)" />
+                    <Button label="คัดลอก Workflow" icon="pi pi-copy" outlined :disabled="workflows.length < 2" @click="openCopy(workflow)" />
+                    <Button label="Preset กรอบ" icon="pi pi-map-marker" text @click="openPreset(workflow.docFormatCode)" />
+                </div>
+            </article>
+        </div>
+
+        <Dialog v-model:visible="createVisible" modal header="เพิ่ม Workflow เอกสาร" :style="{ width: 'min(36rem, 94vw)' }">
+            <div class="dialog-stack">
+                <label for="newDocFormat">Doc Format จาก SML</label>
+                <Select id="newDocFormat" v-model="selectedNewDocFormat" :options="availableDocFormatOptions" optionLabel="label" optionValue="value" filter fluid />
+                <small>เมื่อเลือกแล้วจะเข้าไปเพิ่มขั้นตอนทั้งหมดของเอกสารนั้นในหน้าเดียว</small>
+            </div>
+            <template #footer>
+                <Button label="ยกเลิก" text @click="createVisible = false" />
+                <Button label="เริ่มตั้งค่า Workflow" icon="pi pi-arrow-right" :disabled="!selectedNewDocFormat" @click="createWorkflow" />
+            </template>
+        </Dialog>
+
+        <Dialog v-model:visible="copyVisible" modal header="คัดลอก Workflow" :style="{ width: 'min(48rem, 96vw)' }">
+            <div v-if="copyTarget" class="dialog-stack">
+                <Message severity="warn" :closable="false">
+                    การคัดลอกจะแทนที่ Workflow ปัจจุบันของ {{ copyTarget.docFormatCode }} ทั้งชุด
+                </Message>
+                <label for="sourceWorkflow">เลือก Workflow ต้นทาง</label>
+                <Select id="sourceWorkflow" v-model="copySourceDocFormat" :options="workflowOptions" optionLabel="label" optionValue="value" filter fluid @change="loadCopyPreview" />
+
+                <div class="copy-preview">
+                    <div class="copy-preview-title">
+                        <strong>Preview ขั้นตอนที่จะคัดลอก</strong>
+                        <ProgressSpinner v-if="loadingCopyPreview" style="width: 1.25rem; height: 1.25rem" strokeWidth="6" />
+                    </div>
+                    <div v-if="copyPreview?.steps?.length" class="preview-step-list">
+                        <div v-for="step in copyPreview.steps" :key="step.id" class="preview-step">
+                            <span>{{ step.sequenceNo }}.</span>
+                            <strong>{{ step.positionCode }} - {{ step.positionName }}</strong>
+                            <small>{{ step.user01 || '-' }} {{ step.user02 || '' }} {{ step.user03 || '' }}</small>
                         </div>
-                    </template>
-                </Select>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="flex flex-col gap-2">
-                    <label for="positionCode" class="font-medium">รหัส Position</label>
-                    <InputText id="positionCode" v-model="form.positionCode" autocomplete="off" />
-                </div>
-                <div class="flex flex-col gap-2">
-                    <label for="positionName" class="font-medium">ชื่อ Position</label>
-                    <InputText id="positionName" v-model="form.positionName" autocomplete="off" />
+                    </div>
+                    <p v-else class="muted-text">เลือก workflow ต้นทางเพื่อดู preview</p>
                 </div>
             </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div class="flex flex-col gap-2">
-                    <label for="user01" class="font-medium">User01</label>
-                    <Select
-                        id="user01"
-                        v-model="form.user01"
-                        :options="userOptions"
-                        optionLabel="label"
-                        optionValue="value"
-                        :loading="loadingUsers"
-                        :disabled="loadingUsers || userOptions.length === 0"
-                        filter
-                        placeholder="เลือก User01"
-                    />
-                </div>
-                <div class="flex flex-col gap-2">
-                    <label for="user02" class="font-medium">User02</label>
-                    <Select
-                        id="user02"
-                        v-model="form.user02"
-                        :options="userOptions"
-                        optionLabel="label"
-                        optionValue="value"
-                        :loading="loadingUsers"
-                        :disabled="loadingUsers || userOptions.length === 0"
-                        filter
-                        showClear
-                        placeholder="เลือก User02"
-                    />
-                </div>
-                <div class="flex flex-col gap-2">
-                    <label for="user03" class="font-medium">User03</label>
-                    <Select
-                        id="user03"
-                        v-model="form.user03"
-                        :options="userOptions"
-                        optionLabel="label"
-                        optionValue="value"
-                        :loading="loadingUsers"
-                        :disabled="loadingUsers || userOptions.length === 0"
-                        filter
-                        showClear
-                        placeholder="เลือก User03"
-                    />
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div class="flex flex-col gap-2">
-                    <label for="sequenceNo" class="font-medium">ลำดับ</label>
-                    <InputNumber id="sequenceNo" v-model="form.sequenceNo" :min="0.01" :minFractionDigits="2" :maxFractionDigits="2" mode="decimal" />
-                </div>
-                <div class="flex flex-col gap-2">
-                    <label for="conditionType" class="font-medium">เงื่อนไข</label>
-                    <Select id="conditionType" v-model="form.conditionType" :options="conditionOptions" optionLabel="label" optionValue="value" />
-                </div>
-            </div>
-
-            <Message v-if="form.conditionType === 3" severity="info">บุคคลภายนอกใช้ User01 เช่น 999:Temp user หรือชื่อผู้รับภายนอก</Message>
-
-            <div class="flex justify-end gap-2 pt-2">
-                <Button type="button" label="ยกเลิก" severity="secondary" outlined @click="closeDialog" />
-                <Button type="submit" label="บันทึก Config" icon="pi pi-save" :loading="saving" />
-            </div>
-        </form>
-    </Dialog>
+            <template #footer>
+                <Button label="ยกเลิก" text :disabled="copying" @click="copyVisible = false" />
+                <Button label="คัดลอก Workflow" icon="pi pi-copy" severity="warn" :loading="copying" :disabled="!copyPreview?.steps?.length" @click="confirmCopy" />
+            </template>
+        </Dialog>
+    </div>
 </template>
+
+<style scoped>
+.document-config-page {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.page-heading,
+.workflow-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.page-heading h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+.page-heading p {
+    margin: 0.35rem 0 0;
+    color: var(--text-color-secondary);
+}
+
+.heading-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.workflow-search {
+    width: min(32rem, 100%);
+}
+
+.workflow-search :deep(.p-inputtext) {
+    width: 100%;
+}
+
+.workflow-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+    gap: 1rem;
+}
+
+.workflow-card {
+    display: flex;
+    min-height: 16rem;
+    flex-direction: column;
+    gap: 1rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: var(--surface-card);
+    padding: 1rem;
+}
+
+.workflow-card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.doc-code {
+    color: var(--primary-color);
+    font-size: 1.2rem;
+    font-weight: 800;
+}
+
+.workflow-card h2 {
+    margin: 0.15rem 0;
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.workflow-card p,
+.muted-text {
+    margin: 0;
+    color: var(--text-color-secondary);
+}
+
+.workflow-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.workflow-stats div {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.workflow-stats strong {
+    min-height: 1.25rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.workflow-stats span {
+    color: var(--text-color-secondary);
+    font-size: 0.82rem;
+}
+
+.condition-tags,
+.workflow-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.workflow-actions {
+    margin-top: auto;
+}
+
+.empty-state {
+    display: flex;
+    min-height: 20rem;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    border: 1px dashed var(--surface-border);
+    border-radius: 8px;
+    background: var(--surface-card);
+    padding: 2rem;
+    text-align: center;
+}
+
+.empty-state i {
+    color: var(--primary-color);
+    font-size: 2rem;
+}
+
+.empty-state h2 {
+    margin: 0;
+    font-size: 1.2rem;
+}
+
+.empty-state p {
+    max-width: 34rem;
+    margin: 0;
+    color: var(--text-color-secondary);
+}
+
+.dialog-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.dialog-stack label {
+    font-weight: 700;
+}
+
+.dialog-stack small {
+    color: var(--text-color-secondary);
+}
+
+.copy-preview {
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 0.85rem;
+}
+
+.copy-preview-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.65rem;
+}
+
+.preview-step-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.preview-step {
+    display: grid;
+    grid-template-columns: 2.5rem minmax(8rem, 1fr);
+    gap: 0.25rem 0.5rem;
+    border-bottom: 1px solid var(--surface-border);
+    padding-bottom: 0.5rem;
+}
+
+.preview-step:last-child {
+    border-bottom: 0;
+    padding-bottom: 0;
+}
+
+.preview-step small {
+    grid-column: 2;
+}
+
+@media (max-width: 720px) {
+    .page-heading,
+    .workflow-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .heading-actions,
+    .workflow-toolbar > * {
+        width: 100%;
+    }
+
+    .workflow-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .workflow-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .workflow-actions :deep(.p-button) {
+        width: 100%;
+    }
+}
+</style>

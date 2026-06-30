@@ -51,6 +51,12 @@ const router = createRouter({
                     meta: { role: 'admin' }
                 },
                 {
+                    path: '/config/documents/:docFormatCode/workflow',
+                    name: 'document-config-workflow',
+                    component: () => import('@/views/config/DocumentConfigWorkflow.vue'),
+                    meta: { role: 'admin' }
+                },
+                {
                     path: '/config/signature-templates',
                     name: 'signature-templates',
                     component: () => import('@/views/config/SignatureTemplateList.vue'),

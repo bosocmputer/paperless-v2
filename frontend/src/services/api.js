@@ -115,6 +115,30 @@ export const api = {
     deleteDocumentConfig(id) {
         return request(`/api/document-configs/${id}`, { method: 'DELETE' });
     },
+    listDocumentConfigWorkflows() {
+        return request('/api/document-config-workflows');
+    },
+    getDocumentConfigWorkflow(docFormatCode) {
+        return request(`/api/document-config-workflows/${encodeURIComponent(docFormatCode)}`);
+    },
+    saveDocumentConfigWorkflow(docFormatCode, payload) {
+        return request(`/api/document-config-workflows/${encodeURIComponent(docFormatCode)}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    },
+    copyDocumentConfigWorkflow(docFormatCode, payload) {
+        return request(`/api/document-config-workflows/${encodeURIComponent(docFormatCode)}/copy`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+    recordDocumentConfigWorkflowEvent(docFormatCode, payload) {
+        return request(`/api/document-config-workflows/${encodeURIComponent(docFormatCode)}/events`, {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
     getSignatureTemplateState(docFormatCode) {
         return request(withQuery('/api/signature-templates', { doc_format_code: docFormatCode }));
     },

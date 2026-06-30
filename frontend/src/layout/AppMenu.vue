@@ -42,7 +42,8 @@ const model = computed(() => {
                 {
                     label: 'Config เอกสาร',
                     icon: 'pi pi-fw pi-file-edit',
-                    to: '/config/documents'
+                    to: '/config/documents',
+                    activeMatch: '/config/documents'
                 },
                 {
                     label: 'Preset กรอบลายเซ็น',

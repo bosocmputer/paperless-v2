@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -19,22 +22,23 @@ type Store struct {
 }
 
 var (
-	ErrUsernameTaken                 = errors.New("username already exists")
-	ErrUserNotFound                  = errors.New("user not found")
-	ErrDocumentConfigDuplicate       = errors.New("document config step already exists")
-	ErrDocumentConfigNotFound        = errors.New("document config step not found")
-	ErrSignatureTemplateNotFound     = errors.New("signature template not found")
-	ErrSignatureRevisionConflict     = errors.New("signature template revision conflict")
-	ErrSignatureTemplateNotDraft     = errors.New("signature template is not draft")
-	ErrSignatureTemplateArchived     = errors.New("signature template is archived")
-	ErrSigningDocumentNotFound       = errors.New("signing document not found")
-	ErrSigningDocumentDuplicate      = errors.New("signing document already exists")
-	ErrSigningDocumentUploadNotFound = errors.New("signing document upload not found")
-	ErrSigningTaskNotFound           = errors.New("signing task not found")
-	ErrSigningTaskUnavailable        = errors.New("signing task is not available")
-	ErrExternalTokenNotFound         = errors.New("external signing token not found")
-	ErrExternalTokenInvalid          = errors.New("external signing token invalid")
-	ErrIdempotencyInProgress         = errors.New("idempotency key is already in progress")
+	ErrUsernameTaken                  = errors.New("username already exists")
+	ErrUserNotFound                   = errors.New("user not found")
+	ErrDocumentConfigDuplicate        = errors.New("document config step already exists")
+	ErrDocumentConfigNotFound         = errors.New("document config step not found")
+	ErrDocumentConfigRevisionConflict = errors.New("document config workflow revision conflict")
+	ErrSignatureTemplateNotFound      = errors.New("signature template not found")
+	ErrSignatureRevisionConflict      = errors.New("signature template revision conflict")
+	ErrSignatureTemplateNotDraft      = errors.New("signature template is not draft")
+	ErrSignatureTemplateArchived      = errors.New("signature template is archived")
+	ErrSigningDocumentNotFound        = errors.New("signing document not found")
+	ErrSigningDocumentDuplicate       = errors.New("signing document already exists")
+	ErrSigningDocumentUploadNotFound  = errors.New("signing document upload not found")
+	ErrSigningTaskNotFound            = errors.New("signing task not found")
+	ErrSigningTaskUnavailable         = errors.New("signing task is not available")
+	ErrExternalTokenNotFound          = errors.New("external signing token not found")
+	ErrExternalTokenInvalid           = errors.New("external signing token invalid")
+	ErrIdempotencyInProgress          = errors.New("idempotency key is already in progress")
 )
 
 type IdempotencyClaim struct {
@@ -778,6 +782,137 @@ WHERE t.status IN ('draft', 'active')
   AND lower(b.position_code) = lower($3)
 `, screenCode, docFormatCode, positionCode).Scan(&count)
 	return count, err
+}
+
+func (s *Store) ListSignatureTemplateBoxPositionCounts(ctx context.Context, screenCode, docFormatCode string) (map[string]int, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT b.position_code, count(*)
+FROM signature_template_boxes b
+JOIN signature_templates t ON t.id = b.template_id
+WHERE t.status IN ('draft', 'active')
+  AND t.screen_code = $1
+  AND lower(t.doc_format_code) = lower($2)
+GROUP BY b.position_code
+ORDER BY lower(b.position_code)
+`, screenCode, docFormatCode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := map[string]int{}
+	for rows.Next() {
+		var positionCode string
+		var count int
+		if err := rows.Scan(&positionCode, &count); err != nil {
+			return nil, err
+		}
+		counts[positionCode] = count
+	}
+	return counts, rows.Err()
+}
+
+func (s *Store) ReplaceDocumentConfigWorkflow(ctx context.Context, screenCode, docFormatCode, expectedRevision string, steps []models.DocumentConfigStepRequest) ([]models.DocumentConfigStep, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, screenCode, strings.ToLower(docFormatCode)); err != nil {
+		return nil, err
+	}
+
+	current, err := listDocumentConfigStepsTx(ctx, tx, screenCode, docFormatCode, true)
+	if err != nil {
+		return nil, err
+	}
+	if ComputeDocumentConfigWorkflowRevision(current) != strings.TrimSpace(expectedRevision) {
+		return nil, ErrDocumentConfigRevisionConflict
+	}
+
+	if _, err := tx.Exec(ctx, `
+DELETE FROM document_config_steps
+WHERE screen_code = $1
+  AND lower(doc_format_code) = lower($2)
+`, screenCode, docFormatCode); err != nil {
+		return nil, err
+	}
+
+	for _, step := range steps {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO document_config_steps (
+    screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+    sequence_no, condition_type
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+`, screenCode, docFormatCode, step.PositionCode, step.PositionName, step.User01, step.User02, step.User03, step.SequenceNo, step.ConditionType); err != nil {
+			if strings.Contains(err.Error(), "document_config_steps_unique_position_idx") {
+				return nil, ErrDocumentConfigDuplicate
+			}
+			return nil, err
+		}
+	}
+
+	updated, err := listDocumentConfigStepsTx(ctx, tx, screenCode, docFormatCode, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+func listDocumentConfigStepsTx(ctx context.Context, tx pgx.Tx, screenCode, docFormatCode string, forUpdate bool) ([]models.DocumentConfigStep, error) {
+	query := `
+SELECT id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+       sequence_no, condition_type, created_at, updated_at
+FROM document_config_steps
+WHERE screen_code = $1
+  AND lower(doc_format_code) = lower($2)
+ORDER BY sequence_no, position_code`
+	if forUpdate {
+		query += ` FOR UPDATE`
+	}
+	rows, err := tx.Query(ctx, query, screenCode, docFormatCode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	steps := []models.DocumentConfigStep{}
+	for rows.Next() {
+		step, err := scanDocumentConfigStep(rows)
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, step)
+	}
+	return steps, rows.Err()
+}
+
+func ComputeDocumentConfigWorkflowRevision(steps []models.DocumentConfigStep) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("document-config-workflow-v1\n"))
+	for _, step := range steps {
+		_, _ = fmt.Fprintf(
+			hash,
+			"%s|%s|%s|%s|%s|%s|%s|%s|%.8f|%d|%s\n",
+			step.ID,
+			step.ScreenCode,
+			strings.ToUpper(step.DocFormatCode),
+			strings.ToLower(step.PositionCode),
+			step.PositionName,
+			step.User01,
+			step.User02,
+			step.User03,
+			step.SequenceNo,
+			step.ConditionType,
+			step.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func (s *Store) CreateUploadedFile(ctx context.Context, file models.UploadedFile) (models.UploadedFile, error) {

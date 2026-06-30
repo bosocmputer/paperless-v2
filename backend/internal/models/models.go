@@ -75,6 +75,50 @@ type DocumentConfigStepRequest struct {
 	ConditionType int     `json:"conditionType"`
 }
 
+type DocumentConfigWorkflowSummary struct {
+	DocFormatCode   string         `json:"docFormatCode"`
+	ScreenCode      string         `json:"screenCode"`
+	DocFormat       SMLDocFormat   `json:"docFormat"`
+	StepCount       int            `json:"stepCount"`
+	UserCount       int            `json:"userCount"`
+	ConditionCounts map[string]int `json:"conditionCounts"`
+	WarningCount    int            `json:"warningCount"`
+	UpdatedAt       *time.Time     `json:"updatedAt,omitempty"`
+	Revision        string         `json:"revision"`
+}
+
+type DocumentConfigPresetWarning struct {
+	Code         string `json:"code"`
+	PositionCode string `json:"positionCode"`
+	BoxCount     int    `json:"boxCount"`
+	Message      string `json:"message"`
+}
+
+type DocumentConfigWorkflow struct {
+	DocFormat      SMLDocFormat                  `json:"docFormat"`
+	Steps          []DocumentConfigStep          `json:"steps"`
+	Revision       string                        `json:"revision"`
+	PresetWarnings []DocumentConfigPresetWarning `json:"presetWarnings"`
+}
+
+type DocumentConfigWorkflowSaveRequest struct {
+	Revision string                      `json:"revision"`
+	Steps    []DocumentConfigStepRequest `json:"steps"`
+}
+
+type DocumentConfigWorkflowCopyRequest struct {
+	SourceDocFormatCode string `json:"sourceDocFormatCode"`
+	Revision            string `json:"revision"`
+}
+
+type DocumentConfigWorkflowEventRequest struct {
+	Event                string `json:"event"`
+	SessionID            string `json:"sessionId"`
+	StepCount            int    `json:"stepCount"`
+	ValidationIssueCount int    `json:"validationIssueCount"`
+	ElapsedMs            int64  `json:"elapsedMs"`
+}
+
 type UploadedFile struct {
 	ID           string    `json:"id"`
 	OriginalName string    `json:"originalName"`

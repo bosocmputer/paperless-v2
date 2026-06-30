@@ -76,6 +76,7 @@ const onMouseEnter = () => {
         <router-link
             v-if="item.to && !item.items && item.visible !== false"
             @click="itemClick($event, item)"
+            activeClass="route-active-unused"
             exactActiveClass="active-route"
             :class="[item.class, { 'active-route': isRouteActive }]"
             tabindex="0"
