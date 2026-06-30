@@ -40,6 +40,10 @@ function openDetail(doc) {
     router.push({ name: 'signing-document-detail', params: { id: doc.id } });
 }
 
+function documentLine(doc) {
+    return `${doc.docNo || '-'} ~ ${doc.docFormatCode || '-'} · ${doc.partyName || doc.partyCode || '-'}`;
+}
+
 function formatMoney(value) {
     return Number(value || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
 }
@@ -75,8 +79,9 @@ function normalize(value) {
 
             <Column field="docNo" header="เลขที่เอกสาร" sortable style="min-width: 16rem">
                 <template #body="{ data }">
-                    <Button :label="data.docNo" link class="p-0 font-bold" @click="openDetail(data)" />
-                    <div class="text-sm text-muted-color">{{ data.docFormatCode }} · {{ data.partyName || data.partyCode || '-' }}</div>
+                    <Button link class="p-0 font-bold text-left" @click="openDetail(data)">
+                        <span class="whitespace-nowrap">{{ documentLine(data) }}</span>
+                    </Button>
                 </template>
             </Column>
             <Column field="docDate" header="วันที่เอกสาร" sortable style="min-width: 10rem">

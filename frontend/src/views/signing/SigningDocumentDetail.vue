@@ -51,6 +51,11 @@ const importantEvents = computed(() =>
 const printEvents = computed(() => document.value?.printEvents || []);
 const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `${index + 1}/${pageCount.value}`, value: index + 1 })));
 const pdfMetaLabel = computed(() => (pageCount.value ? `หน้า ${currentPage.value} / ${pageCount.value} · ${Math.round(zoom.value * 100)}%` : 'ยังไม่มี PDF'));
+const documentHeaderLine = computed(() => {
+    const doc = document.value;
+    if (!doc) return 'เอกสาร';
+    return `${doc.docNo || 'เอกสาร'} ~ ${doc.docFormatCode || '-'} · ${doc.partyName || doc.partyCode || '-'}`;
+});
 
 onMounted(async () => {
     await nextTick();
@@ -170,19 +175,6 @@ function cleanupPDF() {
     if (pdfDoc.value?.destroy) pdfDoc.value.destroy().catch(() => {});
     pdfDoc.value = null;
     pageCount.value = 0;
-}
-
-function openPDF() {
-    if (!pdfUrl.value) return;
-    window.open(pdfUrl.value, '_blank', 'noopener');
-}
-
-function downloadPDF() {
-    if (!pdfUrl.value) return;
-    const link = window.document.createElement('a');
-    link.href = pdfUrl.value;
-    link.download = `${document.value?.docNo || 'document'}.pdf`;
-    link.click();
 }
 
 async function retryLock() {
@@ -369,8 +361,7 @@ function clamp(value, min, max) {
         <div class="editor-bar">
             <Button icon="pi pi-arrow-left" text rounded aria-label="กลับ" @click="router.push({ name: 'signing-documents' })" />
             <div class="bar-title">
-                <strong>{{ document?.docNo || 'เอกสาร' }}</strong>
-                <span>{{ document?.docFormatCode }} · {{ document?.partyName || document?.partyCode || '-' }}</span>
+                <strong>{{ documentHeaderLine }}</strong>
             </div>
             <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
             <Button v-if="document?.status === 'completed_evidence_failed'" label="สร้าง PDF อีกครั้ง" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
@@ -392,8 +383,6 @@ function clamp(value, min, max) {
                     </div>
                     <div class="toolbar-group right">
                         <span class="pdf-meta">{{ pdfMetaLabel }}</span>
-                        <Button icon="pi pi-external-link" severity="secondary" outlined rounded aria-label="เปิด PDF" :disabled="!pdfUrl" @click="openPDF" />
-                        <Button icon="pi pi-download" severity="secondary" outlined rounded aria-label="ดาวน์โหลด PDF" :disabled="!pdfUrl" @click="downloadPDF" />
                     </div>
                 </div>
                 <div ref="viewerRef" class="pdf-scroll">
@@ -552,11 +541,15 @@ function clamp(value, min, max) {
     z-index: 2;
 }
 .bar-title {
+    min-width: 0;
     flex: 1;
-    display: grid;
-    gap: 0.1rem;
 }
-.bar-title span,
+.bar-title strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .signer-row small,
 .print-row small,
 .event-line small {
