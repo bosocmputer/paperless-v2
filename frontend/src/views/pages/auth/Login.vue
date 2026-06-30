@@ -40,23 +40,23 @@ async function submit() {
 
 <template>
     <FloatingConfigurator />
-    <div class="bg-surface-50 dark:bg-surface-950 flex items-center justify-center min-h-screen min-w-[100vw] overflow-hidden">
-        <div class="flex flex-col items-center justify-center w-full px-6">
-            <div style="border-radius: 56px; padding: 0.3rem; background: linear-gradient(180deg, var(--primary-color) 10%, rgba(33, 150, 243, 0) 30%)">
-                <div class="w-full bg-surface-0 dark:bg-surface-900 py-12 px-6 sm:px-12" style="border-radius: 53px">
+    <div class="bg-surface-50 dark:bg-surface-950 flex items-center justify-center min-h-screen min-w-[100vw] overflow-hidden px-4 py-6">
+        <div class="flex flex-col items-center justify-center w-full">
+            <div class="w-full max-w-[42rem]" style="border-radius: 56px; padding: 0.3rem; background: linear-gradient(180deg, var(--primary-color) 10%, rgba(33, 150, 243, 0) 30%)">
+                <div class="w-full bg-surface-0 dark:bg-surface-900 py-14 px-6 sm:px-10 md:py-20 md:px-20" style="border-radius: 53px">
                     <div class="text-center mb-8">
                         <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary text-primary-contrast mb-6">
                             <i class="pi pi-file-check text-3xl"></i>
                         </div>
-                        <div class="text-surface-900 dark:text-surface-0 text-3xl font-medium mb-3">PaperLess V2</div>
+                        <div class="text-surface-900 dark:text-surface-0 text-3xl font-medium mb-4">PaperLess V2</div>
                         <span class="text-muted-color font-medium">เข้าสู่ระบบเซ็นเอกสาร</span>
                     </div>
 
-                    <form class="w-full md:w-[30rem]" @submit.prevent="submit">
-                        <label for="username" class="block text-surface-900 dark:text-surface-0 text-xl font-medium mb-2">Username</label>
-                        <InputText id="username" v-model="username" type="text" autocomplete="username" class="w-full mb-6" autofocus />
+                    <form class="w-full md:w-[30rem] mx-auto" @submit.prevent="submit">
+                        <label for="username" class="block text-surface-900 dark:text-surface-0 text-xl font-medium mb-2">ชื่อผู้ใช้</label>
+                        <InputText id="username" v-model="username" type="text" autocomplete="username" class="w-full mb-8" autofocus />
 
-                        <label for="password" class="block text-surface-900 dark:text-surface-0 font-medium text-xl mb-2">Password</label>
+                        <label for="password" class="block text-surface-900 dark:text-surface-0 font-medium text-xl mb-2">รหัสผ่าน</label>
                         <Password id="password" v-model="password" :toggleMask="true" class="mb-4" fluid :feedback="false" autocomplete="current-password" />
 
                         <Message v-if="error" severity="error" class="mb-4">{{ error }}</Message>
@@ -64,7 +64,7 @@ async function submit() {
                         <Button type="submit" label="เข้าสู่ระบบ" icon="pi pi-sign-in" class="w-full" :loading="loading" />
                     </form>
 
-                    <div class="mt-8 pt-6 border-t border-surface flex flex-col gap-3 text-sm">
+                    <div class="w-full md:w-[30rem] mx-auto mt-8 pt-6 border-t border-surface-200 dark:border-surface-700 flex flex-col gap-3 text-sm">
                         <div class="flex items-center justify-between gap-4">
                             <span class="text-muted-color">ชื่อ</span>
                             <strong>System Administrator</strong>
