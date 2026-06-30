@@ -197,11 +197,11 @@ function formatDate(value) {
                                 </div>
                                 <Tag value="รอเซ็น" severity="info" />
                             </div>
+                            <div class="position-banner">
+                                <span><i class="pi pi-user-edit"></i> ตำแหน่งของคุณ</span>
+                                <strong>{{ row.task.positionName || '-' }}</strong>
+                            </div>
                             <dl>
-                                <div>
-                                    <dt>ตำแหน่ง</dt>
-                                    <dd>{{ row.task.positionName || '-' }}</dd>
-                                </div>
                                 <div>
                                     <dt>วันที่เอกสาร</dt>
                                     <dd>{{ formatDate(row.doc.docDate) }}</dd>
@@ -244,11 +244,11 @@ function formatDate(value) {
                                 </div>
                                 <Tag value="ยังไม่ถึงคิว" severity="secondary" />
                             </div>
+                            <div class="position-banner waiting-position">
+                                <span><i class="pi pi-user-edit"></i> ตำแหน่งของคุณ</span>
+                                <strong>{{ row.task.positionName || '-' }}</strong>
+                            </div>
                             <dl>
-                                <div>
-                                    <dt>ตำแหน่งของคุณ</dt>
-                                    <dd>{{ row.task.positionName || '-' }}</dd>
-                                </div>
                                 <div>
                                     <dt>วันที่เอกสาร</dt>
                                     <dd>{{ formatDate(row.doc.docDate) }}</dd>
@@ -409,11 +409,40 @@ dt {
     color: var(--text-color-secondary);
 }
 
+.position-banner {
+    border: 1px solid color-mix(in srgb, var(--primary-color) 28%, var(--surface-border));
+    background: color-mix(in srgb, var(--primary-color) 10%, var(--surface-card));
+    border-radius: 8px;
+    padding: 0.7rem 0.8rem;
+    display: grid;
+    gap: 0.2rem;
+}
+
+.position-banner span {
+    color: var(--text-color-secondary);
+    font-size: 0.82rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.position-banner strong {
+    color: var(--primary-color);
+    font-size: 1.15rem;
+    line-height: 1.2;
+}
+
+.waiting-position {
+    border-color: color-mix(in srgb, var(--surface-border) 70%, var(--primary-color));
+    background: color-mix(in srgb, var(--surface-ground) 70%, var(--surface-card));
+}
+
+.waiting-position strong {
+    color: var(--text-color);
+}
+
 dl {
     margin: 0;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.65rem;
 }
 
 dt {
