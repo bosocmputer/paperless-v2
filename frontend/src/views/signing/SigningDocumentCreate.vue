@@ -1,6 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
-import { formatDocumentDate } from '@/utils/signingFormatters';
+import { formatDocumentDate, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
 import DocumentLayoutDesigner from './components/DocumentLayoutDesigner.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
@@ -24,6 +24,9 @@ const creating = ref(false);
 const uploading = ref(false);
 const searchingCandidates = ref(false);
 const loadingLayoutContext = ref(false);
+const checkingDuplicate = ref(false);
+const duplicateCheck = ref(null);
+const duplicateCheckError = ref('');
 const designerValidationIssues = ref([]);
 const activeStep = ref(0);
 const fileInput = ref(null);
@@ -34,6 +37,7 @@ let searchTimer;
 let suppressSearchWatch = false;
 let openedAt = Date.now();
 let createFinished = false;
+let duplicateCheckSeq = 0;
 
 const wizardSteps = [
     { label: 'เลือกเอกสาร', shortLabel: 'เอกสาร', icon: 'pi pi-file' },
@@ -55,6 +59,8 @@ const headerSummary = computed(() => {
     return 'เลือกเอกสารจาก SML แล้วอัปโหลด PDF เพื่อวางกรอบลายเซ็น';
 });
 const lockedBySML = computed(() => Number(form.value.selectedCandidate?.is_lock_record || 0) === 1);
+const blockingDuplicateDocument = computed(() => duplicateCheck.value?.blockingDocument || null);
+const duplicateWarningDocuments = computed(() => duplicateCheck.value?.previousDocuments || []);
 const layoutValidationIssues = computed(() => [...new Set([...validateLayout(), ...designerValidationIssues.value])]);
 const createDisabledReason = computed(() => finalDisabledReason());
 const dirty = computed(() => {
@@ -86,6 +92,7 @@ watch(
         clearTimeout(searchTimer);
         form.value.docNo = '';
         form.value.selectedCandidate = null;
+        resetDuplicateCheck();
         candidates.value = [];
         candidatePage.value = 1;
         candidateHasMore.value = false;
@@ -114,6 +121,7 @@ onMounted(async () => {
     await loadPage();
     if (form.value.docFormatCode) await loadLayoutContext();
     if (hasRoutePrefill) await validateInitialRouteCandidate();
+    if (form.value.selectedCandidate) await checkSelectedDocumentDuplicate();
     recordCreateEvent('wizard_open');
 });
 
@@ -211,6 +219,7 @@ function selectCandidate(candidate) {
     form.value.confirmLocked = false;
     suppressSearchWatch = true;
     form.value.search = candidate.doc_no;
+    void checkSelectedDocumentDuplicate();
     persistDraft();
 }
 
@@ -493,6 +502,14 @@ async function submitDocument() {
         router.push({ name: 'signing-document-drafts' });
     } catch (err) {
         recordCreateEvent('create_error');
+        if (err.payload?.error === 'signing_document_duplicate') {
+            duplicateCheck.value = {
+                canCreate: false,
+                message: err.payload.message,
+                blockingDocument: err.payload.blockingDocument || null,
+                previousDocuments: err.payload.previousDocuments || []
+            };
+        }
         toast.add({ severity: 'error', summary: 'สร้างเอกสารไม่สำเร็จ', detail: err.message, life: 5000 });
     } finally {
         creating.value = false;
@@ -503,6 +520,8 @@ function blockedReasonForStep(index) {
     if (index === 0) {
         if (!form.value.docFormatCode) return 'เลือกชนิดเอกสารก่อน';
         if (!form.value.selectedCandidate) return 'เลือกเลขเอกสารจากผลค้นหา SML ก่อน';
+        if (checkingDuplicate.value) return 'กำลังตรวจสอบเอกสารซ้ำใน PaperLess';
+        if (blockingDuplicateDocument.value) return duplicateCheck.value?.message || 'เอกสารนี้มีอยู่ใน PaperLess แล้ว กรุณาเปิดเอกสารเดิมแทนการสร้างซ้ำ';
     }
     if (index === 1) {
         if (!form.value.fileId) return 'อัปโหลด PDF จริงก่อน';
@@ -573,10 +592,49 @@ function resetCandidateSearch() {
     form.value.docNo = '';
     form.value.selectedCandidate = null;
     form.value.confirmLocked = false;
+    resetDuplicateCheck();
     candidates.value = [];
     candidatePage.value = 1;
     candidateTotal.value = 0;
     candidateHasMore.value = false;
+}
+
+function resetDuplicateCheck() {
+    duplicateCheckSeq += 1;
+    checkingDuplicate.value = false;
+    duplicateCheck.value = null;
+    duplicateCheckError.value = '';
+}
+
+async function checkSelectedDocumentDuplicate() {
+    const candidate = form.value.selectedCandidate;
+    if (!form.value.docFormatCode || !candidate?.doc_no) {
+        resetDuplicateCheck();
+        return;
+    }
+    const seq = duplicateCheckSeq + 1;
+    duplicateCheckSeq = seq;
+    checkingDuplicate.value = true;
+    duplicateCheck.value = null;
+    duplicateCheckError.value = '';
+    try {
+        const result = await api.checkSigningDocumentDuplicate({
+            docFormatCode: form.value.docFormatCode,
+            docNo: candidate.doc_no
+        });
+        if (seq !== duplicateCheckSeq) return;
+        duplicateCheck.value = result;
+    } catch (err) {
+        if (seq !== duplicateCheckSeq) return;
+        duplicateCheckError.value = err.message || 'ตรวจสอบเอกสารซ้ำไม่สำเร็จ ระบบจะตรวจอีกครั้งตอนบันทึก';
+    } finally {
+        if (seq === duplicateCheckSeq) checkingDuplicate.value = false;
+    }
+}
+
+function openDuplicateDocument(doc) {
+    if (!doc?.id) return;
+    router.push({ name: 'signing-document-detail', params: { id: doc.id } });
 }
 
 function resetUploadedLayout() {
@@ -782,6 +840,35 @@ function makeLayoutBoxKey() {
 
                             <Message v-if="form.selectedCandidate" severity="success">
                                 เลือกเอกสาร {{ form.selectedCandidate.doc_no }} · {{ form.selectedCandidate.party_name || form.selectedCandidate.party_code || '-' }}
+                            </Message>
+                            <Message v-if="checkingDuplicate" severity="info">กำลังตรวจสอบว่าเอกสารนี้เคยสร้างใน PaperLess แล้วหรือไม่...</Message>
+                            <Message v-else-if="blockingDuplicateDocument" severity="error">
+                                <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                    <div>
+                                        <div class="font-bold">{{ duplicateCheck?.message || 'เอกสารนี้มีอยู่ใน PaperLess แล้ว' }}</div>
+                                        <div class="mt-1 flex flex-wrap items-center gap-2">
+                                            <span>{{ blockingDuplicateDocument.docNo }}</span>
+                                            <Tag :value="signingStatusLabel(blockingDuplicateDocument.status)" :severity="signingStatusSeverity(blockingDuplicateDocument.status)" />
+                                        </div>
+                                    </div>
+                                    <Button label="เปิดเอกสารเดิม" icon="pi pi-external-link" severity="danger" outlined @click="openDuplicateDocument(blockingDuplicateDocument)" />
+                                </div>
+                            </Message>
+                            <Message v-else-if="duplicateWarningDocuments.length" severity="warn">
+                                <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                    <div>
+                                        <div class="font-bold">{{ duplicateCheck?.message || 'เคยมีเอกสารนี้ใน PaperLess แล้ว' }}</div>
+                                        <div class="mt-1 flex flex-wrap items-center gap-2">
+                                            <span>{{ duplicateWarningDocuments[0].docNo }}</span>
+                                            <Tag :value="signingStatusLabel(duplicateWarningDocuments[0].status)" :severity="signingStatusSeverity(duplicateWarningDocuments[0].status)" />
+                                            <span v-if="duplicateWarningDocuments.length > 1" class="text-muted-color">อีก {{ duplicateWarningDocuments.length - 1 }} รายการ</span>
+                                        </div>
+                                    </div>
+                                    <Button label="เปิดรายการเก่า" icon="pi pi-external-link" severity="warn" outlined @click="openDuplicateDocument(duplicateWarningDocuments[0])" />
+                                </div>
+                            </Message>
+                            <Message v-else-if="duplicateCheckError" severity="warn">
+                                {{ duplicateCheckError }} ระบบยังจะตรวจซ้ำอีกครั้งตอนบันทึกเอกสาร
                             </Message>
 
                             <div class="min-w-0 max-w-full overflow-x-auto">

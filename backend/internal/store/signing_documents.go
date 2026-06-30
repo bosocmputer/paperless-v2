@@ -66,6 +66,13 @@ type SigningDocumentListResult struct {
 	HasMore   bool                     `json:"hasMore"`
 }
 
+type SigningDocumentDuplicateCheckResult struct {
+	CanCreate         bool                              `json:"canCreate"`
+	BlockingDocument  *models.SigningDocumentReference  `json:"blockingDocument,omitempty"`
+	PreviousDocuments []models.SigningDocumentReference `json:"previousDocuments"`
+	Message           string                            `json:"message"`
+}
+
 func (s *Store) CreateSigningDocument(ctx context.Context, input CreateSigningDocumentInput) (models.SigningDocument, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -262,6 +269,37 @@ LIMIT $%d OFFSET $%d
 	}, nil
 }
 
+func (s *Store) CheckSigningDocumentDuplicate(ctx context.Context, docFormatCode, docNo string) (SigningDocumentDuplicateCheckResult, error) {
+	docFormatCode = strings.ToUpper(strings.TrimSpace(docFormatCode))
+	docNo = strings.ToUpper(strings.TrimSpace(docNo))
+	if docFormatCode == "" || docNo == "" {
+		return buildSigningDocumentDuplicateCheckResult(nil), nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT id::text, doc_no, doc_format_code, status,
+       current_file_id IS NOT NULL AS has_current_pdf,
+       final_file_id IS NOT NULL AS has_final_pdf,
+       created_at, updated_at
+FROM signing_documents
+WHERE lower(doc_format_code) = lower($1)
+  AND doc_no = $2
+ORDER BY
+  CASE WHEN status IN ('draft', 'in_progress', 'pending_confirm', 'completed_evidence_failed', 'completed_lock_failed') THEN 0 ELSE 1 END,
+  updated_at DESC,
+  created_at DESC
+LIMIT 20
+`, docFormatCode, docNo)
+	if err != nil {
+		return SigningDocumentDuplicateCheckResult{}, err
+	}
+	defer rows.Close()
+	refs, err := scanSigningDocumentReferenceRows(rows)
+	if err != nil {
+		return SigningDocumentDuplicateCheckResult{}, err
+	}
+	return buildSigningDocumentDuplicateCheckResult(refs), nil
+}
+
 func signingDocumentListWhere(query SigningDocumentListQuery) (string, []any) {
 	clauses := []string{}
 	args := []any{}
@@ -298,6 +336,65 @@ func statusesForSigningDocumentQueue(queue string) []string {
 		return []string{"completed"}
 	default:
 		return nil
+	}
+}
+
+func buildSigningDocumentDuplicateCheckResult(refs []models.SigningDocumentReference) SigningDocumentDuplicateCheckResult {
+	result := SigningDocumentDuplicateCheckResult{
+		CanCreate:         true,
+		PreviousDocuments: []models.SigningDocumentReference{},
+		Message:           "ยังไม่พบเอกสารซ้ำใน PaperLess",
+	}
+	for _, ref := range refs {
+		if isBlockingSigningDocumentDuplicateStatus(ref.Status) {
+			if result.BlockingDocument == nil {
+				item := ref
+				result.BlockingDocument = &item
+				result.CanCreate = false
+				result.Message = fmt.Sprintf("เอกสารนี้มีอยู่ใน PaperLess แล้วในสถานะ%s กรุณาเปิดเอกสารเดิมแทนการสร้างซ้ำ", signingDocumentDuplicateStatusLabel(ref.Status))
+			}
+			continue
+		}
+		result.PreviousDocuments = append(result.PreviousDocuments, ref)
+	}
+	if result.CanCreate && len(result.PreviousDocuments) > 0 {
+		result.Message = "เคยมีเอกสารนี้ใน PaperLess แล้ว หากเป็นเอกสารฉบับใหม่สามารถสร้างต่อได้"
+	}
+	return result
+}
+
+func isBlockingSigningDocumentDuplicateStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "draft", "in_progress", "pending_confirm", "completed_evidence_failed", "completed_lock_failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func signingDocumentDuplicateStatusLabel(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "draft":
+		return "เอกสารเตรียมส่ง"
+	case "in_progress":
+		return "เอกสารรอเซ็น"
+	case "pending_confirm":
+		return "รอยืนยัน"
+	case "completed_evidence_failed":
+		return "สร้าง PDF หลักฐานไม่สำเร็จ"
+	case "completed_lock_failed":
+		return "Lock SML ไม่สำเร็จ"
+	case "completed":
+		return "เสร็จสมบูรณ์"
+	case "rejected":
+		return "ถูกปฏิเสธ"
+	case "cancelled":
+		return "ยกเลิก"
+	default:
+		if strings.TrimSpace(status) == "" {
+			return "-"
+		}
+		return status
 	}
 }
 
@@ -662,6 +759,10 @@ ORDER BY updated_at DESC
 		return nil, err
 	}
 	defer rows.Close()
+	return scanSigningDocumentReferenceRows(rows)
+}
+
+func scanSigningDocumentReferenceRows(rows pgx.Rows) ([]models.SigningDocumentReference, error) {
 	items := []models.SigningDocumentReference{}
 	for rows.Next() {
 		var item models.SigningDocumentReference

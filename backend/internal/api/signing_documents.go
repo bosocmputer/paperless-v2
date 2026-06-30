@@ -112,6 +112,26 @@ func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) checkSigningDocumentDuplicate(w http.ResponseWriter, r *http.Request) {
+	docFormatCode := strings.TrimSpace(r.URL.Query().Get("doc_format_code"))
+	docNo := strings.TrimSpace(r.URL.Query().Get("doc_no"))
+	if docFormatCode == "" || docNo == "" {
+		writeError(w, http.StatusBadRequest, "document_required", "กรุณาระบุชนิดเอกสารและเลขที่เอกสาร")
+		return
+	}
+	result, err := s.store.CheckSigningDocumentDuplicate(r.Context(), docFormatCode, docNo)
+	if err != nil {
+		s.logger.Error("check signing document duplicate failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "duplicate_check_failed", "ตรวจสอบเอกสารซ้ำไม่สำเร็จ")
+		return
+	}
+	result.BlockingDocument = enrichSigningDocumentReferenceForAdmin(result.BlockingDocument)
+	for i := range result.PreviousDocuments {
+		result.PreviousDocuments[i] = enrichSigningDocumentReferenceForAdminValue(result.PreviousDocuments[i])
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) getAdminDashboard(w http.ResponseWriter, r *http.Request) {
 	dashboard, err := s.store.GetAdminDashboard(r.Context())
 	if err != nil {
@@ -227,6 +247,16 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "sml_document_locked", "SML document is already locked. Confirm before creating a PaperLess document.")
 		return
 	}
+	duplicateCheck, err := s.store.CheckSigningDocumentDuplicate(r.Context(), format.Code, candidate.DocNo)
+	if err != nil {
+		s.logger.Error("check signing document duplicate failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "duplicate_check_failed", "ตรวจสอบเอกสารซ้ำไม่สำเร็จ")
+		return
+	}
+	if !duplicateCheck.CanCreate {
+		s.writeSigningDocumentDuplicateConflict(w, duplicateCheck)
+		return
+	}
 	uploaded, err := s.store.FindSigningDocumentUploadFile(r.Context(), req.FileID, actor.ID)
 	if errors.Is(err, store.ErrSigningDocumentUploadNotFound) {
 		writeError(w, http.StatusNotFound, "upload_not_found", "Uploaded PDF was not found or has expired. Upload the PDF again.")
@@ -287,7 +317,14 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		UserAgent:           r.UserAgent(),
 	})
 	if errors.Is(err, store.ErrSigningDocumentDuplicate) {
-		writeError(w, http.StatusConflict, "signing_document_duplicate", "This SML document is already in an active PaperLess workflow.")
+		duplicateCheck, duplicateErr := s.store.CheckSigningDocumentDuplicate(r.Context(), format.Code, candidate.DocNo)
+		if duplicateErr != nil || duplicateCheck.CanCreate {
+			duplicateCheck = store.SigningDocumentDuplicateCheckResult{
+				CanCreate: false,
+				Message:   "เอกสารนี้มีอยู่ใน PaperLess แล้ว กรุณาเปิดเอกสารเดิมแทนการสร้างซ้ำ",
+			}
+		}
+		s.writeSigningDocumentDuplicateConflict(w, duplicateCheck)
 		return
 	}
 	if errors.Is(err, store.ErrSigningDocumentUploadNotFound) {
@@ -303,6 +340,46 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 	s.completeIdempotency(idempotencyScope, actor.ID, r, http.StatusCreated, payload)
 	idempotencyCompleted = true
 	writeJSON(w, http.StatusCreated, payload)
+}
+
+func (s *Server) writeSigningDocumentDuplicateConflict(w http.ResponseWriter, result store.SigningDocumentDuplicateCheckResult) {
+	result.CanCreate = false
+	result.BlockingDocument = enrichSigningDocumentReferenceForAdmin(result.BlockingDocument)
+	for i := range result.PreviousDocuments {
+		result.PreviousDocuments[i] = enrichSigningDocumentReferenceForAdminValue(result.PreviousDocuments[i])
+	}
+	message := strings.TrimSpace(result.Message)
+	if message == "" {
+		message = "เอกสารนี้มีอยู่ใน PaperLess แล้ว กรุณาเปิดเอกสารเดิมแทนการสร้างซ้ำ"
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":             "signing_document_duplicate",
+		"message":           message,
+		"canCreate":         false,
+		"blockingDocument":  result.BlockingDocument,
+		"previousDocuments": result.PreviousDocuments,
+	})
+}
+
+func enrichSigningDocumentReferenceForAdmin(ref *models.SigningDocumentReference) *models.SigningDocumentReference {
+	if ref == nil {
+		return nil
+	}
+	item := enrichSigningDocumentReferenceForAdminValue(*ref)
+	return &item
+}
+
+func enrichSigningDocumentReferenceForAdminValue(ref models.SigningDocumentReference) models.SigningDocumentReference {
+	ref.CanOpenPaperless = strings.TrimSpace(ref.ID) != ""
+	ref.CanViewCurrentPDF = ref.CanOpenPaperless && ref.HasCurrentPDF
+	ref.CanViewSignedPDF = ref.CanOpenPaperless && ref.HasFinalPDF
+	if ref.CanViewCurrentPDF {
+		ref.CurrentPDFURL = fmt.Sprintf("/api/signing-documents/%s/pdf?version=current", ref.ID)
+	}
+	if ref.CanViewSignedPDF {
+		ref.SignedPDFURL = fmt.Sprintf("/api/signing-documents/%s/pdf?version=final", ref.ID)
+	}
+	return ref
 }
 
 func (s *Server) sendSigningDocument(w http.ResponseWriter, r *http.Request) {

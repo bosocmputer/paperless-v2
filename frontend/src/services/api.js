@@ -181,6 +181,14 @@ export const api = {
             })
         );
     },
+    checkSigningDocumentDuplicate(params = {}) {
+        return request(
+            withQuery('/api/signing-documents/duplicate-check', {
+                doc_format_code: params.docFormatCode,
+                doc_no: params.docNo
+            })
+        );
+    },
     getAdminDashboard() {
         return request('/api/admin/dashboard');
     },

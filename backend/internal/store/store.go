@@ -262,6 +262,9 @@ DROP INDEX IF EXISTS signing_documents_search_idx;
 CREATE INDEX signing_documents_search_idx
 ON signing_documents (lower(doc_no), lower(doc_format_code), updated_at DESC);
 
+CREATE INDEX IF NOT EXISTS signing_documents_duplicate_lookup_idx
+ON signing_documents (lower(doc_format_code), doc_no, updated_at DESC);
+
 CREATE INDEX IF NOT EXISTS signing_documents_status_idx
 ON signing_documents (status, updated_at DESC);
 
