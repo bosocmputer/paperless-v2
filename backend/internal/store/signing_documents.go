@@ -871,7 +871,7 @@ func (s *Store) ListMySigningHistory(ctx context.Context, username, search strin
 		size = 50
 	}
 
-	result := models.MySigningHistoryResult{Page: page, Size: size}
+	result := models.MySigningHistoryResult{Page: page, Size: size, Documents: []models.MySigningHistoryDocument{}}
 	where := `
 WHERE lower(sg.signer_user) = lower($1)
   AND sg.status IN ('signed', 'rejected')
