@@ -53,6 +53,7 @@ let discardNavigationConfirmed = false;
 const template = computed(() => active.value || draft.value);
 const canEdit = computed(() => !!template.value && template.value.status !== 'archived');
 const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `หน้า ${index + 1}`, value: index + 1 })));
+const currentPageLabel = computed(() => (pageCount.value ? `หน้า ${currentPage.value} / ${pageCount.value}` : 'หน้า - / -'));
 const selectedStep = computed(() => configs.value.find((item) => item.positionCode === selectedPositionCode.value));
 const selectedBox = computed(() => boxes.value.find((box) => box.clientKey === selectedBoxKey.value) || null);
 const selectedBoxStep = computed(() => (selectedBox.value ? configs.value.find((item) => item.positionCode === selectedBox.value.positionCode) : null));
@@ -105,6 +106,12 @@ const pdfMetaLabel = computed(() => {
     if (rendering.value) return 'กำลัง render PDF';
     if (!pageSize.value.width) return '';
     return `${Math.round(pageSize.value.width)} x ${Math.round(pageSize.value.height)} px · ${storedPageCount.value || pageCount.value} หน้า`;
+});
+const pdfFileStatusLabel = computed(() => {
+    if (!template.value?.sampleFileId) return 'อัปโหลด PDF ตัวอย่างเพื่อกำหนดกรอบเริ่มต้น';
+    const name = template.value?.sampleFile?.originalName || 'PDF ตัวอย่าง';
+    const pages = storedPageCount.value || pageCount.value || 0;
+    return pages ? `${name} · ${pages} หน้า` : name;
 });
 
 onMounted(async () => {
@@ -760,11 +767,11 @@ function scrollBoxIntoView(box) {
 
 function requestBackNavigation() {
     if (!dirty.value) {
-        goBackToTemplateList();
+        goBackToDocumentConfig();
         return;
     }
     confirm.require({
-        message: 'มีการแก้ไขกรอบลายเซ็นที่ยังไม่ได้บันทึก ต้องการกลับไปหน้ารายการกรอบเริ่มต้นและทิ้งการแก้ไขหรือไม่?',
+        message: 'มีการแก้ไขกรอบลายเซ็นที่ยังไม่ได้บันทึก ต้องการกลับไปหน้าตั้งค่า Workflow และทิ้งการแก้ไขหรือไม่?',
         header: 'ยังไม่ได้บันทึก',
         icon: 'pi pi-exclamation-triangle',
         rejectProps: {
@@ -776,13 +783,13 @@ function requestBackNavigation() {
             label: 'ออกโดยไม่บันทึก',
             severity: 'danger'
         },
-        accept: () => goBackToTemplateList({ discard: true })
+        accept: () => goBackToDocumentConfig({ discard: true })
     });
 }
 
-function goBackToTemplateList(options = {}) {
+function goBackToDocumentConfig(options = {}) {
     if (options.discard) discardNavigationConfirmed = true;
-    router.push({ name: 'signature-templates' });
+    router.push({ name: 'document-config' });
 }
 
 function handleBeforeUnload(event) {
@@ -818,43 +825,54 @@ function recordDesignerEvent(event, extra = {}) {
 </script>
 
 <template>
-    <div class="signature-designer">
-        <div class="editor-bar">
-            <div class="editor-title">
-                <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="requestBackNavigation" />
-                <div class="min-w-0">
-                    <div class="doc-heading">
-                        <span>กรอบเริ่มต้น {{ docFormatCode }}</span>
-                        <Tag :value="boxProgressLabel" :severity="validationStatusSeverity" />
-                        <Tag :value="validationStatusLabel" :severity="validationStatusSeverity" />
-                        <Tag v-if="dirty" value="ยังไม่ได้บันทึก" severity="warn" />
-                    </div>
-                    <div class="doc-subtitle">
-                        <span class="truncate">{{ docTitle }}</span>
-                        <span>แก้ไขล่าสุด {{ formatDate(template?.updatedAt) }}</span>
-                    </div>
+    <div class="card min-w-0 overflow-hidden signature-designer-card">
+        <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6">
+            <div class="flex min-w-0 items-center gap-3">
+                <Button icon="pi pi-arrow-left" severity="secondary" rounded outlined aria-label="กลับ" @click="requestBackNavigation" />
+                <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <div class="font-semibold text-xl whitespace-nowrap truncate">กรอบเริ่มต้น {{ docFormatCode }}</div>
+                    <p class="text-muted-color m-0 min-w-0 truncate">{{ docTitle }} · ใช้เป็นค่าเริ่มต้นตอนส่งเอกสารจริง</p>
                 </div>
             </div>
 
-            <div class="editor-actions">
-                <input ref="fileInput" type="file" accept="application/pdf,.pdf" class="hidden" @change="handleFileChange" />
-                <Button label="อัปโหลด PDF" icon="pi pi-upload" severity="secondary" outlined :loading="uploading" @click="triggerUpload" />
+            <div class="flex flex-wrap gap-2 items-center xl:justify-end">
+                <Tag value="PDF และกรอบ" severity="success" />
+                <Tag :value="boxProgressLabel" :severity="validationStatusSeverity" />
+                <Tag :value="validationStatusLabel" :severity="validationStatusSeverity" />
+                <Tag v-if="dirty" value="ยังไม่ได้บันทึก" severity="warn" />
                 <Button label="บันทึก" icon="pi pi-save" :disabled="!canSave" :loading="saving" @click="saveTemplate()" />
             </div>
         </div>
 
         <Message v-if="error" severity="error">{{ error }}</Message>
 
+        <Toolbar class="pdf-editor-status mb-3">
+            <template #start>
+                <div class="min-w-0">
+                    <div class="font-bold">ไฟล์ PDF สำหรับกรอบเริ่มต้น {{ docFormatCode }}</div>
+                    <div class="text-sm text-muted-color truncate">{{ pdfFileStatusLabel }}</div>
+                </div>
+            </template>
+            <template #end>
+                <input ref="fileInput" type="file" accept="application/pdf,.pdf" class="hidden" @change="handleFileChange" />
+                <Button :label="template?.sampleFileId ? 'เปลี่ยน PDF' : 'เลือกไฟล์ PDF'" :icon="template?.sampleFileId ? 'pi pi-refresh' : 'pi pi-upload'" :loading="uploading" @click="triggerUpload" />
+            </template>
+        </Toolbar>
+
         <div class="editor-main">
             <section class="pdf-workspace">
                 <div class="pdf-toolbar">
                     <div class="toolbar-group">
-                        <Select v-model="currentPage" :options="pageOptions" optionLabel="label" optionValue="value" :disabled="pageOptions.length === 0" class="page-select" />
-                        <Button icon="pi pi-search-minus" severity="secondary" outlined :disabled="zoom <= 0.6" aria-label="Zoom out" @click="setZoom(zoom - 0.1)" />
+                        <Button icon="pi pi-angle-left" severity="secondary" text :disabled="currentPage <= 1" aria-label="หน้าก่อนหน้า" @click="currentPage--" />
+                        <span class="page-label">{{ currentPageLabel }}</span>
+                        <Button icon="pi pi-angle-right" severity="secondary" text :disabled="currentPage >= (pageCount || 1)" aria-label="หน้าถัดไป" @click="currentPage++" />
+                    </div>
+                    <div class="toolbar-group">
+                        <Button label="พอดีกว้าง" severity="secondary" outlined size="small" :disabled="!pageSize.width" @click="activateFitWidth" />
+                        <Button label="100%" severity="secondary" outlined size="small" :disabled="!pageSize.width" @click="setZoom(1)" />
+                        <Button icon="pi pi-minus" severity="secondary" text :disabled="zoom <= 0.6" aria-label="Zoom out" @click="setZoom(zoom - 0.1)" />
                         <span class="zoom-value">{{ Math.round(zoom * 100) }}%</span>
-                        <Button icon="pi pi-search-plus" severity="secondary" outlined :disabled="zoom >= 2" aria-label="Zoom in" @click="setZoom(zoom + 0.1)" />
-                        <Button label="พอดีกว้าง" icon="pi pi-arrows-h" severity="secondary" outlined :disabled="!pageSize.width" @click="activateFitWidth" />
-                        <Button label="100%" severity="secondary" outlined :disabled="!pageSize.width" @click="setZoom(1)" />
+                        <Button icon="pi pi-plus" severity="secondary" text :disabled="zoom >= 2" aria-label="Zoom in" @click="setZoom(zoom + 0.1)" />
                     </div>
                     <span class="pdf-meta">{{ pdfMetaLabel }}</span>
                 </div>
@@ -866,9 +884,9 @@ function recordDesignerEvent(event, extra = {}) {
 
                 <div v-else-if="!template?.sampleFileId" class="signature-empty">
                     <i class="pi pi-file-pdf text-4xl text-muted-color"></i>
-                    <div class="font-semibold mt-3">อัปโหลด PDF ตัวอย่างก่อน</div>
+                    <div class="font-semibold mt-3">อัปโหลด PDF เพื่อเริ่มวางกรอบลายเซ็น</div>
                     <p class="text-muted-color m-0">ใช้ไฟล์ PDF ของเอกสารจริงเพื่อกำหนดตำแหน่งลายเซ็น</p>
-                    <Button label="อัปโหลด PDF" icon="pi pi-upload" class="mt-3" :loading="uploading" @click="triggerUpload" />
+                    <Button label="เลือกไฟล์ PDF" icon="pi pi-upload" class="mt-3" :loading="uploading" @click="triggerUpload" />
                 </div>
 
                 <div v-else ref="viewerRef" class="pdf-scroll">
@@ -898,7 +916,7 @@ function recordDesignerEvent(event, extra = {}) {
                 <section class="inspector-panel selected-panel">
                     <div class="panel-title">
                         <div>
-                            <div class="font-semibold">รายละเอียดกรอบที่เลือก</div>
+                            <div class="font-semibold">กรอบที่เลือก</div>
                             <div v-if="selectedBoxStep" class="text-sm text-muted-color">{{ selectedBoxStep.positionCode }} - {{ selectedBoxStep.positionName }}</div>
                         </div>
                     </div>
@@ -1018,7 +1036,7 @@ function recordDesignerEvent(event, extra = {}) {
                     <div class="panel-title">
                         <div>
                             <div class="font-semibold">ขั้นตอนและกรอบ</div>
-                            <div class="text-sm text-muted-color">{{ boxes.length }} กรอบที่ใช้เป็นค่าเริ่มต้น</div>
+                            <div class="text-sm text-muted-color">{{ boxes.length }} กรอบเริ่มต้น</div>
                         </div>
                         <Tag :value="validationStatusLabel" :severity="validationStatusSeverity" />
                     </div>
@@ -1044,7 +1062,7 @@ function recordDesignerEvent(event, extra = {}) {
                             <div class="step-status-row">
                                 <span :class="['box-count', { ok: step.isComplete, warn: step.issues.length > 0 }]">{{ step.boxes.length }}/{{ step.required }}</span>
                                 <Button
-                                    :label="step.canAdd ? 'เพิ่มกรอบ' : step.addDisabledReason || 'เพิ่มกรอบ'"
+                                    label="เพิ่ม"
                                     :icon="step.canAdd ? 'pi pi-plus' : 'pi pi-check'"
                                     size="small"
                                     :disabled="!step.canAdd"
@@ -1093,64 +1111,17 @@ function recordDesignerEvent(event, extra = {}) {
 </template>
 
 <style scoped>
-.signature-designer {
-    display: flex;
-    min-height: calc(100dvh - 8rem);
-    flex-direction: column;
-    gap: 0.75rem;
+.signature-designer-card {
+    min-height: calc(100dvh - 6.25rem);
 }
 
-.editor-bar {
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    display: flex;
-    min-height: 64px;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    border: 1px solid var(--surface-border);
-    border-radius: 8px;
-    background: var(--surface-card);
-    padding: 0.65rem 0.85rem;
-}
-
-.editor-title {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 0.65rem;
-}
-
-.doc-heading {
-    display: flex;
-    min-width: 0;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.45rem;
-    color: var(--text-color);
-    font-size: 1rem;
-    font-weight: 700;
-}
-
-.doc-subtitle {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    color: var(--text-color-secondary);
-    font-size: 0.82rem;
-}
-
-.editor-actions {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.5rem;
+.pdf-editor-status {
+    padding: 0.55rem 0.75rem;
 }
 
 .editor-main {
     display: grid;
-    min-height: calc(100dvh - 13rem);
+    min-height: calc(100dvh - 16rem);
     align-items: start;
     gap: 0.75rem;
     grid-template-columns: minmax(0, 1fr) minmax(380px, 420px);
@@ -1184,15 +1155,19 @@ function recordDesignerEvent(event, extra = {}) {
     gap: 0.45rem;
 }
 
-.page-select {
-    min-width: 8rem;
+.page-label,
+.zoom-value {
+    text-align: center;
+    color: var(--text-color-secondary);
+    font-size: 0.875rem;
+}
+
+.page-label {
+    min-width: 5.25rem;
 }
 
 .zoom-value {
     width: 3.4rem;
-    text-align: center;
-    color: var(--text-color-secondary);
-    font-size: 0.875rem;
 }
 
 .pdf-meta {
@@ -1202,8 +1177,8 @@ function recordDesignerEvent(event, extra = {}) {
 }
 
 .pdf-scroll {
-    height: calc(100dvh - 18rem);
-    min-height: 34rem;
+    height: calc(100dvh - 21rem);
+    min-height: 31rem;
     overflow: auto;
     border: 1px solid var(--surface-border);
     border-radius: 8px;
@@ -1301,7 +1276,7 @@ function recordDesignerEvent(event, extra = {}) {
 
 .inspector {
     display: flex;
-    max-height: calc(100dvh - 13rem);
+    max-height: calc(100dvh - 16rem);
     flex-direction: column;
     gap: 0.75rem;
     overflow: auto;
@@ -1491,13 +1466,11 @@ function recordDesignerEvent(event, extra = {}) {
 }
 
 @media (max-width: 768px) {
-    .editor-bar,
     .pdf-toolbar {
         align-items: stretch;
         flex-direction: column;
     }
 
-    .editor-actions,
     .toolbar-group {
         justify-content: flex-start;
     }
