@@ -62,6 +62,7 @@ const dirty = computed(() => {
 const stepBlockedReason = computed(() => wizardSteps.map((_step, index) => blockedReasonForStep(index)));
 const currentStepReason = computed(() => stepBlockedReason.value[activeStep.value] || '');
 const canGoNext = computed(() => activeStep.value < wizardSteps.length - 1 && !currentStepReason.value);
+const designerMode = computed(() => activeStep.value === 1 && !!form.value.fileUrl);
 const maxAllowedStep = computed(() => {
     if (blockedReasonForStep(0)) return 0;
     if (blockedReasonForStep(1)) return 1;
@@ -562,22 +563,26 @@ function makeClientId() {
 </script>
 
 <template>
-    <div class="card min-w-0 overflow-hidden">
-        <Toolbar class="mb-4">
+    <div class="card min-w-0 overflow-hidden signing-create-card" :class="{ 'signing-create-card-designer': designerMode }">
+        <Toolbar class="mb-3 signing-create-header">
             <template #start>
                 <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="router.push({ name: 'signing-documents' })" />
-                <div class="ml-2">
-                    <h4 class="m-0">ส่งเอกสารใหม่</h4>
-                    <small class="text-muted-color">{{ headerSummary }}</small>
+                <div class="ml-2 signing-create-title">
+                    <h4 class="m-0">{{ designerMode ? form.selectedCandidate?.doc_no || 'ส่งเอกสารใหม่' : 'ส่งเอกสารใหม่' }}</h4>
+                    <small class="text-muted-color">{{ designerMode ? selectedDocFormatLabel : headerSummary }}</small>
                 </div>
             </template>
             <template #end>
-                <Button label="กลับรายการเอกสาร" icon="pi pi-list" severity="secondary" outlined @click="router.push({ name: 'signing-documents' })" />
+                <div class="flex items-center gap-2">
+                    <Tag v-if="designerMode" value="PDF และกรอบ" severity="success" />
+                    <Button v-if="designerMode" icon="pi pi-list" severity="secondary" outlined rounded aria-label="กลับรายการเอกสาร" @click="router.push({ name: 'signing-documents' })" />
+                    <Button v-else label="กลับรายการเอกสาร" icon="pi pi-list" severity="secondary" outlined @click="router.push({ name: 'signing-documents' })" />
+                </div>
             </template>
         </Toolbar>
 
-        <Stepper v-model:value="activeStepValue" linear class="min-w-0">
-            <StepList class="min-w-0">
+        <Stepper v-model:value="activeStepValue" linear class="min-w-0 signing-create-stepper">
+            <StepList v-show="!designerMode" class="min-w-0">
                 <Step v-for="(step, index) in wizardSteps" :key="step.label" :value="index + 1" :disabled="!canOpenStep(index)">
                     <span class="hidden md:inline">{{ step.label }}</span>
                     <span class="md:hidden">{{ step.shortLabel }}</span>
@@ -673,37 +678,37 @@ function makeClientId() {
                 </StepPanel>
 
                 <StepPanel :value="2">
-                    <Panel header="PDF และกรอบลายเซ็น" class="min-w-0">
-                        <div class="flex min-w-0 flex-col gap-4">
-                            <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div class="pdf-editor-shell">
+                        <Toolbar class="pdf-editor-status">
+                            <template #start>
                                 <div>
                                     <div class="font-bold">ไฟล์ PDF สำหรับ {{ form.selectedCandidate?.doc_no || '-' }}</div>
-                                    <small class="text-muted-color">อัปโหลด PDF จริงจาก SML แล้ววางกรอบลายเซ็นบนไฟล์นี้</small>
+                                    <small class="text-muted-color">
+                                        {{ form.uploadedFile ? `${form.uploadedFile.originalName} · ${form.uploadedFile.pageCount} หน้า` : 'อัปโหลด PDF จริงจาก SML แล้ววางกรอบลายเซ็นบนไฟล์นี้' }}
+                                    </small>
                                 </div>
-                                <div class="flex flex-wrap gap-2">
-                                    <input ref="fileInput" type="file" accept="application/pdf" class="hidden" @change="onFileChange" />
-                                    <Button :label="form.fileId ? 'เปลี่ยน PDF' : 'เลือกไฟล์ PDF'" :icon="form.fileId ? 'pi pi-refresh' : 'pi pi-upload'" :loading="uploading" @click="triggerUpload" />
-                                </div>
-                            </div>
+                            </template>
+                            <template #end>
+                                <input ref="fileInput" type="file" accept="application/pdf" class="hidden" @change="onFileChange" />
+                                <Button :label="form.fileId ? 'เปลี่ยน PDF' : 'เลือกไฟล์ PDF'" :icon="form.fileId ? 'pi pi-refresh' : 'pi pi-upload'" :loading="uploading" @click="triggerUpload" />
+                            </template>
+                        </Toolbar>
 
-                            <Message v-if="form.uploadedFile" severity="success">
-                                {{ form.uploadedFile.originalName }} · {{ form.uploadedFile.pageCount }} หน้า
-                            </Message>
-                            <Message v-else severity="info">อัปโหลด PDF ก่อน แล้วระบบจะแสดงพื้นที่วางกรอบลายเซ็นในหน้านี้ทันที</Message>
-                            <Message v-if="loadingLayoutContext" severity="info">กำลังโหลด Workflow และกรอบเริ่มต้น...</Message>
+                        <Message v-if="!form.uploadedFile" severity="info">อัปโหลด PDF ก่อน แล้วระบบจะแสดงพื้นที่วางกรอบลายเซ็นในหน้านี้ทันที</Message>
+                        <Message v-if="loadingLayoutContext" severity="info">กำลังโหลด Workflow และกรอบเริ่มต้น...</Message>
 
-                            <DocumentLayoutDesigner
-                                v-if="activeStep === 1 && form.fileUrl"
-                                v-model="form.layoutBoxes"
-                                :pdfUrl="form.fileUrl"
-                                :pageCount="form.uploadedFile?.pageCount || 0"
-                                :configs="form.configs"
-                                :presetTemplate="form.presetTemplate"
-                                @apply-preset="onApplyPreset"
-                                @event="onDesignerEvent"
-                            />
-                        </div>
-                    </Panel>
+                        <DocumentLayoutDesigner
+                            v-if="activeStep === 1 && form.fileUrl"
+                            v-model="form.layoutBoxes"
+                            :pdfUrl="form.fileUrl"
+                            :pageCount="form.uploadedFile?.pageCount || 0"
+                            :configs="form.configs"
+                            :presetTemplate="form.presetTemplate"
+                            :fullHeight="designerMode"
+                            @apply-preset="onApplyPreset"
+                            @event="onDesignerEvent"
+                        />
+                    </div>
                 </StepPanel>
 
                 <StepPanel :value="3">
@@ -734,7 +739,7 @@ function makeClientId() {
             </StepPanels>
         </Stepper>
 
-        <Toolbar class="mt-4">
+        <Toolbar class="mt-3 signing-create-actions">
             <template #start>
                 <Button label="ย้อนกลับ" icon="pi pi-arrow-left" severity="secondary" outlined :disabled="activeStep === 0" @click="backStep" />
             </template>
@@ -748,3 +753,80 @@ function makeClientId() {
         </Toolbar>
     </div>
 </template>
+
+<style scoped>
+.signing-create-card {
+    min-height: calc(100dvh - 7rem);
+}
+
+.signing-create-card-designer {
+    display: flex;
+    height: calc(100dvh - 5.25rem);
+    min-height: 0;
+    flex-direction: column;
+    padding: 1rem;
+}
+
+.signing-create-title {
+    display: grid;
+    gap: 0.15rem;
+}
+
+.signing-create-card-designer .signing-create-title h4 {
+    font-size: 1.1rem;
+}
+
+.signing-create-card-designer .signing-create-stepper {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+}
+
+.signing-create-card-designer :deep(.p-steppanels) {
+    min-height: 0;
+    flex: 1 1 auto;
+    padding: 0;
+}
+
+.pdf-editor-shell {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.signing-create-card-designer .pdf-editor-shell {
+    min-height: 0;
+    flex: 1 1 auto;
+}
+
+.pdf-editor-status {
+    padding: 0.55rem 0.75rem;
+}
+
+.signing-create-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+}
+
+.signing-create-card-designer .signing-create-actions {
+    padding: 0.55rem 0.75rem;
+}
+
+@media (max-width: 640px) {
+    .signing-create-card-designer {
+        padding: 0.75rem;
+    }
+
+    .pdf-editor-status :deep(.p-toolbar-start),
+    .pdf-editor-status :deep(.p-toolbar-end) {
+        width: 100%;
+    }
+
+    .pdf-editor-status :deep(.p-toolbar-end) {
+        justify-content: flex-start;
+    }
+}
+</style>

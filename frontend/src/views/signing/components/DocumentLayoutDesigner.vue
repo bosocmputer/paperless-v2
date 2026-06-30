@@ -11,7 +11,8 @@ const props = defineProps({
     pageCount: { type: Number, default: 0 },
     configs: { type: Array, default: () => [] },
     modelValue: { type: Array, default: () => [] },
-    presetTemplate: { type: Object, default: null }
+    presetTemplate: { type: Object, default: null },
+    fullHeight: { type: Boolean, default: false }
 });
 
 const emit = defineEmits(['update:modelValue', 'apply-preset', 'event']);
@@ -365,7 +366,7 @@ defineExpose({ validationIssues, totalBoxes });
 </script>
 
 <template>
-    <div class="layout-designer">
+    <div class="layout-designer" :class="{ 'layout-designer-full': fullHeight }">
         <div class="pdf-pane">
             <div class="layout-toolbar">
                 <div class="toolbar-group">
@@ -464,12 +465,21 @@ defineExpose({ validationIssues, totalBoxes });
     gap: 1rem;
     min-height: min(70dvh, 46rem);
 }
+.layout-designer-full {
+    height: clamp(26rem, calc(100dvh - 20rem), 82rem);
+    min-height: clamp(26rem, calc(100dvh - 20rem), 82rem);
+}
 .pdf-pane {
     min-width: 0;
     border: 1px solid var(--surface-border);
     border-radius: 8px;
     overflow: hidden;
     background: var(--surface-ground);
+}
+.layout-designer-full .pdf-pane {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
 }
 .layout-toolbar {
     min-height: 3rem;
@@ -498,6 +508,11 @@ defineExpose({ validationIssues, totalBoxes });
     height: min(64dvh, 42rem);
     overflow: auto;
     padding: 1rem;
+}
+.layout-designer-full .pdf-viewport {
+    height: auto;
+    min-height: 0;
+    flex: 1 1 auto;
 }
 .pdf-empty {
     height: 100%;
@@ -567,6 +582,11 @@ defineExpose({ validationIssues, totalBoxes });
     gap: 1rem;
     align-content: start;
 }
+.layout-designer-full .layout-inspector {
+    max-height: 100%;
+    overflow: auto;
+    padding-right: 0.1rem;
+}
 .inspector-section {
     border: 1px solid var(--surface-border);
     border-radius: 8px;
@@ -634,8 +654,16 @@ defineExpose({ validationIssues, totalBoxes });
     .layout-designer {
         grid-template-columns: 1fr;
     }
+    .layout-designer-full {
+        height: auto;
+        min-height: 0;
+    }
     .pdf-viewport {
         height: 58dvh;
+    }
+    .layout-designer-full .layout-inspector {
+        max-height: none;
+        overflow: visible;
     }
 }
 @media (max-width: 640px) {
