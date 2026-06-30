@@ -94,11 +94,22 @@ onBeforeRouteLeave((_to, _from, next) => {
         next();
         return;
     }
-    if (window.confirm('มีการแก้ไข Workflow ที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้หรือไม่?')) {
-        next();
-        return;
-    }
-    next(false);
+    confirm.require({
+        message: 'มีการแก้ไข Workflow ที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้หรือไม่?',
+        header: 'ออกจากหน้าตั้งค่า Workflow',
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: 'อยู่หน้านี้ต่อ',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ออกจากหน้านี้',
+            severity: 'danger'
+        },
+        accept: () => next(),
+        reject: () => next(false)
+    });
 });
 
 async function loadWorkflow() {

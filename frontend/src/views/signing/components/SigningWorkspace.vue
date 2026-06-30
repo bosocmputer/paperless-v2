@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
+import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
@@ -25,6 +26,7 @@ const props = defineProps({
     onRecordEvent: { type: Function, default: null }
 });
 
+const confirm = useConfirm();
 const toast = useToast();
 const viewerRef = ref(null);
 const pdfCanvas = ref(null);
@@ -86,11 +88,26 @@ onBeforeUnmount(() => {
 });
 
 onBeforeRouteLeave((_to, _from, next) => {
-    if (!shouldWarnBeforeLeave() || window.confirm('คุณวาดลายเซ็นไว้แล้ว แต่ยังไม่ได้ยืนยัน ต้องการออกจากหน้านี้หรือไม่?')) {
+    if (!shouldWarnBeforeLeave()) {
         next();
         return;
     }
-    next(false);
+    confirm.require({
+        message: 'คุณวาดลายเซ็นไว้แล้ว แต่ยังไม่ได้ยืนยัน ต้องการออกจากหน้านี้หรือไม่?',
+        header: 'ออกจากหน้าเซ็นเอกสาร',
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: 'อยู่หน้านี้ต่อ',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ออกจากหน้านี้',
+            severity: 'danger'
+        },
+        accept: () => next(),
+        reject: () => next(false)
+    });
 });
 
 watch(
@@ -311,7 +328,24 @@ async function rejectTask() {
         toast.add({ severity: 'warn', summary: 'กรุณาระบุเหตุผล', life: 2500 });
         return;
     }
-    if (!window.confirm('ยืนยันปฏิเสธเอกสารนี้หรือไม่?')) return;
+    confirm.require({
+        message: 'ยืนยันปฏิเสธเอกสารนี้หรือไม่?',
+        header: 'ปฏิเสธเอกสาร',
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: 'ยกเลิก',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ปฏิเสธเอกสาร',
+            severity: 'danger'
+        },
+        accept: () => submitRejectTask(reason)
+    });
+}
+
+async function submitRejectTask(reason) {
     localSaving.value = true;
     try {
         await props.onReject?.({

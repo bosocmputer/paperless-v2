@@ -129,11 +129,26 @@ onBeforeRouteLeave((_to, _from, next) => {
         next();
         return;
     }
-    if (!dirty.value || window.confirm('ยังไม่ได้บันทึกการแก้ไขกรอบลายเซ็น ต้องการออกจากหน้านี้หรือไม่?')) {
+    if (!dirty.value) {
         next();
         return;
     }
-    next(false);
+    confirm.require({
+        message: 'ยังไม่ได้บันทึกการแก้ไขกรอบลายเซ็น ต้องการออกจากหน้านี้หรือไม่?',
+        header: 'ออกจากหน้ากรอบเริ่มต้น',
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: 'อยู่หน้านี้ต่อ',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ออกจากหน้านี้',
+            severity: 'danger'
+        },
+        accept: () => next(),
+        reject: () => next(false)
+    });
 });
 
 watch([currentPage, zoom], async () => {
