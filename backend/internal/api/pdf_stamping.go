@@ -248,8 +248,11 @@ func drawLegalNoticeBox(pdf *gofpdf.Fpdf, notice models.LegalNoticeSnapshot, siz
 	pdf.Rect(x, y, w, h, "FD")
 	pdf.SetTextColor(17, 24, 39)
 	pdf.SetFont("noto-thai", "", fontSize)
-	pdf.SetXY(x+padding, textY)
-	pdf.MultiCell(textWidth, lineHeight, text, "", "C", false)
+	for _, line := range splitLineStrings(lines) {
+		pdf.SetXY(x+padding, textY)
+		pdf.CellFormat(textWidth, lineHeight, line, "", 0, "C", false, 0, "")
+		textY += lineHeight
+	}
 }
 
 func legalNoticeDisplayText(text string) string {
@@ -263,6 +266,14 @@ func legalNoticeDisplayText(text string) string {
 		"2544", "๒๕๔๔",
 		".", "",
 	).Replace(text)
+}
+
+func splitLineStrings(lines [][]byte) []string {
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		out = append(out, string(line))
+	}
+	return out
 }
 
 func fitLegalNoticeText(pdf *gofpdf.Fpdf, text string, width, height float64) (float64, float64, [][]byte) {
