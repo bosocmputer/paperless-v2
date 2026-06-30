@@ -43,6 +43,9 @@ var signingUXEventNames = map[string]bool{
 	"ready_task_open":                true,
 	"waiting_queue_seen":             true,
 	"waiting_task_open":              true,
+	"history_open":                   true,
+	"history_detail_open":            true,
+	"history_pdf_open":               true,
 	"blocked_not_turn":               true,
 	"blocked_signed":                 true,
 	"blocked_rejected":               true,
@@ -1074,6 +1077,21 @@ func (s *Server) listMySigningTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, queue)
 }
 
+func (s *Server) listMySigningHistory(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r)
+	size := parsePositiveQueryInt(r, "size", 20)
+	if size > 50 {
+		size = 50
+	}
+	result, err := s.store.ListMySigningHistory(r.Context(), user.Username, r.URL.Query().Get("search"), parsePositiveQueryInt(r, "page", 1), size)
+	if err != nil {
+		s.logger.Error("list signing history failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "signing_history_failed", "Cannot load signing history right now.")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) getMySigningTask(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r)
 	taskID := strings.TrimSpace(r.PathValue("taskId"))
@@ -1102,7 +1120,85 @@ func (s *Server) getMySigningTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"document": sanitizeSigningDocumentForSigner(document), "task": sanitizeSigningTaskForUser(signer), "legal": signingLegalPayload()})
 }
 
+func (s *Server) getMySigningHistory(w http.ResponseWriter, r *http.Request) {
+	signer, ok := s.mySigningHistorySigner(w, r)
+	if !ok {
+		return
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"document": sanitizeSigningDocumentForSigner(document), "task": sanitizeSigningTaskForUser(signer), "legal": signingLegalPayload()})
+}
+
+func (s *Server) getMySigningHistoryPDF(w http.ResponseWriter, r *http.Request) {
+	signer, ok := s.mySigningHistorySigner(w, r)
+	if !ok {
+		return
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	version := strings.TrimSpace(r.URL.Query().Get("version"))
+	if version != "" && version != "current" && version != "final" {
+		writeError(w, http.StatusBadRequest, "invalid_pdf_version", "PDF version is invalid.")
+		return
+	}
+	needsCurrent := version == "current" || (version == "" && document.FinalFile == nil)
+	if needsCurrent && document.Status == "in_progress" && currentPDFNeedsLegalNoticeRefresh(document) {
+		if err := s.refreshStampedPDF(r.Context(), document.ID, false); err != nil {
+			s.logger.Error("refresh history legal notice pdf failed", "error", err, "documentID", document.ID)
+			writeError(w, http.StatusInternalServerError, "pdf_legal_notice_failed", "Cannot prepare PDF legal notice right now.")
+			return
+		}
+		document, err = s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+			return
+		}
+	}
+	file := document.CurrentFile
+	if version == "" || version == "final" {
+		if document.FinalFile != nil {
+			file = document.FinalFile
+		}
+	}
+	if file == nil || file.StoragePath == "" {
+		writeError(w, http.StatusNotFound, "pdf_not_found", "PDF was not found.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", file.OriginalName))
+	http.ServeFile(w, r, file.StoragePath)
+}
+
+func (s *Server) mySigningHistorySigner(w http.ResponseWriter, r *http.Request) (models.SigningDocumentSigner, bool) {
+	user, _ := currentUser(r)
+	taskID := strings.TrimSpace(r.PathValue("taskId"))
+	signer, err := s.store.FindSigningTaskByID(r.Context(), taskID)
+	if errors.Is(err, store.ErrSigningTaskNotFound) || (err == nil && !strings.EqualFold(signer.SignerUser, user.Username)) {
+		writeError(w, http.StatusNotFound, "signing_history_not_found", "Signing history was not found.")
+		return models.SigningDocumentSigner{}, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_history_failed", "Cannot load signing history right now.")
+		return models.SigningDocumentSigner{}, false
+	}
+	if signer.Status != "signed" && signer.Status != "rejected" {
+		writeError(w, http.StatusNotFound, "signing_history_not_found", "Signing history was not found.")
+		return models.SigningDocumentSigner{}, false
+	}
+	return signer, true
+}
+
 func sanitizeSigningDocumentForSigner(document models.SigningDocument) models.SigningDocument {
+	document.OriginalFileID = ""
+	document.CurrentFileID = ""
+	document.FinalFileID = ""
 	document.OriginalFile = nil
 	document.CurrentFile = nil
 	document.FinalFile = nil

@@ -295,6 +295,21 @@ export const api = {
     getMySigningTask(taskId) {
         return request(`/api/my/signing-tasks/${taskId}`);
     },
+    listMySigningHistory(params = {}) {
+        return request(
+            withQuery('/api/my/signing-history', {
+                page: params.page,
+                size: params.size,
+                search: params.search
+            })
+        );
+    },
+    getMySigningHistory(taskId) {
+        return request(`/api/my/signing-history/${taskId}`);
+    },
+    mySigningHistoryPDFUrl(taskId, version = '') {
+        return withQuery(`/api/my/signing-history/${taskId}/pdf`, { version });
+    },
     getMySigningTaskRelatedDocuments(taskId, depth = 3) {
         return request(withQuery(`/api/my/signing-tasks/${taskId}/related-documents`, { depth }));
     },

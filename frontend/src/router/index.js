@@ -21,6 +21,18 @@ const router = createRouter({
                     name: 'my-signing-task',
                     component: () => import('@/views/signing/SigningTask.vue'),
                     meta: { role: 'user' }
+                },
+                {
+                    path: 'history',
+                    name: 'my-signing-history',
+                    component: () => import('@/views/signing/MySigningHistory.vue'),
+                    meta: { role: 'user' }
+                },
+                {
+                    path: 'history/:taskId',
+                    name: 'my-signing-history-detail',
+                    component: () => import('@/views/signing/SigningHistoryDetail.vue'),
+                    meta: { role: 'user' }
                 }
             ]
         },

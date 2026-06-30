@@ -64,7 +64,7 @@ func TestNormalizeSigningTaskEventMetadataRejectsInvalidEvent(t *testing.T) {
 }
 
 func TestNormalizeSigningTaskEventMetadataAcceptsQueueEvents(t *testing.T) {
-	for _, event := range []string{"ready_task_open", "waiting_queue_seen", "waiting_task_open", "related_documents_open", "related_documents_load_success", "related_documents_load_error", "related_document_click"} {
+	for _, event := range []string{"ready_task_open", "waiting_queue_seen", "waiting_task_open", "history_open", "history_detail_open", "history_pdf_open", "related_documents_open", "related_documents_load_success", "related_documents_load_error", "related_document_click"} {
 		t.Run(event, func(t *testing.T) {
 			metadata, err := normalizeSigningTaskEventMetadata(models.SigningTaskEventRequest{Event: event}, models.SigningDocument{DocFormatCode: "PO"}, models.SigningDocumentSigner{Status: "waiting"})
 			if err != nil {

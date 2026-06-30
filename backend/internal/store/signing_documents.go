@@ -858,6 +858,119 @@ func (s *Store) ListMySigningTaskQueue(ctx context.Context, username string, rea
 	return queue, nil
 }
 
+func (s *Store) ListMySigningHistory(ctx context.Context, username, search string, page, size int) (models.MySigningHistoryResult, error) {
+	username = strings.TrimSpace(username)
+	search = strings.ToLower(strings.TrimSpace(search))
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 {
+		size = 20
+	}
+	if size > 50 {
+		size = 50
+	}
+
+	result := models.MySigningHistoryResult{Page: page, Size: size}
+	where := `
+WHERE lower(sg.signer_user) = lower($1)
+  AND sg.status IN ('signed', 'rejected')
+`
+	args := []any{username}
+	if search != "" {
+		args = append(args, "%"+search+"%")
+		where += fmt.Sprintf(`
+  AND (
+    lower(d.doc_no) LIKE $%d OR
+    lower(d.doc_format_code) LIKE $%d OR
+    lower(d.party_name) LIKE $%d OR
+    lower(d.party_code) LIKE $%d OR
+    lower(sg.position_name) LIKE $%d OR
+    lower(sg.signer_name) LIKE $%d OR
+    lower(sg.reject_reason) LIKE $%d
+  )
+`, len(args), len(args), len(args), len(args), len(args), len(args), len(args))
+	}
+
+	countArgs := append([]any(nil), args...)
+	if err := s.pool.QueryRow(ctx, `
+SELECT COUNT(sg.id)::int
+FROM signing_documents d
+JOIN signing_document_signers sg ON sg.document_id = d.id
+`+where, countArgs...).Scan(&result.Total); err != nil {
+		return result, err
+	}
+
+	offset := (page - 1) * size
+	args = append(args, size+1, offset)
+	limitIdx := len(args) - 1
+	offsetIdx := len(args)
+	rows, err := s.pool.Query(ctx, `
+SELECT d.id::text,
+       d.doc_no,
+       d.doc_format_code,
+       d.party_code,
+       d.party_name,
+       COALESCE(d.doc_date::text, ''),
+       d.total_amount,
+       d.status,
+       d.updated_at,
+       sg.id::text,
+       sg.position_code,
+       sg.position_name,
+       sg.signer_name,
+       sg.status,
+       sg.signed_at,
+       sg.rejected_at,
+       sg.reject_reason,
+       d.current_file_id IS NOT NULL,
+       d.final_file_id IS NOT NULL
+FROM signing_documents d
+JOIN signing_document_signers sg ON sg.document_id = d.id
+`+where+fmt.Sprintf(`
+ORDER BY COALESCE(sg.signed_at, sg.rejected_at, d.updated_at) DESC, d.updated_at DESC, d.doc_no, sg.sequence_no, sg.position_code
+LIMIT $%d OFFSET $%d
+`, limitIdx, offsetIdx), args...)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		item, err := scanMySigningHistoryDocument(rows)
+		if err != nil {
+			return result, err
+		}
+		result.Documents = append(result.Documents, item)
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
+	}
+	result.HasMore = len(result.Documents) > size
+	if result.HasMore {
+		result.Documents = result.Documents[:size]
+	}
+	return result, nil
+}
+
+func scanMySigningHistoryDocument(row rowScanner) (models.MySigningHistoryDocument, error) {
+	var item models.MySigningHistoryDocument
+	var signedAt, rejectedAt sql.NullTime
+	err := row.Scan(
+		&item.ID, &item.DocNo, &item.DocFormatCode, &item.PartyCode, &item.PartyName, &item.DocDate,
+		&item.TotalAmount, &item.DocumentStatus, &item.UpdatedAt, &item.TaskID, &item.PositionCode,
+		&item.PositionName, &item.SignerName, &item.TaskStatus, &signedAt, &rejectedAt, &item.RejectReason,
+		&item.HasCurrentPDF, &item.HasFinalPDF,
+	)
+	if signedAt.Valid {
+		item.SignedAt = &signedAt.Time
+	}
+	if rejectedAt.Valid {
+		item.RejectedAt = &rejectedAt.Time
+	}
+	return item, err
+}
+
 func (s *Store) countMySigningTasksByStatus(ctx context.Context, username, status string) (int, error) {
 	var count int
 	err := s.pool.QueryRow(ctx, `

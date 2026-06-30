@@ -26,7 +26,11 @@ const props = defineProps({
     onReject: { type: Function, default: null },
     onAttach: { type: Function, default: null },
     onRecordEvent: { type: Function, default: null },
-    relatedLoader: { type: Function, default: null }
+    relatedLoader: { type: Function, default: null },
+    readOnly: { type: Boolean, default: false },
+    readOnlyReason: { type: String, default: '' },
+    openEventName: { type: String, default: '' },
+    pdfOpenEventName: { type: String, default: '' }
 });
 
 const confirm = useConfirm();
@@ -65,11 +69,12 @@ let taskOpenRecorded = false;
 const isBusy = computed(() => props.saving || localSaving.value);
 const legalText = computed(() => props.legal?.text || 'ข้าพเจ้ายืนยันการลงลายเซ็นอิเล็กทรอนิกส์นี้ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ และยอมรับให้ใช้เป็นหลักฐานประกอบเอกสารนี้');
 const taskStatus = computed(() => props.task?.status || '');
-const canInteract = computed(() => taskStatus.value === 'pending');
+const canInteract = computed(() => !props.readOnly && taskStatus.value === 'pending');
 const canConfirm = computed(() => canInteract.value && pdfReady.value && hasSignature.value && legalAccepted.value && !isBusy.value);
 const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `${index + 1}/${pageCount.value}`, value: index + 1 })));
 const statusView = computed(() => statusMeta(taskStatus.value));
 const taskOpenEvent = computed(() => {
+    if (props.openEventName) return props.openEventName;
     if (taskStatus.value === 'pending') return 'ready_task_open';
     if (taskStatus.value === 'waiting') return 'waiting_task_open';
     return 'task_open';
@@ -398,6 +403,7 @@ async function fetchPdfBlob() {
 
 async function openPDF() {
     try {
+        if (props.pdfOpenEventName) recordEvent(props.pdfOpenEventName);
         const blob = await fetchPdfBlob();
         const url = URL.createObjectURL(blob);
         window.open(url, '_blank', 'noopener');
@@ -409,6 +415,7 @@ async function openPDF() {
 
 async function downloadPDF() {
     try {
+        if (props.pdfOpenEventName) recordEvent(props.pdfOpenEventName);
         const blob = await fetchPdfBlob();
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -598,7 +605,7 @@ function clamp(value, min, max) {
                         <strong>{{ identityLabel || task?.signerName || task?.signerUser || '-' }}</strong>
                     </div>
                     <Message :severity="statusView.severity">
-                        {{ taskStatus === 'waiting' ? 'ยังไม่ถึงคิวของคุณ ต้องรอขั้นตอนก่อนหน้าเสร็จก่อน' : statusView.message }}
+                        {{ readOnlyReason || (taskStatus === 'waiting' ? 'ยังไม่ถึงคิวของคุณ ต้องรอขั้นตอนก่อนหน้าเสร็จก่อน' : statusView.message) }}
                     </Message>
                 </div>
 

@@ -511,6 +511,36 @@ type MySigningTaskBlocker struct {
 	Summary       string                `json:"summary"`
 }
 
+type MySigningHistoryResult struct {
+	Documents []MySigningHistoryDocument `json:"documents"`
+	Page      int                        `json:"page"`
+	Size      int                        `json:"size"`
+	Total     int                        `json:"total"`
+	HasMore   bool                       `json:"hasMore"`
+}
+
+type MySigningHistoryDocument struct {
+	ID             string     `json:"id"`
+	DocNo          string     `json:"docNo"`
+	DocFormatCode  string     `json:"docFormatCode"`
+	PartyCode      string     `json:"partyCode"`
+	PartyName      string     `json:"partyName"`
+	DocDate        string     `json:"docDate"`
+	TotalAmount    float64    `json:"totalAmount"`
+	DocumentStatus string     `json:"documentStatus"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+	TaskID         string     `json:"taskId"`
+	PositionCode   string     `json:"positionCode"`
+	PositionName   string     `json:"positionName"`
+	SignerName     string     `json:"signerName"`
+	TaskStatus     string     `json:"taskStatus"`
+	SignedAt       *time.Time `json:"signedAt,omitempty"`
+	RejectedAt     *time.Time `json:"rejectedAt,omitempty"`
+	RejectReason   string     `json:"rejectReason,omitempty"`
+	HasFinalPDF    bool       `json:"hasFinalPdf"`
+	HasCurrentPDF  bool       `json:"hasCurrentPdf"`
+}
+
 type SigningDocumentEvent struct {
 	ID          string         `json:"id"`
 	DocumentID  string         `json:"documentId"`

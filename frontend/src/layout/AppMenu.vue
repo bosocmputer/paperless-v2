@@ -13,6 +13,11 @@ const model = computed(() => {
                         label: 'งานรอเซ็น',
                         icon: 'pi pi-fw pi-inbox',
                         to: '/signing/tasks'
+                    },
+                    {
+                        label: 'ประวัติการเซ็น',
+                        icon: 'pi pi-fw pi-history',
+                        to: '/signing/history'
                     }
                 ]
             }

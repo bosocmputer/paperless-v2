@@ -1,8 +1,12 @@
 <script setup>
 import { authStore } from '@/stores/auth';
-import { useRouter } from 'vue-router';
+import { computed } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 
 const router = useRouter();
+const route = useRoute();
+
+const pageLabel = computed(() => (String(route.name || '').includes('history') ? 'ประวัติการเซ็น' : 'งานรอเซ็น'));
 
 async function logout() {
     await authStore.logout();
@@ -17,7 +21,7 @@ async function logout() {
                 <span class="brand-icon"><i class="pi pi-file-check"></i></span>
                 <span>
                     <strong>PaperLess</strong>
-                    <small>งานรอเซ็น</small>
+                    <small>{{ pageLabel }}</small>
                 </span>
             </button>
             <div class="signer-user">
@@ -25,6 +29,16 @@ async function logout() {
                 <Button icon="pi pi-sign-out" text rounded aria-label="ออกจากระบบ" @click="logout" />
             </div>
         </header>
+        <nav class="signer-nav" aria-label="เมนูงานเซ็น">
+            <RouterLink :to="{ name: 'my-signing-tasks' }" class="signer-nav-link">
+                <i class="pi pi-inbox"></i>
+                <span>งานรอเซ็น</span>
+            </RouterLink>
+            <RouterLink :to="{ name: 'my-signing-history' }" class="signer-nav-link">
+                <i class="pi pi-history"></i>
+                <span>ประวัติการเซ็น</span>
+            </RouterLink>
+        </nav>
         <main class="signer-main">
             <router-view />
         </main>
@@ -40,7 +54,7 @@ async function logout() {
 .signer-topbar {
     position: sticky;
     top: 0;
-    z-index: 20;
+    z-index: 21;
     height: 56px;
     display: flex;
     align-items: center;
@@ -49,6 +63,35 @@ async function logout() {
     padding: 0.45rem 0.85rem;
     border-bottom: 1px solid var(--surface-border);
     background: var(--surface-card);
+}
+
+.signer-nav {
+    position: sticky;
+    top: 56px;
+    z-index: 20;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+    padding: 0.45rem 0.75rem;
+    border-bottom: 1px solid var(--surface-border);
+    background: var(--surface-card);
+}
+
+.signer-nav-link {
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border-radius: 8px;
+    color: var(--text-color-secondary);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.signer-nav-link.router-link-active {
+    background: color-mix(in srgb, var(--primary-color) 12%, var(--surface-card));
+    color: var(--primary-color);
 }
 
 .brand {
@@ -111,6 +154,14 @@ async function logout() {
 
     .brand small {
         display: none;
+    }
+
+    .signer-nav {
+        padding-inline: 0.55rem;
+    }
+
+    .signer-nav-link {
+        font-size: 0.92rem;
     }
 }
 </style>
