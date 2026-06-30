@@ -284,26 +284,55 @@ func fitLegalNoticeText(pdf *gofpdf.Fpdf, text string, width, height float64) (f
 }
 
 func wrapLegalNoticeText(pdf *gofpdf.Fpdf, text string, width float64) []string {
-	runes := []rune(strings.TrimSpace(text))
-	if len(runes) == 0 {
+	words := strings.Fields(text)
+	if len(words) == 0 {
 		return []string{}
 	}
 	lines := []string{}
 	current := ""
-	for _, r := range runes {
+	for _, word := range words {
+		if pdf.GetStringWidth(word) > width {
+			if current != "" {
+				lines = append(lines, current)
+				current = ""
+			}
+			lines = append(lines, splitLongLegalNoticeWord(pdf, word, width)...)
+			continue
+		}
+		next := word
+		if current != "" {
+			next = current + " " + word
+		}
+		if current != "" && pdf.GetStringWidth(next) > width {
+			lines = append(lines, current)
+			current = word
+			continue
+		}
+		current = next
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	if len(lines) == 0 {
+		return []string{text}
+	}
+	return lines
+}
+
+func splitLongLegalNoticeWord(pdf *gofpdf.Fpdf, word string, width float64) []string {
+	lines := []string{}
+	current := ""
+	for _, r := range []rune(word) {
 		next := current + string(r)
-		if strings.TrimSpace(current) != "" && pdf.GetStringWidth(next) > width {
-			lines = append(lines, strings.TrimSpace(current))
+		if current != "" && pdf.GetStringWidth(next) > width {
+			lines = append(lines, current)
 			current = string(r)
 			continue
 		}
 		current = next
 	}
-	if strings.TrimSpace(current) != "" {
-		lines = append(lines, strings.TrimSpace(current))
-	}
-	if len(lines) == 0 {
-		return []string{text}
+	if current != "" {
+		lines = append(lines, current)
 	}
 	return lines
 }

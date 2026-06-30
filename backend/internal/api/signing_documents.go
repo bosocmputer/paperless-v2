@@ -23,7 +23,7 @@ import (
 
 const (
 	signingLegalTextVersion             = "thai-eta-2544-v2"
-	signingLegalNoticePDFDisplayVersion = "thai-safe-v3"
+	signingLegalNoticePDFDisplayVersion = "thai-safe-v4"
 	signingLegalText                    = "เอกสารนี้จัดทำและลงนามในรูปแบบอิเล็กทรอนิกส์ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ผู้ลงนามยืนยันความถูกต้องของเนื้อหาและยอมรับผลผูกพันทางกฎหมายทุกประการ"
 	maxSigningEventBytes                = 8 * 1024
 )
