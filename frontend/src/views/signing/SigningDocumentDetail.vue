@@ -204,12 +204,12 @@ async function retryFinalPDF() {
         const result = await api.retrySigningDocumentFinalPDF(document.value.id);
         toast.add({
             severity: result.lockOk ? 'success' : 'warn',
-            summary: result.lockOk ? 'Final PDF และ Lock SML สำเร็จ' : 'Final PDF สำเร็จ แต่ Lock SML ยังไม่สำเร็จ',
+            summary: result.lockOk ? 'PDF หลักฐานและ Lock SML สำเร็จ' : 'PDF หลักฐานสำเร็จ แต่ Lock SML ยังไม่สำเร็จ',
             life: 3200
         });
         await loadPage();
     } catch (err) {
-        toast.add({ severity: 'error', summary: 'สร้าง Final PDF ไม่สำเร็จ', detail: err.message, life: 4000 });
+        toast.add({ severity: 'error', summary: 'สร้าง PDF หลักฐานไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         retryingFinalPDF.value = false;
     }
@@ -296,7 +296,7 @@ function movementEventView(event) {
     const metadata = event?.metadata || {};
     const labels = {
         document_created: {
-            title: 'สร้างเอกสารเพื่อเซ็น',
+            title: 'สร้างเอกสารเซ็น',
             icon: 'pi pi-send',
             severity: 'info',
             detail: event.message || 'เริ่ม workflow เอกสารนี้'
@@ -317,19 +317,19 @@ function movementEventView(event) {
             title: 'เซ็นครบทุกขั้นตอน',
             icon: 'pi pi-verified',
             severity: 'success',
-            detail: event.message || 'เอกสารพร้อมสร้าง Final PDF'
+            detail: event.message || 'เอกสารพร้อมสร้าง PDF หลักฐาน'
         },
         final_pdf_ready: {
-            title: 'Final PDF พร้อมหลักฐานแล้ว',
+            title: 'PDF หลักฐานพร้อมแล้ว',
             icon: 'pi pi-file-check',
             severity: 'success',
             detail: 'สร้าง PDF พร้อมลายเซ็นและ Evidence Appendix แล้ว'
         },
         final_pdf_failed: {
-            title: 'Final PDF ไม่สำเร็จ',
+            title: 'PDF หลักฐานไม่สำเร็จ',
             icon: 'pi pi-file-excel',
             severity: 'danger',
-            detail: 'ต้องกด Retry Final PDF ก่อน lock SML หรือพิมพ์เอกสาร'
+            detail: 'ต้องสร้าง PDF อีกครั้งก่อน lock SML หรือพิมพ์เอกสาร'
         },
         sml_lock_success: {
             title: 'Lock SML สำเร็จ',
@@ -373,8 +373,8 @@ function clamp(value, min, max) {
                 <span>{{ document?.docFormatCode }} · {{ document?.partyName || document?.partyCode || '-' }}</span>
             </div>
             <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
-            <Button v-if="document?.status === 'completed_evidence_failed'" label="Retry Final PDF" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
-            <Button v-if="document?.status === 'completed_lock_failed'" label="Retry SML Lock" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
+            <Button v-if="document?.status === 'completed_evidence_failed'" label="สร้าง PDF อีกครั้ง" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
+            <Button v-if="document?.status === 'completed_lock_failed'" label="Lock SML อีกครั้ง" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
             <Button v-if="document?.status === 'completed'" label="พิมพ์เอกสาร" icon="pi pi-print" severity="primary" :loading="printing" @click="printOfficialCopy" />
             <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
         </div>
@@ -387,7 +387,7 @@ function clamp(value, min, max) {
                         <Button icon="pi pi-search-minus" severity="secondary" outlined :disabled="!pdfDoc || zoom <= 0.45" aria-label="ซูมออก" @click="setZoom(zoom - 0.1)" />
                         <span class="zoom-value">{{ Math.round(zoom * 100) }}%</span>
                         <Button icon="pi pi-search-plus" severity="secondary" outlined :disabled="!pdfDoc || zoom >= 2.5" aria-label="ซูมเข้า" @click="setZoom(zoom + 0.1)" />
-                        <Button label="Fit width" icon="pi pi-arrows-h" severity="secondary" outlined :disabled="!pdfDoc" @click="fitWidth" />
+                        <Button label="พอดีกว้าง" icon="pi pi-arrows-h" severity="secondary" outlined :disabled="!pdfDoc" @click="fitWidth" />
                         <Button label="100%" severity="secondary" outlined :disabled="!pdfDoc" @click="setZoom(1)" />
                     </div>
                     <div class="toolbar-group right">
@@ -415,90 +415,105 @@ function clamp(value, min, max) {
             </section>
 
             <aside class="side-panel">
-                <div class="info-block">
-                    <div class="block-title">ข้อมูลเอกสาร</div>
-                    <dl>
-                        <dt>วันที่</dt>
-                        <dd>{{ formatDocumentDate(document?.docDate) }}</dd>
-                        <dt>ยอดเงิน</dt>
-                        <dd>{{ Number(document?.totalAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}</dd>
-                        <dt>SML lock</dt>
-                        <dd>{{ document?.smlIsLockRecord === 1 ? 'locked ก่อนส่ง' : document?.lockedAt ? 'locked แล้ว' : '-' }}</dd>
-                    </dl>
-                </div>
-
-                <div class="info-block">
-                    <div class="block-title">ขั้นตอนและผู้เซ็น</div>
-                    <div v-for="group in signersByStep" :key="group.step.id" class="step-card">
-                        <div class="step-head">
-                            <strong>{{ group.step.positionCode }} · {{ group.step.positionName }}</strong>
-                            <Tag :value="signingStatusLabel(group.step.status)" :severity="signingStatusSeverity(group.step.status)" />
-                        </div>
-                        <small>{{ conditionLabel(group.step.conditionType) }}</small>
-                        <div class="signer-list">
-                            <div v-for="signer in group.signers" :key="signer.id" class="signer-row">
-                                <span>
-                                    <strong>{{ signer.signerName || signer.signerUser || 'บุคคลภายนอก' }}</strong>
-                                    <small>{{ signerTypeLabel(signer.signerType) }} · หน้า {{ signer.pageNo }}</small>
-                                </span>
-                                <div class="signer-actions">
-                                    <Tag :value="signingStatusLabel(signer.status)" :severity="signingStatusSeverity(signer.status)" />
-                                    <Button v-if="signer.signerType === 'external' && signer.status !== 'signed'" icon="pi pi-key" rounded outlined aria-label="สร้าง OTP" @click="generateExternal(signer)" />
+                <Tabs value="info">
+                    <TabList>
+                        <Tab value="info">ข้อมูล</Tab>
+                        <Tab value="signers">ผู้เซ็น</Tab>
+                        <Tab value="print">พิมพ์</Tab>
+                        <Tab value="events">เหตุการณ์</Tab>
+                    </TabList>
+                    <TabPanels>
+                        <TabPanel value="info">
+                            <div class="info-block">
+                                <div class="block-title">ข้อมูลเอกสาร</div>
+                                <dl>
+                                    <dt>วันที่</dt>
+                                    <dd>{{ formatDocumentDate(document?.docDate) }}</dd>
+                                    <dt>ยอดเงิน</dt>
+                                    <dd>{{ Number(document?.totalAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}</dd>
+                                    <dt>SML lock</dt>
+                                    <dd>{{ document?.smlIsLockRecord === 1 ? 'locked ก่อนส่ง' : document?.lockedAt ? 'locked แล้ว' : '-' }}</dd>
+                                </dl>
+                            </div>
+                        </TabPanel>
+                        <TabPanel value="signers">
+                            <div class="info-block">
+                                <div class="block-title">ขั้นตอนและผู้เซ็น</div>
+                                <div v-for="group in signersByStep" :key="group.step.id" class="step-card">
+                                    <div class="step-head">
+                                        <strong>{{ group.step.positionCode }} · {{ group.step.positionName }}</strong>
+                                        <Tag :value="signingStatusLabel(group.step.status)" :severity="signingStatusSeverity(group.step.status)" />
+                                    </div>
+                                    <small>{{ conditionLabel(group.step.conditionType) }}</small>
+                                    <div class="signer-list">
+                                        <div v-for="signer in group.signers" :key="signer.id" class="signer-row">
+                                            <span>
+                                                <strong>{{ signer.signerName || signer.signerUser || 'บุคคลภายนอก' }}</strong>
+                                                <small>{{ signerTypeLabel(signer.signerType) }} · หน้า {{ signer.pageNo }}</small>
+                                            </span>
+                                            <div class="signer-actions">
+                                                <Tag :value="signingStatusLabel(signer.status)" :severity="signingStatusSeverity(signer.status)" />
+                                                <Button v-if="signer.signerType === 'external' && signer.status !== 'signed'" icon="pi pi-key" rounded outlined aria-label="สร้าง OTP" @click="generateExternal(signer)" />
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="info-block">
-                    <div class="block-head">
-                        <div>
-                            <div class="block-title">ประวัติพิมพ์</div>
-                            <small>Official print copy</small>
-                        </div>
-                        <Tag :value="`${printEvents.length} ครั้ง`" severity="secondary" />
-                    </div>
-                    <div v-if="printEvents.length === 0" class="empty-log">ยังไม่มีการพิมพ์ official copy</div>
-                    <div v-else class="print-list">
-                        <div v-for="item in printEvents" :key="item.id" class="print-row">
-                            <span>
-                                <strong>{{ formatThaiDateTime(item.printedAt) }}</strong>
-                                <small>{{ item.channel === 'web' ? 'Web' : 'App' }} · {{ printerLabel(item.printerName) }}</small>
-                            </span>
-                            <Tag :value="item.file?.sha256 ? item.file.sha256.slice(0, 10) : '-'" severity="secondary" />
-                        </div>
-                    </div>
-                </div>
-
-                <div class="info-block">
-                    <div class="block-head">
-                        <div>
-                            <div class="block-title">Movement Log</div>
-                            <small>แสดงเฉพาะเหตุการณ์สำคัญ</small>
-                        </div>
-                        <Tag :value="`${importantEvents.length} รายการ`" severity="secondary" />
-                    </div>
-                    <div v-if="importantEvents.length === 0" class="empty-log">ยังไม่มีเหตุการณ์สำคัญ</div>
-                    <Timeline v-else :value="importantEvents" align="left" class="compact-timeline">
-                        <template #content="{ item }">
-                            <div class="event-line">
-                                <div class="event-title">
-                                    <span class="event-icon" :class="`event-${item.view.severity}`">
-                                        <i :class="item.view.icon"></i>
-                                    </span>
-                                    <strong>{{ item.view.title }}</strong>
+                        </TabPanel>
+                        <TabPanel value="print">
+                            <div class="info-block">
+                                <div class="block-head">
+                                    <div>
+                                        <div class="block-title">ประวัติพิมพ์</div>
+                                        <small>สำเนาสำหรับพิมพ์อย่างเป็นทางการ</small>
+                                    </div>
+                                    <Tag :value="`${printEvents.length} ครั้ง`" severity="secondary" />
                                 </div>
-                                <span>{{ item.view.detail }}</span>
-                                <small>{{ formatThaiDateTime(item.createdAt) }}</small>
+                                <div v-if="printEvents.length === 0" class="empty-log">ยังไม่มีการพิมพ์สำเนาอย่างเป็นทางการ</div>
+                                <div v-else class="print-list">
+                                    <div v-for="item in printEvents" :key="item.id" class="print-row">
+                                        <span>
+                                            <strong>{{ formatThaiDateTime(item.printedAt) }}</strong>
+                                            <small>{{ item.channel === 'web' ? 'Web' : 'App' }} · {{ printerLabel(item.printerName) }}</small>
+                                        </span>
+                                        <Tag :value="item.file?.sha256 ? item.file.sha256.slice(0, 10) : '-'" severity="secondary" />
+                                    </div>
+                                </div>
                             </div>
-                        </template>
-                    </Timeline>
-                </div>
+                        </TabPanel>
+                        <TabPanel value="events">
+                            <div class="info-block">
+                                <div class="block-head">
+                                    <div>
+                                        <div class="block-title">เหตุการณ์สำคัญ</div>
+                                        <small>แสดงเฉพาะเหตุการณ์สำคัญ</small>
+                                    </div>
+                                    <Tag :value="`${importantEvents.length} รายการ`" severity="secondary" />
+                                </div>
+                                <div v-if="importantEvents.length === 0" class="empty-log">ยังไม่มีเหตุการณ์สำคัญ</div>
+                                <Timeline v-else :value="importantEvents" align="left" class="compact-timeline">
+                                    <template #content="{ item }">
+                                        <div class="event-line">
+                                            <div class="event-title">
+                                                <span class="event-icon" :class="`event-${item.view.severity}`">
+                                                    <i :class="item.view.icon"></i>
+                                                </span>
+                                                <strong>{{ item.view.title }}</strong>
+                                            </div>
+                                            <span>{{ item.view.detail }}</span>
+                                            <small>{{ formatThaiDateTime(item.createdAt) }}</small>
+                                        </div>
+                                    </template>
+                                </Timeline>
+                            </div>
+                        </TabPanel>
+                    </TabPanels>
+                </Tabs>
             </aside>
         </div>
     </div>
 
-    <Dialog v-model:visible="tokenDialog" modal header="Public link / OTP" :style="{ width: 'min(42rem, 92vw)' }">
+    <Dialog v-model:visible="tokenDialog" modal header="ลิงก์ภายนอก / OTP" :style="{ width: 'min(42rem, 92vw)' }">
         <div v-if="generatedToken" class="token-box">
             <label>Link</label>
             <div class="copy-row">

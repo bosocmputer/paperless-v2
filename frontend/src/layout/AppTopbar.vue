@@ -9,7 +9,7 @@ const router = useRouter();
 const { toggleMenu, toggleDarkMode, isDarkTheme } = useLayout();
 const showThemeConfigurator = import.meta.env.DEV || import.meta.env.VITE_ENABLE_THEME_CONFIG === 'true';
 const homeRoute = computed(() => (authStore.user?.role === 'user' ? { name: 'my-signing-tasks' } : { name: 'dashboard' }));
-const consoleLabel = computed(() => (authStore.user?.role === 'admin' ? 'Admin Console' : 'เอกสารรอเซ็น'));
+const consoleLabel = computed(() => (authStore.user?.role === 'admin' ? 'ภาพรวมผู้ดูแล' : 'งานรอเซ็น'));
 
 async function logout() {
     await authStore.logout();

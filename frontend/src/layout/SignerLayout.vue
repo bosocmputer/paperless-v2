@@ -17,7 +17,7 @@ async function logout() {
                 <span class="brand-icon"><i class="pi pi-file-check"></i></span>
                 <span>
                     <strong>PaperLess</strong>
-                    <small>เอกสารรอเซ็น</small>
+                    <small>งานรอเซ็น</small>
                 </span>
             </button>
             <div class="signer-user">

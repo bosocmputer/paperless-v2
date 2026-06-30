@@ -94,7 +94,7 @@ async function loadPage() {
         templateStates.value = states;
     } catch (err) {
         error.value = err.message;
-        toast.add({ severity: 'error', summary: 'โหลดรายการ Template ไม่สำเร็จ', detail: err.message, life: 4000 });
+        toast.add({ severity: 'error', summary: 'โหลดรายการกรอบเริ่มต้นไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         loading.value = false;
     }
@@ -125,24 +125,24 @@ function resolveTemplateStatus(row) {
     if (!row.template) return { label: 'ยังไม่ได้เริ่ม', severity: 'secondary' };
     if (!row.template.sampleFileId) return { label: 'รออัปโหลด PDF', severity: 'warn' };
     if (row.issues.length > 0) return { label: 'ต้องแก้ไข', severity: 'warn' };
-    if (row.boxCount > 0) return { label: 'มี preset', severity: 'success' };
+    if (row.boxCount > 0) return { label: 'มีกรอบเริ่มต้น', severity: 'success' };
     return { label: 'มี PDF ยังไม่วางกรอบ', severity: 'info' };
 }
 
 function statusHelper(row) {
     if (row.state?.error) return row.state.error;
-    if (!row.template) return 'เปิดเข้าไปอัปโหลด PDF เพื่อสร้าง preset ใช้เป็นค่าเริ่มต้นตอนส่งเซ็น';
+    if (!row.template) return 'เปิดเข้าไปอัปโหลด PDF เพื่อทำกรอบเริ่มต้น ใช้ช่วยตอนส่งเอกสารจริง';
     if (!row.template.sampleFileId) return 'ยังไม่มี PDF ตัวอย่าง';
     if (row.firstIssue) return issueLabel(row.firstIssue);
-    if (row.boxCount === 0) return 'ยังไม่มีกรอบ preset แต่ไม่กระทบการส่งเซ็นจริง';
-    return 'ใช้เป็น preset ได้ และแก้กรอบอีกครั้งตอน upload เอกสารจริง';
+    if (row.boxCount === 0) return 'ยังไม่มีกรอบเริ่มต้น แต่ไม่กระทบการส่งเซ็นจริง';
+    return 'ใช้เป็นค่าเริ่มต้นได้ และแก้กรอบอีกครั้งตอนอัปโหลดเอกสารจริง';
 }
 
 function issueLabel(issue) {
     const labels = {
         sample_pdf_required: 'ต้องอัปโหลด PDF ตัวอย่าง',
         pdf_too_many_pages: 'PDF มีจำนวนหน้าเกินกำหนด',
-        document_config_required: 'ต้องมี Config เอกสารก่อน',
+        document_config_required: 'ต้องมี Workflow ก่อน',
         condition_any_box_required: 'ยังขาดกรอบสำหรับเงื่อนไขคนใดคนหนึ่ง',
         condition_any_box_count_invalid: 'จำนวนกรอบเกินเงื่อนไขคนใดคนหนึ่ง',
         condition_any_type_invalid: 'ประเภทกรอบไม่ตรงกับเงื่อนไข',
@@ -158,11 +158,11 @@ function issueLabel(issue) {
         box_bounds_invalid: 'มีกรอบอยู่นอกหน้า PDF'
     };
     const prefix = issue.positionCode ? `Position ${issue.positionCode}: ` : '';
-    return `${prefix}${labels[issue.code] || issue.message || 'ต้องตรวจสอบ Template'}`;
+    return `${prefix}${labels[issue.code] || issue.message || 'ต้องตรวจสอบกรอบเริ่มต้น'}`;
 }
 
 function pdfLabel(row) {
-    if (!row.template) return 'ยังไม่มี Template';
+    if (!row.template) return 'ยังไม่มีกรอบเริ่มต้น';
     if (!row.template.sampleFileId) return 'ยังไม่มี PDF';
     const pageCount = Number(row.template.sampleFile?.pageCount || 0);
     return pageCount > 0 ? `${pageCount} หน้า` : 'มี PDF แล้ว';
@@ -221,25 +221,25 @@ function normalizeSearch(value) {
     <div class="card signature-template-page">
         <div class="page-header">
             <div>
-                <div class="font-semibold text-xl mb-1">Preset กรอบลายเซ็น</div>
-                <p class="text-muted-color m-0">กำหนดกรอบเริ่มต้นไว้ช่วยตอน upload เอกสารจริง ไม่ใช่เงื่อนไขบังคับของ workflow</p>
+                <div class="font-semibold text-xl mb-1">กรอบเริ่มต้น</div>
+                <p class="text-muted-color m-0">ใช้เป็นตัวช่วยตอนสร้างเอกสารจริง สามารถย้าย ลบ หรือเพิ่มกรอบก่อนส่งเซ็นได้</p>
             </div>
             <div class="header-actions">
                 <InputText v-model="searchQuery" type="search" placeholder="ค้นหา doc, PDF, สถานะ" class="w-full sm:w-80" />
                 <Button icon="pi pi-refresh" severity="secondary" outlined :loading="loading" aria-label="โหลดใหม่" @click="loadPage" />
-                <Button label="แก้ Config เอกสาร" icon="pi pi-file-edit" severity="secondary" outlined @click="openDocumentConfig" />
+                <Button label="ตั้งค่า Workflow" icon="pi pi-file-edit" severity="secondary" outlined @click="openDocumentConfig" />
             </div>
         </div>
 
         <Message v-if="error" severity="error" class="mb-4">{{ error }}</Message>
 
-        <div v-if="rows.length > 0" class="summary-strip" aria-label="สรุปรายการ Template">
+        <div v-if="rows.length > 0" class="summary-strip" aria-label="สรุปรายการกรอบเริ่มต้น">
             <div class="summary-item">
                 <span class="summary-label">เอกสารทั้งหมด</span>
                 <strong>{{ rows.length }}</strong>
             </div>
             <div class="summary-item">
-                <span class="summary-label">มี preset</span>
+                <span class="summary-label">มีกรอบเริ่มต้น</span>
                 <strong>{{ readyCount }}</strong>
             </div>
             <div class="summary-item">
@@ -256,9 +256,9 @@ function normalizeSearch(value) {
             <template #empty>
                 <div class="empty-state">
                     <i class="pi pi-file-edit"></i>
-                    <div class="font-semibold">{{ searchQuery ? 'ไม่พบ preset ที่ค้นหา' : 'ยังไม่มีเอกสารสำหรับทำ preset กรอบลายเซ็น' }}</div>
-                    <p class="text-muted-color m-0">{{ searchQuery ? 'ลองค้นหาด้วย doc code, ชื่อ PDF หรือสถานะอื่น' : 'เพิ่ม Position ใน Config เอกสารก่อน แล้วค่อยสร้าง preset จากหน้านี้' }}</p>
-                    <Button v-if="!searchQuery" label="ไปที่ Config เอกสาร" icon="pi pi-file-edit" class="mt-3" @click="openDocumentConfig" />
+                    <div class="font-semibold">{{ searchQuery ? 'ไม่พบกรอบเริ่มต้นที่ค้นหา' : 'ยังไม่มีเอกสารสำหรับทำกรอบเริ่มต้น' }}</div>
+                    <p class="text-muted-color m-0">{{ searchQuery ? 'ลองค้นหาด้วยรหัสเอกสาร ชื่อ PDF หรือสถานะอื่น' : 'เพิ่มขั้นตอนใน Workflow ก่อน แล้วค่อยมาทำกรอบเริ่มต้น' }}</p>
+                    <Button v-if="!searchQuery" label="ไปที่ตั้งค่า Workflow" icon="pi pi-file-edit" class="mt-3" @click="openDocumentConfig" />
                 </div>
             </template>
 
@@ -277,9 +277,9 @@ function normalizeSearch(value) {
                     <div class="status-cell">
                         <div class="status-line">
                             <Tag :value="data.status.label" :severity="data.status.severity" />
-                            <span class="box-ratio">{{ data.boxCount }} กรอบ preset</span>
+                            <span class="box-ratio">{{ data.boxCount }} กรอบเริ่มต้น</span>
                         </div>
-                        <div class="progress-track" :aria-label="`กรอบ preset ${data.boxCount} จาก ${data.requiredBoxCount}`">
+                        <div class="progress-track" :aria-label="`กรอบเริ่มต้น ${data.boxCount} จาก ${data.requiredBoxCount}`">
                             <span class="progress-fill" :class="{ complete: data.status.severity === 'success', invalid: data.issues.length > 0 }" :style="{ width: `${data.progressPercent}%` }"></span>
                         </div>
                         <div class="helper-text">{{ statusHelper(data) }}</div>
@@ -313,7 +313,7 @@ function normalizeSearch(value) {
             <Column header="จัดการ" style="min-width: 12rem">
                 <template #body="{ data }">
                     <div class="row-actions">
-                        <Button label="แก้ preset" icon="pi pi-pencil" severity="info" @click="openDesigner(data.docFormatCode)" />
+                    <Button label="แก้กรอบเริ่มต้น" icon="pi pi-pencil" severity="info" @click="openDesigner(data.docFormatCode)" />
                     </div>
                 </template>
             </Column>

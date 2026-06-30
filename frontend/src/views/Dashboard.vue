@@ -27,11 +27,11 @@ const dashboard = ref({
 const statusMap = {
     in_progress: { label: 'รอเซ็น', severity: 'info' },
     completed: { label: 'เสร็จสมบูรณ์', severity: 'success' },
-    completed_evidence_failed: { label: 'Final PDF ไม่สำเร็จ', severity: 'warn' },
+    completed_evidence_failed: { label: 'สร้าง PDF หลักฐานไม่สำเร็จ', severity: 'warn' },
     completed_lock_failed: { label: 'Lock SML ไม่สำเร็จ', severity: 'danger' },
     rejected: { label: 'ถูกปฏิเสธ', severity: 'danger' },
     cancelled: { label: 'ยกเลิก', severity: 'secondary' },
-    draft: { label: 'Draft', severity: 'secondary' }
+    draft: { label: 'แบบร่าง', severity: 'secondary' }
 };
 
 const stats = computed(() => {
@@ -59,7 +59,7 @@ async function loadDashboard() {
             needsAttention: result.needsAttention || []
         };
     } catch (err) {
-        toast.add({ severity: 'error', summary: 'โหลด Dashboard ไม่สำเร็จ', detail: err.message, life: 4000 });
+        toast.add({ severity: 'error', summary: 'โหลดภาพรวมไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         loading.value = false;
     }
@@ -87,12 +87,12 @@ function formatDate(value) {
     <section class="admin-dashboard">
         <div class="dashboard-header">
             <div>
-                <h1>Dashboard</h1>
+                <h1>ภาพรวม</h1>
                 <p>ภาพรวมเอกสารเซ็นและงานที่ admin ต้องจัดการ</p>
             </div>
             <div class="dashboard-actions">
                 <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadDashboard" />
-                <Button label="ส่งเอกสารเพื่อเซ็น" icon="pi pi-send" @click="router.push({ name: 'signing-documents' })" />
+                <Button label="ส่งเอกสารใหม่" icon="pi pi-send" @click="router.push({ name: 'signing-document-new' })" />
             </div>
         </div>
 
@@ -111,7 +111,7 @@ function formatDate(value) {
                 <div class="panel-head">
                     <div>
                         <h2>ต้องตรวจสอบ</h2>
-                        <p>Final PDF หรือ SML lock ที่ต้อง retry</p>
+                        <p>PDF หลักฐานหรือ SML lock ที่ต้องดำเนินการอีกครั้ง</p>
                     </div>
                     <Tag :value="`${needsAttention.length} รายการ`" :severity="needsAttention.length ? 'warn' : 'success'" />
                 </div>
@@ -142,7 +142,7 @@ function formatDate(value) {
                 </div>
                 <div v-else-if="recentDocuments.length === 0" class="empty-panel">
                     <i class="pi pi-inbox"></i>
-                    <span>ยังไม่มีเอกสารเพื่อเซ็น</span>
+                    <span>ยังไม่มีเอกสารเซ็น</span>
                 </div>
                 <button v-for="doc in recentDocuments" v-else :key="doc.id" type="button" class="doc-row" @click="openDocument(doc)">
                     <span>
@@ -160,9 +160,10 @@ function formatDate(value) {
                         <p>{{ authStore.user?.displayName || authStore.user?.username }}</p>
                     </div>
                 </div>
-                <Button label="เอกสารเพื่อเซ็น" icon="pi pi-send" outlined @click="router.push({ name: 'signing-documents' })" />
-                <Button label="Config เอกสาร" icon="pi pi-file-edit" outlined @click="router.push({ name: 'document-config' })" />
-                <Button label="Preset กรอบลายเซ็น" icon="pi pi-pencil" outlined @click="router.push({ name: 'signature-templates' })" />
+                <Button label="ส่งเอกสารใหม่" icon="pi pi-send" outlined @click="router.push({ name: 'signing-document-new' })" />
+                <Button label="เอกสารเซ็น" icon="pi pi-list" outlined @click="router.push({ name: 'signing-documents' })" />
+                <Button label="ตั้งค่า Workflow" icon="pi pi-file-edit" outlined @click="router.push({ name: 'document-config' })" />
+                <Button label="กรอบเริ่มต้น" icon="pi pi-pencil" outlined @click="router.push({ name: 'signature-templates' })" />
                 <Button label="ผู้ใช้งาน" icon="pi pi-users" outlined @click="router.push({ name: 'users' })" />
             </aside>
         </div>

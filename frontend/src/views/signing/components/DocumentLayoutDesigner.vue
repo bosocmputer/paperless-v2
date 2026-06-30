@@ -374,7 +374,7 @@ defineExpose({ validationIssues, totalBoxes });
                     <Button icon="pi pi-angle-right" severity="secondary" text :disabled="currentPage >= (props.pageCount || pdfDoc?.numPages || 1)" @click="currentPage++" />
                 </div>
                 <div class="toolbar-group">
-                    <Button label="Fit width" severity="secondary" outlined size="small" @click="fitWidth()" />
+                    <Button label="พอดีกว้าง" severity="secondary" outlined size="small" @click="fitWidth()" />
                     <Button label="100%" severity="secondary" outlined size="small" @click="setZoom(1)" />
                     <Button icon="pi pi-minus" severity="secondary" text @click="setZoom(zoom - 0.1)" />
                     <span class="zoom-label">{{ Math.round(zoom * 100) }}%</span>
@@ -431,7 +431,7 @@ defineExpose({ validationIssues, totalBoxes });
                         <div class="section-title">ขั้นตอนและกรอบ</div>
                         <small>{{ totalBoxes }} กรอบที่จะสร้างงานเซ็น</small>
                     </div>
-                    <Button label="ใช้ preset" icon="pi pi-clone" severity="secondary" outlined size="small" :disabled="!canApplyPreset" @click="applyPreset" />
+                    <Button label="ใช้กรอบเริ่มต้น" icon="pi pi-clone" severity="secondary" outlined size="small" :disabled="!canApplyPreset" @click="applyPreset" />
                 </div>
 
                 <Message v-if="validationIssues.length" severity="warn" class="mb-3">

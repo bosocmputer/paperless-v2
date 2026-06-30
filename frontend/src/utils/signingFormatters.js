@@ -1,5 +1,5 @@
 const statusText = {
-    draft: 'Draft',
+    draft: 'แบบร่าง',
     in_progress: 'รอเซ็น',
     pending: 'รอเซ็น',
     waiting: 'รอลำดับ',
@@ -8,7 +8,7 @@ const statusText = {
     rejected: 'ถูกปฏิเสธ',
     cancelled: 'ยกเลิก',
     completed: 'เสร็จสมบูรณ์',
-    completed_evidence_failed: 'Final PDF ไม่สำเร็จ',
+    completed_evidence_failed: 'สร้าง PDF หลักฐานไม่สำเร็จ',
     completed_lock_failed: 'Lock SML ไม่สำเร็จ'
 };
 
@@ -53,4 +53,15 @@ export function formatThaiDateTime(value) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '-';
     return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+}
+
+export function signingActionLabel(action) {
+    const labels = {
+        retry_final_pdf: 'สร้าง PDF อีกครั้ง',
+        retry_sml_lock: 'Lock SML อีกครั้ง',
+        fit_width: 'พอดีกว้าง',
+        movement_log: 'เหตุการณ์สำคัญ',
+        signature_preset: 'กรอบเริ่มต้น'
+    };
+    return labels[action] || action || '-';
 }

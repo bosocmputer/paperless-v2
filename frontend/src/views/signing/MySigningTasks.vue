@@ -54,7 +54,7 @@ function formatDate(value) {
     <section class="tasks-page">
         <header class="tasks-header">
             <div>
-                <h1>เอกสารรอเซ็น</h1>
+                <h1>งานรอเซ็น</h1>
                 <p>เอกสารจะแสดงเมื่อถึงลำดับของคุณแล้ว</p>
             </div>
             <Tag :value="`${rows.length} งาน`" severity="info" />
@@ -67,7 +67,7 @@ function formatDate(value) {
 
         <div v-if="loading" class="task-state">
             <i class="pi pi-spin pi-spinner"></i>
-            <span>กำลังโหลดเอกสารรอเซ็น</span>
+            <span>กำลังโหลดงานรอเซ็น</span>
         </div>
 
         <div v-else-if="filteredRows.length === 0" class="empty-state">

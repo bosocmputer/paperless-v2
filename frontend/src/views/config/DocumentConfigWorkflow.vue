@@ -77,7 +77,7 @@ const saveDisabledReason = computed(() => {
     if (validationIssues.value.length > 0) return 'แก้ขั้นตอนที่ยังไม่สมบูรณ์ก่อนบันทึก';
     return '';
 });
-const stepDialogTitle = computed(() => (editingStepKey.value ? 'แก้ไข Step' : 'เพิ่ม Step'));
+const stepDialogTitle = computed(() => (editingStepKey.value ? 'แก้ไขขั้นตอน' : 'เพิ่มขั้นตอน'));
 const stepFormIssues = computed(() => validateStepForm(stepForm.value, editingStepKey.value));
 
 onMounted(async () => {
@@ -445,8 +445,8 @@ function normalizeCode(value) {
             <template #start>
                 <div class="flex flex-wrap gap-2">
                     <Button label="กลับ" icon="pi pi-arrow-left" severity="secondary" text @click="router.push({ name: 'document-config' })" />
-                    <Button label="เพิ่ม Step" icon="pi pi-plus" severity="secondary" @click="openCreateStep" />
-                    <Button label="Preset กรอบ" icon="pi pi-map-marker" severity="secondary" outlined @click="router.push({ name: 'signature-template', params: { docFormatCode } })" />
+                    <Button label="เพิ่มขั้นตอน" icon="pi pi-plus" severity="secondary" @click="openCreateStep" />
+                    <Button label="กรอบเริ่มต้น" icon="pi pi-map-marker" severity="secondary" outlined @click="router.push({ name: 'signature-template', params: { docFormatCode } })" />
                 </div>
             </template>
             <template #end>
@@ -465,7 +465,7 @@ function normalizeCode(value) {
         </Message>
         <Message v-if="error" severity="error" class="mb-4" :closable="false">{{ error }}</Message>
         <Message v-for="warning in workflow?.presetWarnings || []" :key="`${warning.code}-${warning.positionCode}`" severity="warn" class="mb-4" :closable="false">
-            {{ warning.message }} Preset เป็นตัวช่วยเท่านั้น จึงยังบันทึก Workflow ได้
+            {{ warning.message }} กรอบเริ่มต้นเป็นตัวช่วยเท่านั้น จึงยังบันทึก Workflow ได้
         </Message>
 
         <DataTable :value="filteredSteps" :loading="loading" dataKey="key" responsiveLayout="scroll" stripedRows>
@@ -485,7 +485,7 @@ function normalizeCode(value) {
             </template>
 
             <template #empty>
-                <div class="py-6 text-center text-muted-color">{{ searchQuery ? 'ไม่พบ Step ที่ค้นหา' : 'ยังไม่มี Step ใน Workflow นี้' }}</div>
+                <div class="py-6 text-center text-muted-color">{{ searchQuery ? 'ไม่พบขั้นตอนที่ค้นหา' : 'ยังไม่มีขั้นตอนใน Workflow นี้' }}</div>
             </template>
 
             <Column field="sequenceNo" header="ลำดับ" sortable style="width: 7rem">
@@ -522,8 +522,8 @@ function normalizeCode(value) {
                     <div class="flex gap-2">
                         <Button icon="pi pi-arrow-up" severity="secondary" rounded outlined aria-label="เลื่อนขึ้น" :disabled="data.sequenceNo === 1 || searchQuery" @click="moveStep(index, -1)" />
                         <Button icon="pi pi-arrow-down" severity="secondary" rounded outlined aria-label="เลื่อนลง" :disabled="data.sequenceNo === steps.length || searchQuery" @click="moveStep(index, 1)" />
-                        <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ไข Step" @click="openEditStep(data)" />
-                        <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบ Step" @click="requestRemoveStep(data)" />
+                        <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ไขขั้นตอน" @click="openEditStep(data)" />
+                        <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบขั้นตอน" @click="requestRemoveStep(data)" />
                     </div>
                 </template>
             </Column>
@@ -573,7 +573,7 @@ function normalizeCode(value) {
 
         <template #footer>
             <Button label="ยกเลิก" icon="pi pi-times" text @click="stepDialogVisible = false" />
-            <Button label="บันทึก Step" icon="pi pi-check" @click="saveStepDialog" />
+            <Button label="บันทึกขั้นตอน" icon="pi pi-check" @click="saveStepDialog" />
         </template>
     </Dialog>
 </template>

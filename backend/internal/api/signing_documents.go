@@ -45,14 +45,19 @@ var signingUXEventNames = map[string]bool{
 
 var signingCreateEventNames = map[string]bool{
 	"create_layout_open":      true,
+	"wizard_open":             true,
+	"step_complete":           true,
 	"pdf_upload_success":      true,
 	"pdf_upload_error":        true,
 	"preset_applied":          true,
 	"box_add":                 true,
 	"box_delete":              true,
 	"layout_validation_error": true,
+	"validation_blocked":      true,
 	"create_submit_success":   true,
 	"create_submit_error":     true,
+	"create_success":          true,
+	"create_error":            true,
 	"pdf_render_error":        true,
 }
 

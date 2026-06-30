@@ -75,6 +75,12 @@ const router = createRouter({
                     meta: { role: 'admin' }
                 },
                 {
+                    path: '/signing/documents/new',
+                    name: 'signing-document-new',
+                    component: () => import('@/views/signing/SigningDocumentCreate.vue'),
+                    meta: { role: 'admin' }
+                },
+                {
                     path: '/signing/documents/:id',
                     name: 'signing-document-detail',
                     component: () => import('@/views/signing/SigningDocumentDetail.vue'),

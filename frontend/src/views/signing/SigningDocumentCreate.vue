@@ -1,0 +1,647 @@
+<script setup>
+import { api } from '@/services/api';
+import { formatDocumentDate } from '@/utils/signingFormatters';
+import DocumentLayoutDesigner from './components/DocumentLayoutDesigner.vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { onBeforeRouteLeave, useRouter } from 'vue-router';
+import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from 'primevue/usetoast';
+
+const router = useRouter();
+const confirm = useConfirm();
+const toast = useToast();
+
+const draftKey = 'paperless_signing_wizard_draft_v1';
+const docFormats = ref([]);
+const candidates = ref([]);
+const candidatePage = ref(1);
+const candidateTotal = ref(0);
+const candidateHasMore = ref(false);
+const loading = ref(false);
+const creating = ref(false);
+const uploading = ref(false);
+const searchingCandidates = ref(false);
+const loadingLayoutContext = ref(false);
+const activeStep = ref(0);
+const fileInput = ref(null);
+const form = ref(emptyForm());
+const createSessionId = ref(makeClientId());
+let searchTimer;
+let suppressSearchWatch = false;
+let openedAt = Date.now();
+let createFinished = false;
+
+const wizardSteps = [
+    { label: 'เลือกชนิดเอกสาร', icon: 'pi pi-file' },
+    { label: 'เลือกเลขเอกสารจาก SML', icon: 'pi pi-search' },
+    { label: 'อัปโหลด PDF', icon: 'pi pi-upload' },
+    { label: 'วางกรอบลายเซ็น', icon: 'pi pi-pencil' },
+    { label: 'ตรวจสอบและส่งเซ็น', icon: 'pi pi-check-circle' }
+];
+
+const docFormatOptions = computed(() =>
+    docFormats.value.map((format) => ({
+        label: `${format.code} - ${format.name_1 || format.name_2 || format.format || 'ไม่มีชื่อเอกสาร'}`,
+        value: format.code
+    }))
+);
+
+const selectedDocFormatLabel = computed(() => docFormatOptions.value.find((item) => item.value === form.value.docFormatCode)?.label || '-');
+const lockedBySML = computed(() => Number(form.value.selectedCandidate?.is_lock_record || 0) === 1);
+const layoutValidationIssues = computed(() => validateLayout());
+const createDisabledReason = computed(() => finalDisabledReason());
+const dirty = computed(() => {
+    if (createFinished) return false;
+    return !!form.value.docFormatCode || !!form.value.search || !!form.value.selectedCandidate || !!form.value.fileId || form.value.layoutBoxes.length > 0;
+});
+const stepBlockedReason = computed(() => wizardSteps.map((_step, index) => blockedReasonForStep(index)));
+const currentStepReason = computed(() => stepBlockedReason.value[activeStep.value] || '');
+const canGoNext = computed(() => activeStep.value < wizardSteps.length - 1 && !currentStepReason.value);
+
+watch(
+    () => form.value.docFormatCode,
+    async () => {
+        clearTimeout(searchTimer);
+        resetCandidateSearch();
+        resetUploadedLayout();
+        persistDraft();
+        if (form.value.docFormatCode) await loadLayoutContext();
+    }
+);
+
+watch(
+    () => form.value.search,
+    () => {
+        if (suppressSearchWatch) {
+            suppressSearchWatch = false;
+            persistDraft();
+            return;
+        }
+        clearTimeout(searchTimer);
+        form.value.docNo = '';
+        form.value.selectedCandidate = null;
+        candidates.value = [];
+        candidatePage.value = 1;
+        candidateHasMore.value = false;
+        persistDraft();
+        if (!form.value.docFormatCode || String(form.value.search || '').trim().length < 2) return;
+        searchTimer = setTimeout(() => searchCandidates(1), 300);
+    }
+);
+
+watch(
+    () => [form.value.selectedCandidate, form.value.fileId, form.value.layoutBoxes, form.value.selectedPresetId, activeStep.value],
+    persistDraft,
+    { deep: true }
+);
+
+onMounted(async () => {
+    window.addEventListener('beforeunload', beforeUnload);
+    openedAt = Date.now();
+    restoreDraft();
+    await loadPage();
+    if (form.value.docFormatCode) await loadLayoutContext();
+    recordCreateEvent('wizard_open');
+});
+
+onBeforeUnmount(() => {
+    clearTimeout(searchTimer);
+    window.removeEventListener('beforeunload', beforeUnload);
+});
+
+onBeforeRouteLeave((_to, _from, next) => {
+    if (!dirty.value || window.confirm('ยังไม่ได้ส่งเอกสาร ต้องการออกจากหน้านี้หรือไม่?')) {
+        next();
+        return;
+    }
+    next(false);
+});
+
+function emptyForm() {
+    return {
+        docFormatCode: '',
+        search: '',
+        docNo: '',
+        fileId: '',
+        fileUrl: '',
+        uploadedFile: null,
+        selectedCandidate: null,
+        confirmLocked: false,
+        configs: [],
+        presetTemplate: null,
+        selectedPresetId: '',
+        layoutBoxes: []
+    };
+}
+
+async function loadPage() {
+    loading.value = true;
+    try {
+        const result = await api.listSMLDocFormats();
+        docFormats.value = result.docFormats || [];
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'โหลดชนิดเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        loading.value = false;
+    }
+}
+
+async function searchCandidates(page = 1) {
+    if (!form.value.docFormatCode) return;
+    searchingCandidates.value = true;
+    try {
+        const result = await api.listSMLDocumentCandidates({
+            docFormatCode: form.value.docFormatCode,
+            search: form.value.search,
+            page,
+            size: 20
+        });
+        const rows = result.documents || [];
+        candidates.value = page === 1 ? rows : [...candidates.value, ...rows];
+        candidatePage.value = result.page || page;
+        candidateTotal.value = result.total || 0;
+        candidateHasMore.value = !!result.hasMore;
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'ค้นหาเอกสาร SML ไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        searchingCandidates.value = false;
+    }
+}
+
+function loadMoreCandidates() {
+    if (!candidateHasMore.value || searchingCandidates.value) return;
+    searchCandidates(candidatePage.value + 1);
+}
+
+function selectCandidate(candidate) {
+    form.value.selectedCandidate = candidate;
+    form.value.docNo = candidate.doc_no;
+    form.value.confirmLocked = false;
+    suppressSearchWatch = true;
+    form.value.search = candidate.doc_no;
+    activeStep.value = Math.max(activeStep.value, 1);
+}
+
+function triggerUpload() {
+    fileInput.value?.click();
+}
+
+async function onFileChange(event) {
+    const file = event.target.files?.[0] || null;
+    event.target.value = '';
+    if (!file) return;
+    form.value.fileId = '';
+    form.value.fileUrl = '';
+    form.value.uploadedFile = null;
+    form.value.layoutBoxes = [];
+    form.value.selectedPresetId = '';
+    uploading.value = true;
+    try {
+        const result = await api.uploadSigningDocumentPDF(file);
+        form.value.uploadedFile = result.file;
+        form.value.fileId = result.file?.id || '';
+        form.value.fileUrl = result.fileUrl || api.signingDocumentUploadPDFUrl(form.value.fileId);
+        activeStep.value = Math.max(activeStep.value, 2);
+        recordCreateEvent('pdf_upload_success');
+        toast.add({ severity: 'success', summary: 'อัปโหลด PDF แล้ว', detail: `${result.file?.pageCount || 0} หน้า`, life: 2500 });
+    } catch (err) {
+        recordCreateEvent('pdf_upload_error');
+        toast.add({ severity: 'error', summary: 'อัปโหลด PDF ไม่สำเร็จ', detail: err.message, life: 5000 });
+    } finally {
+        uploading.value = false;
+    }
+}
+
+async function loadLayoutContext() {
+    if (!form.value.docFormatCode) return;
+    loadingLayoutContext.value = true;
+    try {
+        const [configsResult, templateResult] = await Promise.all([api.listDocumentConfigs({ docFormatCode: form.value.docFormatCode }), api.getSignatureTemplateState(form.value.docFormatCode).catch(() => ({}))]);
+        form.value.configs = configsResult.configs || [];
+        form.value.presetTemplate = templateResult.active || templateResult.draft || null;
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'โหลด Workflow ไม่สำเร็จ', detail: err.message, life: 4500 });
+    } finally {
+        loadingLayoutContext.value = false;
+    }
+}
+
+function onApplyPreset(template) {
+    form.value.selectedPresetId = template?.id || '';
+    recordCreateEvent('preset_applied');
+    toast.add({ severity: 'success', summary: 'ใช้กรอบเริ่มต้นแล้ว', detail: 'ตรวจตำแหน่งกับ PDF จริงก่อนส่งเซ็น', life: 3000 });
+}
+
+function onDesignerEvent(eventName) {
+    if (eventName === 'preset_page_mismatch') {
+        recordCreateEvent('validation_blocked');
+        toast.add({ severity: 'warn', summary: 'ใช้กรอบเริ่มต้นไม่ได้', detail: 'จำนวนหน้า PDF ไม่ตรงกัน', life: 4000 });
+        return;
+    }
+    if (eventName === 'layout_validation_error') recordCreateEvent('validation_blocked');
+    else recordCreateEvent(eventName);
+}
+
+function goToStep(index) {
+    if (index <= activeStep.value) {
+        activeStep.value = index;
+        return;
+    }
+    for (let step = 0; step < index; step += 1) {
+        const reason = blockedReasonForStep(step);
+        if (reason) {
+            activeStep.value = step;
+            recordCreateEvent('validation_blocked');
+            toast.add({ severity: 'warn', summary: 'ยังไปขั้นถัดไปไม่ได้', detail: reason, life: 3000 });
+            return;
+        }
+    }
+    activeStep.value = index;
+}
+
+function nextStep() {
+    if (currentStepReason.value) {
+        recordCreateEvent('validation_blocked');
+        toast.add({ severity: 'warn', summary: 'ยังไปขั้นถัดไปไม่ได้', detail: currentStepReason.value, life: 3000 });
+        return;
+    }
+    recordCreateEvent('step_complete');
+    activeStep.value = Math.min(activeStep.value + 1, wizardSteps.length - 1);
+}
+
+function backStep() {
+    activeStep.value = Math.max(activeStep.value - 1, 0);
+}
+
+async function submitDocument() {
+    const disabledReason = createDisabledReason.value;
+    if (disabledReason) {
+        recordCreateEvent('validation_blocked');
+        toast.add({ severity: 'warn', summary: 'ยังส่งเซ็นไม่ได้', detail: disabledReason, life: 3500 });
+        return;
+    }
+    if (lockedBySML.value && !form.value.confirmLocked) {
+        confirm.require({
+            message: 'เอกสารนี้ถูก lock ใน SML อยู่แล้ว ต้องการสร้างเอกสาร PaperLess จากเลขนี้หรือไม่?',
+            header: 'ยืนยันเอกสาร SML ที่ lock แล้ว',
+            icon: 'pi pi-exclamation-triangle',
+            rejectProps: { label: 'ยกเลิก', severity: 'secondary', outlined: true },
+            acceptProps: { label: 'ยืนยันและส่งเซ็น', severity: 'warn' },
+            accept: () => {
+                form.value.confirmLocked = true;
+                void submitDocument();
+            }
+        });
+        return;
+    }
+
+    creating.value = true;
+    try {
+        const result = await api.createSigningDocument({
+            docFormatCode: form.value.docFormatCode,
+            docNo: form.value.selectedCandidate.doc_no,
+            fileId: form.value.fileId,
+            signatureTemplateId: form.value.selectedPresetId,
+            confirmLocked: form.value.confirmLocked,
+            layoutBoxes: form.value.layoutBoxes.map(toLayoutPayload),
+            idempotencyKey: makeClientId()
+        });
+        createFinished = true;
+        sessionStorage.removeItem(draftKey);
+        recordCreateEvent('create_success');
+        toast.add({ severity: 'success', summary: 'ส่งเอกสารให้ผู้เซ็นแล้ว', life: 2500 });
+        router.push({ name: 'signing-document-detail', params: { id: result.document.id } });
+    } catch (err) {
+        recordCreateEvent('create_error');
+        toast.add({ severity: 'error', summary: 'สร้างเอกสารไม่สำเร็จ', detail: err.message, life: 5000 });
+    } finally {
+        creating.value = false;
+    }
+}
+
+function blockedReasonForStep(index) {
+    if (index === 0 && !form.value.docFormatCode) return 'เลือกชนิดเอกสารก่อน';
+    if (index === 1 && !form.value.selectedCandidate) return 'เลือกเลขเอกสารจากผลค้นหา SML ก่อน';
+    if (index === 2 && !form.value.fileId) return 'อัปโหลด PDF จริงก่อน';
+    if (index === 3) {
+        if (form.value.layoutBoxes.length === 0) return 'วางกรอบลายเซ็นอย่างน้อย 1 กรอบ';
+        if (layoutValidationIssues.value.length > 0) return layoutValidationIssues.value[0];
+    }
+    return '';
+}
+
+function finalDisabledReason() {
+    for (let index = 0; index < 4; index += 1) {
+        const reason = blockedReasonForStep(index);
+        if (reason) return reason;
+    }
+    return '';
+}
+
+function validateLayout() {
+    const issues = [];
+    const pageCount = Number(form.value.uploadedFile?.pageCount || 0);
+    const boxes = form.value.layoutBoxes || [];
+    const configsByPosition = new Map((form.value.configs || []).map((step) => [String(step.positionCode), step]));
+    boxes.forEach((box) => {
+        if (!configsByPosition.has(String(box.positionCode))) issues.push(`ตำแหน่ง ${box.positionCode} ไม่อยู่ใน Workflow`);
+        if (box.pageNo < 1 || (pageCount && box.pageNo > pageCount)) issues.push(`กรอบ ${box.label || box.positionCode} อยู่หน้าที่ไม่ถูกต้อง`);
+        if (box.xRatio < 0 || box.yRatio < 0 || box.widthRatio <= 0 || box.heightRatio <= 0 || box.xRatio + box.widthRatio > 1 || box.yRatio + box.heightRatio > 1) {
+            issues.push(`กรอบ ${box.label || box.positionCode} อยู่นอกหน้า PDF`);
+        }
+    });
+    (form.value.configs || []).forEach((step) => {
+        const stepBoxes = boxes.filter((box) => String(box.positionCode) === String(step.positionCode));
+        if (stepBoxes.length === 0) return;
+        if (step.conditionType === 1 && stepBoxes.length !== 1) issues.push(`${step.positionName} ต้องมี 1 กรอบ`);
+        if (step.conditionType === 3 && stepBoxes.length !== 1) issues.push(`${step.positionName} ต้องมี 1 กรอบบุคคลภายนอก`);
+        if (step.conditionType === 2) {
+            const seen = new Set();
+            stepBoxes.forEach((box) => {
+                const user = signerUsername(box.signerUser);
+                if (!user) issues.push(`${step.positionName} ต้องเลือก user ทุกกรอบ`);
+                if (user && seen.has(user)) issues.push(`${step.positionName} มี user ซ้ำ`);
+                if (user) seen.add(user);
+            });
+        }
+    });
+    return [...new Set(issues)];
+}
+
+function resetCandidateSearch() {
+    form.value.search = '';
+    form.value.docNo = '';
+    form.value.selectedCandidate = null;
+    form.value.confirmLocked = false;
+    candidates.value = [];
+    candidatePage.value = 1;
+    candidateTotal.value = 0;
+    candidateHasMore.value = false;
+}
+
+function resetUploadedLayout() {
+    form.value.fileId = '';
+    form.value.fileUrl = '';
+    form.value.uploadedFile = null;
+    form.value.layoutBoxes = [];
+    form.value.selectedPresetId = '';
+}
+
+function toLayoutPayload(box) {
+    return {
+        positionCode: box.positionCode,
+        signerSlot: box.signerSlot,
+        signerType: box.signerType,
+        signerUser: box.signerUser || '',
+        pageNo: box.pageNo,
+        xRatio: box.xRatio,
+        yRatio: box.yRatio,
+        widthRatio: box.widthRatio,
+        heightRatio: box.heightRatio,
+        label: box.label || ''
+    };
+}
+
+function persistDraft() {
+    if (createFinished) return;
+    const draft = {
+        activeStep: activeStep.value,
+        form: {
+            ...form.value,
+            configs: [],
+            presetTemplate: null
+        }
+    };
+    sessionStorage.setItem(draftKey, JSON.stringify(draft));
+}
+
+function restoreDraft() {
+    try {
+        const raw = sessionStorage.getItem(draftKey);
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        form.value = { ...emptyForm(), ...(parsed.form || {}) };
+        if (form.value.fileId && !form.value.fileUrl) form.value.fileUrl = api.signingDocumentUploadPDFUrl(form.value.fileId);
+        activeStep.value = Math.min(Math.max(Number(parsed.activeStep || 0), 0), wizardSteps.length - 1);
+    } catch {
+        sessionStorage.removeItem(draftKey);
+    }
+}
+
+function beforeUnload(event) {
+    if (!dirty.value) return;
+    event.preventDefault();
+    event.returnValue = '';
+}
+
+function signerUsername(value) {
+    return String(value || '').split(':')[0].trim().toLowerCase();
+}
+
+function recordCreateEvent(event) {
+    const allowed = new Set([
+        'wizard_open',
+        'step_complete',
+        'validation_blocked',
+        'create_success',
+        'create_error',
+        'pdf_upload_success',
+        'pdf_upload_error',
+        'preset_applied',
+        'box_add',
+        'box_delete',
+        'pdf_render_error'
+    ]);
+    if (!allowed.has(event)) return;
+    void api
+        .recordSigningDocumentCreateEvent({
+            event,
+            sessionId: createSessionId.value,
+            docFormatCode: form.value.docFormatCode,
+            elapsedMs: Date.now() - openedAt,
+            boxCount: form.value.layoutBoxes.length,
+            validationIssueCount: layoutValidationIssues.value.length,
+            viewport: {
+                width: window.innerWidth || 0,
+                height: window.innerHeight || 0
+            }
+        })
+        .catch(() => {});
+}
+
+function makeClientId() {
+    return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+}
+</script>
+
+<template>
+    <div class="card">
+        <Toolbar class="mb-6">
+            <template #start>
+                <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="router.push({ name: 'signing-documents' })" />
+                <div class="ml-2">
+                    <h4 class="m-0">ส่งเอกสารใหม่</h4>
+                    <small class="text-muted-color">เลือกเอกสารจาก SML, อัปโหลด PDF และวางกรอบก่อนส่งเซ็น</small>
+                </div>
+            </template>
+            <template #end>
+                <Button label="กลับรายการเอกสาร" icon="pi pi-list" severity="secondary" outlined @click="router.push({ name: 'signing-documents' })" />
+            </template>
+        </Toolbar>
+
+        <div class="grid grid-cols-12 gap-4">
+            <div class="col-span-12 lg:col-span-3">
+                <Panel header="ขั้นตอน">
+                    <div class="flex flex-col gap-2">
+                        <Button
+                            v-for="(step, index) in wizardSteps"
+                            :key="step.label"
+                            :label="step.label"
+                            :icon="stepBlockedReason[index] ? 'pi pi-circle' : step.icon"
+                            :severity="activeStep === index ? 'primary' : 'secondary'"
+                            :outlined="activeStep !== index"
+                            class="justify-start"
+                            @click="goToStep(index)"
+                        />
+                    </div>
+                    <Message v-if="currentStepReason" severity="warn" class="mt-4">{{ currentStepReason }}</Message>
+                </Panel>
+            </div>
+
+            <div class="col-span-12 lg:col-span-9">
+                <Panel v-if="activeStep === 0" header="เลือกชนิดเอกสาร">
+                    <div class="grid grid-cols-12 gap-4">
+                        <div class="col-span-12 md:col-span-8">
+                            <label class="block font-bold mb-3">ชนิดเอกสาร</label>
+                            <Select v-model="form.docFormatCode" :options="docFormatOptions" optionLabel="label" optionValue="value" filter placeholder="เลือกชนิดเอกสาร" fluid :loading="loading" />
+                            <small class="text-muted-color">ระบบไม่เลือกให้อัตโนมัติ เพื่อป้องกันส่งเอกสารผิดชนิด</small>
+                        </div>
+                    </div>
+                </Panel>
+
+                <Panel v-else-if="activeStep === 1" header="เลือกเลขเอกสารจาก SML">
+                    <div class="flex flex-col gap-4">
+                        <Message severity="info">ต้องเลือกจากผลค้นหา SML เท่านั้น ระบบไม่รับเลขเอกสารที่พิมพ์เอง</Message>
+                        <div>
+                            <label class="block font-bold mb-3">ค้นหาเลขเอกสาร</label>
+                            <IconField>
+                                <InputIcon><i class="pi pi-search" /></InputIcon>
+                                <InputText v-model="form.search" placeholder="เช่น PO2606" fluid :disabled="!form.docFormatCode" />
+                            </IconField>
+                            <small class="text-muted-color">ชนิดเอกสาร: {{ selectedDocFormatLabel }}</small>
+                        </div>
+
+                        <DataTable
+                            :value="candidates"
+                            :loading="searchingCandidates"
+                            dataKey="doc_no"
+                            responsiveLayout="scroll"
+                            stripedRows
+                            scrollable
+                            scrollHeight="20rem"
+                            @row-click="selectCandidate($event.data)"
+                        >
+                            <template #empty>
+                                <div class="py-6 text-center text-muted-color">{{ form.search?.length >= 2 ? 'ไม่พบเอกสาร' : 'พิมพ์อย่างน้อย 2 ตัวอักษรเพื่อค้นหา' }}</div>
+                            </template>
+                            <Column field="doc_no" header="เลขที่เอกสาร" style="min-width: 12rem">
+                                <template #body="{ data }">
+                                    <div class="font-bold">{{ data.doc_no }}</div>
+                                    <small class="text-muted-color">{{ data.party_name || data.party_code || '-' }}</small>
+                                </template>
+                            </Column>
+                            <Column field="doc_date" header="วันที่เอกสาร" style="min-width: 10rem">
+                                <template #body="{ data }">{{ formatDocumentDate(data.doc_date) }}</template>
+                            </Column>
+                            <Column field="total_amount" header="ยอดเงิน" style="min-width: 10rem">
+                                <template #body="{ data }">{{ Number(data.total_amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}</template>
+                            </Column>
+                            <Column header="สถานะ SML" style="min-width: 10rem">
+                                <template #body="{ data }">
+                                    <Tag :value="Number(data.is_lock_record || 0) === 1 ? 'lock แล้ว' : 'ใช้งานได้'" :severity="Number(data.is_lock_record || 0) === 1 ? 'warn' : 'success'" />
+                                </template>
+                            </Column>
+                            <Column header="เลือก" style="width: 7rem">
+                                <template #body="{ data }">
+                                    <Button
+                                        :label="form.selectedCandidate?.doc_no === data.doc_no ? 'เลือกแล้ว' : 'เลือก'"
+                                        :icon="form.selectedCandidate?.doc_no === data.doc_no ? 'pi pi-check' : 'pi pi-plus'"
+                                        size="small"
+                                        :severity="form.selectedCandidate?.doc_no === data.doc_no ? 'success' : 'secondary'"
+                                        @click.stop="selectCandidate(data)"
+                                    />
+                                </template>
+                            </Column>
+                        </DataTable>
+                        <div class="flex justify-between items-center gap-3">
+                            <small class="text-muted-color">พบ {{ candidateTotal }} รายการ</small>
+                            <Button v-if="candidateHasMore" label="โหลดเพิ่ม" severity="secondary" outlined :loading="searchingCandidates" @click="loadMoreCandidates" />
+                        </div>
+                        <Message v-if="lockedBySML" severity="warn">เอกสารนี้ lock ใน SML แล้ว ระบบจะถามยืนยันอีกครั้งก่อนส่งเซ็น</Message>
+                    </div>
+                </Panel>
+
+                <Panel v-else-if="activeStep === 2" header="อัปโหลด PDF">
+                    <div class="flex flex-col gap-4">
+                        <Message severity="info">อัปโหลดไฟล์ PDF จริงที่ user export จาก SML สำหรับเลขเอกสารที่เลือก</Message>
+                        <input ref="fileInput" type="file" accept="application/pdf" class="hidden" @change="onFileChange" />
+                        <div class="flex flex-wrap gap-2">
+                            <Button label="เลือกไฟล์ PDF" icon="pi pi-upload" :loading="uploading" @click="triggerUpload" />
+                            <Button v-if="form.fileId" label="เปลี่ยนไฟล์" icon="pi pi-refresh" severity="secondary" outlined :loading="uploading" @click="triggerUpload" />
+                        </div>
+                        <Message v-if="form.uploadedFile" severity="success">
+                            {{ form.uploadedFile.originalName }} · {{ form.uploadedFile.pageCount }} หน้า
+                        </Message>
+                    </div>
+                </Panel>
+
+                <Panel v-else-if="activeStep === 3" header="วางกรอบลายเซ็น">
+                    <Message v-if="loadingLayoutContext" severity="info" class="mb-4">กำลังโหลด Workflow และกรอบเริ่มต้น...</Message>
+                    <DocumentLayoutDesigner
+                        v-model="form.layoutBoxes"
+                        :pdfUrl="form.fileUrl"
+                        :pageCount="form.uploadedFile?.pageCount || 0"
+                        :configs="form.configs"
+                        :presetTemplate="form.presetTemplate"
+                        @apply-preset="onApplyPreset"
+                        @event="onDesignerEvent"
+                    />
+                </Panel>
+
+                <Panel v-else header="ตรวจสอบและส่งเซ็น">
+                    <div class="grid grid-cols-12 gap-4">
+                        <div class="col-span-12 md:col-span-6">
+                            <dl class="grid grid-cols-12 gap-2 m-0">
+                                <dt class="col-span-5 text-muted-color">ชนิดเอกสาร</dt>
+                                <dd class="col-span-7 m-0">{{ selectedDocFormatLabel }}</dd>
+                                <dt class="col-span-5 text-muted-color">เลขที่เอกสาร</dt>
+                                <dd class="col-span-7 m-0">{{ form.selectedCandidate?.doc_no || '-' }}</dd>
+                                <dt class="col-span-5 text-muted-color">คู่ค้า</dt>
+                                <dd class="col-span-7 m-0">{{ form.selectedCandidate?.party_name || form.selectedCandidate?.party_code || '-' }}</dd>
+                                <dt class="col-span-5 text-muted-color">PDF</dt>
+                                <dd class="col-span-7 m-0">{{ form.uploadedFile?.originalName || '-' }}</dd>
+                                <dt class="col-span-5 text-muted-color">กรอบลายเซ็น</dt>
+                                <dd class="col-span-7 m-0">{{ form.layoutBoxes.length }} กรอบ</dd>
+                            </dl>
+                        </div>
+                        <div class="col-span-12 md:col-span-6">
+                            <Message v-if="createDisabledReason" severity="warn">{{ createDisabledReason }}</Message>
+                            <Message v-else severity="success">ข้อมูลพร้อมส่งเซ็นแล้ว</Message>
+                            <Message v-if="lockedBySML" severity="warn" class="mt-3">เอกสาร SML lock แล้ว ต้องยืนยันก่อนสร้างเอกสาร</Message>
+                        </div>
+                    </div>
+                </Panel>
+
+                <Toolbar class="mt-4">
+                    <template #start>
+                        <Button label="ย้อนกลับ" icon="pi pi-arrow-left" severity="secondary" outlined :disabled="activeStep === 0" @click="backStep" />
+                    </template>
+                    <template #end>
+                        <Button v-if="activeStep < wizardSteps.length - 1" label="ถัดไป" icon="pi pi-arrow-right" iconPos="right" :disabled="!canGoNext" @click="nextStep" />
+                        <Button v-else label="ส่งเซ็น" icon="pi pi-send" :loading="creating" :disabled="!!createDisabledReason || uploading" @click="submitDocument" />
+                    </template>
+                </Toolbar>
+            </div>
+        </div>
+    </div>
+</template>

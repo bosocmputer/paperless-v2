@@ -162,7 +162,7 @@ function normalizeSearch(value) {
     <div class="card">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div>
-                <div class="font-semibold text-xl mb-1">User Management</div>
+                <div class="font-semibold text-xl mb-1">ผู้ใช้งาน</div>
                 <p class="text-muted-color m-0">จัดการชื่อผู้ใช้ รหัสผ่าน และระดับสิทธิ์ admin/user</p>
             </div>
             <div class="flex flex-col sm:flex-row gap-2 sm:items-center">

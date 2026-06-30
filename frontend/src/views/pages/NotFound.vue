@@ -55,7 +55,7 @@ import FloatingConfigurator from '@/components/FloatingConfigurator.vue';
                             <span class="text-surface-600 dark:text-surface-200 lg:text-xl">Accumsan in nisl nisi scelerisque</span>
                         </span>
                     </router-link>
-                    <Button as="router-link" label="Go to Dashboard" to="/" />
+                    <Button as="router-link" label="กลับหน้าภาพรวม" to="/" />
                 </div>
             </div>
         </div>

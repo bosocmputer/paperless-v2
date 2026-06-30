@@ -10,7 +10,7 @@ const model = computed(() => {
                 label: 'PaperLess',
                 items: [
                     {
-                        label: 'เอกสารรอเซ็น',
+                        label: 'งานรอเซ็น',
                         icon: 'pi pi-fw pi-inbox',
                         to: '/signing/tasks'
                     }
@@ -24,12 +24,12 @@ const model = computed(() => {
             label: 'Admin Console',
             items: [
                 {
-                    label: 'Dashboard',
+                    label: 'ภาพรวม',
                     icon: 'pi pi-fw pi-home',
                     to: '/'
                 },
                 {
-                    label: 'เอกสารเพื่อเซ็น',
+                    label: 'เอกสารเซ็น',
                     icon: 'pi pi-fw pi-send',
                     to: '/signing/documents',
                     activeMatch: '/signing/documents'
@@ -40,15 +40,10 @@ const model = computed(() => {
             label: 'ตั้งค่าเอกสาร',
             items: [
                 {
-                    label: 'Config เอกสาร',
+                    label: 'ตั้งค่า Workflow',
                     icon: 'pi pi-fw pi-file-edit',
                     to: '/config/documents',
                     activeMatch: '/config/documents'
-                },
-                {
-                    label: 'Preset กรอบลายเซ็น',
-                    icon: 'pi pi-fw pi-pencil',
-                    to: '/config/signature-templates'
                 }
             ]
         },

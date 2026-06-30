@@ -76,7 +76,7 @@ async function loadDocFormats() {
         docFormats.value = result.docFormats || [];
     } catch (err) {
         docFormats.value = [];
-        toast.add({ severity: 'warn', summary: 'โหลด Doc Format จาก SML ไม่สำเร็จ', detail: err.message, life: 4500 });
+        toast.add({ severity: 'warn', summary: 'โหลดชนิดเอกสารจาก SML ไม่สำเร็จ', detail: err.message, life: 4500 });
     } finally {
         loadingFormats.value = false;
     }
@@ -220,7 +220,7 @@ function sameCode(left, right) {
 
         <Message v-if="error" severity="error" class="mb-4">{{ error }}</Message>
         <Message v-if="availableDocFormatOptions.length === 0 && !loading && docFormats.length > 0" severity="info" class="mb-4" :closable="false">
-            Doc Format จาก SML ถูกตั้งค่า Workflow ครบแล้ว
+            ชนิดเอกสารจาก SML ถูกตั้งค่า Workflow ครบแล้ว
         </Message>
 
         <DataTable :value="filteredWorkflows" :loading="loading" dataKey="docFormatCode" paginator :rows="10" responsiveLayout="scroll" stripedRows>
@@ -228,13 +228,13 @@ function sameCode(left, right) {
                 <div class="flex flex-wrap gap-2 items-center justify-between">
                     <div>
                         <h4 class="m-0">ตั้งค่า Workflow เอกสาร</h4>
-                        <p class="text-muted-color m-0 mt-1">1 รายการต่อ Doc Format ใช้กับเอกสารใหม่เท่านั้น</p>
+                        <p class="text-muted-color m-0 mt-1">1 รายการต่อชนิดเอกสาร ใช้กับเอกสารใหม่เท่านั้น</p>
                     </div>
                     <IconField>
                         <InputIcon>
                             <i class="pi pi-search" />
                         </InputIcon>
-                        <InputText v-model="searchQuery" placeholder="ค้นหา Doc Format หรือชื่อเอกสาร" />
+                        <InputText v-model="searchQuery" placeholder="ค้นหารหัสหรือชื่อเอกสาร" />
                     </IconField>
                 </div>
             </template>
@@ -243,7 +243,7 @@ function sameCode(left, right) {
                 <div class="py-6 text-center text-muted-color">{{ searchQuery ? 'ไม่พบ Workflow ที่ค้นหา' : 'ยังไม่มี Workflow เอกสาร' }}</div>
             </template>
 
-            <Column field="docFormatCode" header="Doc Format" sortable style="min-width: 14rem">
+            <Column field="docFormatCode" header="ชนิดเอกสาร" sortable style="min-width: 14rem">
                 <template #body="{ data }">
                     <div class="font-medium text-surface-900 dark:text-surface-0">{{ data.docFormatCode }}</div>
                     <div class="text-sm text-muted-color">{{ docFormatName(data.docFormat) }}</div>
@@ -266,9 +266,9 @@ function sameCode(left, right) {
                     </div>
                 </template>
             </Column>
-            <Column field="warningCount" header="Preset" sortable style="min-width: 10rem">
+            <Column field="warningCount" header="กรอบเริ่มต้น" sortable style="min-width: 10rem">
                 <template #body="{ data }">
-                    <Tag v-if="data.warningCount > 0" severity="warn" :value="`${data.warningCount} warning`" />
+                    <Tag v-if="data.warningCount > 0" severity="warn" :value="`${data.warningCount} แจ้งเตือน`" />
                     <Tag v-else severity="success" value="ปกติ" />
                 </template>
             </Column>
@@ -280,7 +280,7 @@ function sameCode(left, right) {
                     <div class="flex gap-2">
                         <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ Workflow" @click="openWorkflow(data.docFormatCode)" />
                         <Button icon="pi pi-copy" severity="secondary" rounded outlined aria-label="คัดลอก Workflow" :disabled="workflows.length < 2" @click="openCopy(data)" />
-                        <Button icon="pi pi-map-marker" severity="secondary" rounded outlined aria-label="Preset กรอบลายเซ็น" @click="openPreset(data.docFormatCode)" />
+                        <Button icon="pi pi-map-marker" severity="secondary" rounded outlined aria-label="กรอบเริ่มต้น" @click="openPreset(data.docFormatCode)" />
                     </div>
                 </template>
             </Column>
@@ -290,7 +290,7 @@ function sameCode(left, right) {
     <Dialog v-model:visible="createVisible" modal header="เพิ่ม Workflow เอกสาร" :style="{ width: 'min(34rem, 92vw)' }">
         <div class="flex flex-col gap-4">
             <div>
-                <label for="newDocFormat" class="block font-bold mb-3">Doc Format จาก SML</label>
+                <label for="newDocFormat" class="block font-bold mb-3">ชนิดเอกสารจาก SML</label>
                 <Select id="newDocFormat" v-model="selectedNewDocFormat" :options="availableDocFormatOptions" optionLabel="label" optionValue="value" filter fluid />
                 <small class="text-muted-color">เลือกครั้งเดียว แล้วเพิ่มขั้นตอนผู้เซ็นในหน้าถัดไป</small>
             </div>

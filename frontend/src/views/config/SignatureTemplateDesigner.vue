@@ -97,10 +97,10 @@ const canSave = computed(() => canEdit.value && !saving.value && !!template.valu
 const storedPageCount = computed(() => Number(template.value?.sampleFile?.pageCount || pageCount.value || 0));
 const requiredBoxCount = computed(() => configs.value.reduce((total, step) => total + requiredBoxesForStep(step), 0));
 const boxProgressLabel = computed(() => `${boxes.value.length}/${requiredBoxCount.value || 0}`);
-const validationStatusLabel = computed(() => (validationIssues.value.length === 0 ? 'ผ่านเงื่อนไข' : `${validationIssues.value.length} จุดต้องแก้`));
+const validationStatusLabel = computed(() => (validationIssues.value.length === 0 ? 'พร้อมใช้เป็นค่าเริ่มต้น' : `${validationIssues.value.length} จุดต้องแก้`));
 const validationStatusSeverity = computed(() => (validationIssues.value.length === 0 ? 'success' : 'warn'));
 const canAddBoxes = computed(() => canEdit.value && !!template.value?.sampleFileId);
-const docTitle = computed(() => docFormat.value?.name_1 || docFormat.value?.name_2 || 'Signature Template Designer');
+const docTitle = computed(() => docFormat.value?.name_1 || docFormat.value?.name_2 || 'กรอบเริ่มต้น');
 const pdfMetaLabel = computed(() => {
     if (rendering.value) return 'กำลัง render PDF';
     if (!pageSize.value.width) return '';
@@ -163,7 +163,7 @@ async function loadState() {
         }
     } catch (err) {
         error.value = err.message;
-        toast.add({ severity: 'error', summary: 'โหลด Template ไม่สำเร็จ', detail: err.message, life: 4000 });
+        toast.add({ severity: 'error', summary: 'โหลดกรอบเริ่มต้นไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         loading.value = false;
     }
@@ -502,7 +502,7 @@ function cleanupPointerListeners() {
 async function saveTemplate(showToast = true) {
     if (!template.value?.id) return null;
     if (!canEdit.value) {
-        toast.add({ severity: 'warn', summary: 'Template นี้แก้ไขไม่ได้', life: 4000 });
+        toast.add({ severity: 'warn', summary: 'กรอบเริ่มต้นนี้แก้ไขไม่ได้', life: 4000 });
         return null;
     }
 
@@ -655,7 +655,7 @@ function canAddBoxForStep(step, stepBoxes = []) {
 
 function addDisabledReasonForStep(step, stepBoxes = []) {
     if (!template.value?.sampleFileId) return 'ต้องอัปโหลด PDF ก่อน';
-    if (!canEdit.value) return 'Template นี้แก้ไขไม่ได้';
+    if (!canEdit.value) return 'กรอบเริ่มต้นนี้แก้ไขไม่ได้';
     if (stepBoxes.length >= requiredBoxesForStep(step)) return 'เพิ่มครบแล้ว';
     return '';
 }
@@ -670,6 +670,13 @@ function conditionSeverity(value) {
     if (Number(value) === 1) return 'info';
     if (Number(value) === 2) return 'warn';
     return 'secondary';
+}
+
+function signerTypeShortLabel(value) {
+    if (value === 'external') return 'ภายนอก';
+    if (value === 'internal') return 'ภายใน';
+    if (value === 'any') return 'คนใดคนหนึ่ง';
+    return value || '-';
 }
 
 function groupBoxesBy(getKey) {
@@ -742,7 +749,7 @@ function requestBackNavigation() {
         return;
     }
     confirm.require({
-        message: 'มีการแก้ไขกรอบลายเซ็นที่ยังไม่ได้บันทึก ต้องการกลับไปหน้ารายการ Template และทิ้งการแก้ไขหรือไม่?',
+        message: 'มีการแก้ไขกรอบลายเซ็นที่ยังไม่ได้บันทึก ต้องการกลับไปหน้ารายการกรอบเริ่มต้นและทิ้งการแก้ไขหรือไม่?',
         header: 'ยังไม่ได้บันทึก',
         icon: 'pi pi-exclamation-triangle',
         rejectProps: {
@@ -802,7 +809,7 @@ function recordDesignerEvent(event, extra = {}) {
                 <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="requestBackNavigation" />
                 <div class="min-w-0">
                     <div class="doc-heading">
-                        <span>Preset กรอบลายเซ็น {{ docFormatCode }}</span>
+                        <span>กรอบเริ่มต้น {{ docFormatCode }}</span>
                         <Tag :value="boxProgressLabel" :severity="validationStatusSeverity" />
                         <Tag :value="validationStatusLabel" :severity="validationStatusSeverity" />
                         <Tag v-if="dirty" value="ยังไม่ได้บันทึก" severity="warn" />
@@ -831,7 +838,7 @@ function recordDesignerEvent(event, extra = {}) {
                         <Button icon="pi pi-search-minus" severity="secondary" outlined :disabled="zoom <= 0.6" aria-label="Zoom out" @click="setZoom(zoom - 0.1)" />
                         <span class="zoom-value">{{ Math.round(zoom * 100) }}%</span>
                         <Button icon="pi pi-search-plus" severity="secondary" outlined :disabled="zoom >= 2" aria-label="Zoom in" @click="setZoom(zoom + 0.1)" />
-                        <Button label="Fit width" icon="pi pi-arrows-h" severity="secondary" outlined :disabled="!pageSize.width" @click="activateFitWidth" />
+                        <Button label="พอดีกว้าง" icon="pi pi-arrows-h" severity="secondary" outlined :disabled="!pageSize.width" @click="activateFitWidth" />
                         <Button label="100%" severity="secondary" outlined :disabled="!pageSize.width" @click="setZoom(1)" />
                     </div>
                     <span class="pdf-meta">{{ pdfMetaLabel }}</span>
@@ -839,7 +846,7 @@ function recordDesignerEvent(event, extra = {}) {
 
                 <div v-if="loading && !template?.sampleFileId" class="signature-empty compact">
                     <i class="pi pi-spin pi-spinner text-3xl text-muted-color"></i>
-                    <div class="font-semibold mt-3">กำลังโหลด Template</div>
+                    <div class="font-semibold mt-3">กำลังโหลดกรอบเริ่มต้น</div>
                 </div>
 
                 <div v-else-if="!template?.sampleFileId" class="signature-empty">
@@ -928,7 +935,7 @@ function recordDesignerEvent(event, extra = {}) {
                                 :disabled="!canEdit"
                                 @update:modelValue="updateBoxSignerUser(selectedBox, $event)"
                             />
-                            <small class="text-muted-color">Condition “ทุกคน” ต้องมี user ไม่ซ้ำกันใน position เดียวกัน</small>
+                            <small class="text-muted-color">เงื่อนไข “ทุกคน” ต้องมีผู้ใช้งานไม่ซ้ำกันในตำแหน่งเดียวกัน</small>
                         </div>
 
                         <div class="ratio-grid">
@@ -996,7 +1003,7 @@ function recordDesignerEvent(event, extra = {}) {
                     <div class="panel-title">
                         <div>
                             <div class="font-semibold">ขั้นตอนและกรอบ</div>
-                            <div class="text-sm text-muted-color">{{ boxProgressLabel }} กรอบตามเงื่อนไข</div>
+                            <div class="text-sm text-muted-color">{{ boxes.length }} กรอบที่ใช้เป็นค่าเริ่มต้น</div>
                         </div>
                         <Tag :value="validationStatusLabel" :severity="validationStatusSeverity" />
                     </div>
@@ -1042,7 +1049,7 @@ function recordDesignerEvent(event, extra = {}) {
                                     @click.stop="selectBox(box, { scrollIntoView: true })"
                                 >
                                     <span>{{ box.label || box.signerUser || box.positionCode }}</span>
-                                    <small>หน้า {{ box.pageNo }} / {{ box.signerType }}</small>
+                                    <small>หน้า {{ box.pageNo }} / {{ signerTypeShortLabel(box.signerType) }}</small>
                                 </button>
                             </div>
 
@@ -1057,7 +1064,7 @@ function recordDesignerEvent(event, extra = {}) {
                 </section>
 
                 <section v-if="validationByPosition.get('_global')?.length" class="inspector-panel">
-                    <div class="font-semibold mb-3">แจ้งเตือน Template</div>
+                    <div class="font-semibold mb-3">แจ้งเตือนกรอบเริ่มต้น</div>
                     <div class="step-issues">
                         <div v-for="issue in validationByPosition.get('_global')" :key="`${issue.code}-${issue.message}`" class="issue-line">
                             <i class="pi pi-exclamation-triangle"></i>
