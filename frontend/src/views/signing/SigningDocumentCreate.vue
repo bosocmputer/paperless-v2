@@ -564,22 +564,22 @@ function makeClientId() {
 
 <template>
     <div class="card min-w-0 overflow-hidden signing-create-card" :class="{ 'signing-create-card-designer': designerMode }">
-        <Toolbar class="mb-3 signing-create-header">
-            <template #start>
-                <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="router.push({ name: 'signing-documents' })" />
-                <div class="ml-2 signing-create-title">
-                    <h4 class="m-0">{{ designerMode ? form.selectedCandidate?.doc_no || 'ส่งเอกสารใหม่' : 'ส่งเอกสารใหม่' }}</h4>
-                    <small class="text-muted-color">{{ designerMode ? selectedDocFormatLabel : headerSummary }}</small>
-                </div>
-            </template>
-            <template #end>
-                <div class="flex items-center gap-2">
+        <div class="mb-3 bg-surface-50 dark:bg-surface-950">
+            <div class="bg-surface-0 dark:bg-surface-900 p-4 shadow rounded-2xl flex flex-col gap-3">
+                <div class="flex items-center gap-4">
+                    <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="router.push({ name: 'signing-documents' })" />
+                    <div class="flex flex-col gap-1 flex-1 min-w-0">
+                        <div class="text-2xl leading-tight font-semibold text-surface-900 dark:text-surface-0 truncate">
+                            {{ designerMode ? form.selectedCandidate?.doc_no || 'ส่งเอกสารใหม่' : 'ส่งเอกสารใหม่' }}
+                        </div>
+                        <div class="text-base leading-tight text-surface-500 dark:text-surface-300 truncate">
+                            {{ designerMode ? selectedDocFormatLabel : headerSummary }}
+                        </div>
+                    </div>
                     <Tag v-if="designerMode" value="PDF และกรอบ" severity="success" />
-                    <Button v-if="designerMode" icon="pi pi-list" severity="secondary" outlined rounded aria-label="กลับรายการเอกสาร" @click="router.push({ name: 'signing-documents' })" />
-                    <Button v-else label="กลับรายการเอกสาร" icon="pi pi-list" severity="secondary" outlined @click="router.push({ name: 'signing-documents' })" />
                 </div>
-            </template>
-        </Toolbar>
+            </div>
+        </div>
 
         <Stepper v-model:value="activeStepValue" linear class="min-w-0 signing-create-stepper">
             <StepList v-show="!designerMode" class="min-w-0">
@@ -765,15 +765,6 @@ function makeClientId() {
     min-height: 0;
     flex-direction: column;
     padding: 1rem;
-}
-
-.signing-create-title {
-    display: grid;
-    gap: 0.15rem;
-}
-
-.signing-create-card-designer .signing-create-title h4 {
-    font-size: 1.1rem;
 }
 
 .signing-create-card-designer .signing-create-stepper {
