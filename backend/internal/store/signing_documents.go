@@ -26,6 +26,7 @@ type CreateSigningDocumentInput struct {
 	Configs             []models.DocumentConfigStep
 	File                models.UploadedFile
 	CurrentFile         *models.UploadedFile
+	CurrentLegalVersion string
 	ActorID             string
 	IPAddress           string
 	UserAgent           string
@@ -175,10 +176,11 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 	}
 	if currentHasLegalNotice {
 		if err := insertSigningEvent(ctx, tx, documentID, input.ActorID, "", "pdf_stamped", "สร้าง PDF พร้อมข้อความกฎหมายแล้ว", input.IPAddress, input.UserAgent, map[string]any{
-			"fileId":             currentFileID,
-			"signatureCount":     0,
-			"final":              false,
-			"legalNoticeStamped": true,
+			"fileId":                    currentFileID,
+			"signatureCount":            0,
+			"final":                     false,
+			"legalNoticeStamped":        true,
+			"legalNoticeDisplayVersion": input.CurrentLegalVersion,
 		}); err != nil {
 			return models.SigningDocument{}, err
 		}

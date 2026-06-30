@@ -111,12 +111,20 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		return err
 	}
 	return s.store.AddSigningEvent(ctx, document.ID, "", "", action, message, "", "", map[string]any{
-		"fileId":             uploaded.ID,
-		"fileSha256":         uploaded.SHA256,
-		"signatureCount":     len(signers),
-		"final":              final,
-		"legalNoticeStamped": document.LegalNoticeSnapshot != nil,
+		"fileId":                    uploaded.ID,
+		"fileSha256":                uploaded.SHA256,
+		"signatureCount":            len(signers),
+		"final":                     final,
+		"legalNoticeStamped":        document.LegalNoticeSnapshot != nil,
+		"legalNoticeDisplayVersion": legalNoticeDisplayVersion(document.LegalNoticeSnapshot),
 	})
+}
+
+func legalNoticeDisplayVersion(notice *models.LegalNoticeSnapshot) string {
+	if notice == nil {
+		return ""
+	}
+	return signingLegalNoticePDFDisplayVersion
 }
 
 func stampPDFWithSignatures(sourcePath string, pageCount int, signers []models.SigningDocumentSigner, signatureFiles map[string]models.UploadedFile) ([]byte, error) {
@@ -219,7 +227,7 @@ func importPDFPages(pdf *gofpdf.Fpdf, importer *gofpdi.Importer, sourcePath stri
 }
 
 func drawLegalNoticeBox(pdf *gofpdf.Fpdf, notice models.LegalNoticeSnapshot, size gofpdf.SizeType) {
-	text := firstNonEmpty(notice.Text, signingLegalText)
+	text := legalNoticeDisplayText(firstNonEmpty(notice.Text, signingLegalText))
 	x := clampRatio(notice.XRatio) * size.Wd
 	y := clampRatio(notice.YRatio) * size.Ht
 	w := clampRatio(notice.WidthRatio) * size.Wd
@@ -242,6 +250,19 @@ func drawLegalNoticeBox(pdf *gofpdf.Fpdf, notice models.LegalNoticeSnapshot, siz
 	pdf.SetFont("noto-thai", "", fontSize)
 	pdf.SetXY(x+padding, textY)
 	pdf.MultiCell(textWidth, lineHeight, text, "", "C", false)
+}
+
+func legalNoticeDisplayText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" || text == signingLegalText {
+		return "เอกสารนี้จัดทำและลงนามในรูปแบบอิเล็กทรอนิกส์ตาม พระราชบัญญัติธุรกรรมทางอิเล็กทรอนิกส์ พุทธศักราช ๒๕๔๔ ผู้ลงนามยืนยันความถูกต้องของเนื้อหาและยอมรับผลผูกพันทางกฎหมายทุกประการ"
+	}
+	return strings.NewReplacer(
+		"พ.ร.บ.", "พระราชบัญญัติ",
+		"พ.ศ.", "พุทธศักราช",
+		"2544", "๒๕๔๔",
+		".", "",
+	).Replace(text)
 }
 
 func fitLegalNoticeText(pdf *gofpdf.Fpdf, text string, width, height float64) (float64, float64, [][]byte) {

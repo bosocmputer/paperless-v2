@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	signingLegalTextVersion = "thai-eta-2544-v2"
-	signingLegalText        = "เอกสารนี้จัดทำและลงนามในรูปแบบอิเล็กทรอนิกส์ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ผู้ลงนามยืนยันความถูกต้องของเนื้อหาและยอมรับผลผูกพันทางกฎหมายทุกประการ"
-	maxSigningEventBytes    = 8 * 1024
+	signingLegalTextVersion             = "thai-eta-2544-v2"
+	signingLegalNoticePDFDisplayVersion = "thai-safe-v1"
+	signingLegalText                    = "เอกสารนี้จัดทำและลงนามในรูปแบบอิเล็กทรอนิกส์ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ผู้ลงนามยืนยันความถูกต้องของเนื้อหาและยอมรับผลผูกพันทางกฎหมายทุกประการ"
+	maxSigningEventBytes                = 8 * 1024
 )
 
 var signingUXEventNames = map[string]bool{
@@ -263,6 +264,7 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		Configs:             selectedConfigs,
 		File:                uploaded,
 		CurrentFile:         &currentFile,
+		CurrentLegalVersion: signingLegalNoticePDFDisplayVersion,
 		ActorID:             actor.ID,
 		IPAddress:           clientIP(r),
 		UserAgent:           r.UserAgent(),
@@ -358,7 +360,7 @@ func currentPDFNeedsLegalNoticeRefresh(document models.SigningDocument) bool {
 		if event.Action != "pdf_stamped" && event.Action != "final_pdf_ready" {
 			continue
 		}
-		if metadataBool(event.Metadata, "legalNoticeStamped") {
+		if metadataBool(event.Metadata, "legalNoticeStamped") && metadataString(event.Metadata, "legalNoticeDisplayVersion") == signingLegalNoticePDFDisplayVersion {
 			return false
 		}
 	}
@@ -380,6 +382,22 @@ func metadataBool(metadata map[string]any, key string) bool {
 		return strings.EqualFold(strings.TrimSpace(typed), "true")
 	default:
 		return false
+	}
+}
+
+func metadataString(metadata map[string]any, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	value, ok := metadata[key]
+	if !ok {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	default:
+		return ""
 	}
 }
 

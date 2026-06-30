@@ -244,7 +244,7 @@ func TestCurrentPDFNeedsLegalNoticeRefresh(t *testing.T) {
 	doc.CurrentFileID = "file-current"
 	doc.Events = []models.SigningDocumentEvent{{
 		Action:   "pdf_stamped",
-		Metadata: map[string]any{"legalNoticeStamped": true},
+		Metadata: map[string]any{"legalNoticeStamped": true, "legalNoticeDisplayVersion": signingLegalNoticePDFDisplayVersion},
 	}}
 	if currentPDFNeedsLegalNoticeRefresh(doc) {
 		t.Fatalf("expected legal stamped current PDF to skip refresh")
@@ -256,6 +256,14 @@ func TestCurrentPDFNeedsLegalNoticeRefresh(t *testing.T) {
 	}}
 	if !currentPDFNeedsLegalNoticeRefresh(doc) {
 		t.Fatalf("expected old current PDF without legal notice marker to need refresh")
+	}
+
+	doc.Events = []models.SigningDocumentEvent{{
+		Action:   "pdf_stamped",
+		Metadata: map[string]any{"legalNoticeStamped": true},
+	}}
+	if !currentPDFNeedsLegalNoticeRefresh(doc) {
+		t.Fatalf("expected old current PDF without display version to need refresh")
 	}
 }
 

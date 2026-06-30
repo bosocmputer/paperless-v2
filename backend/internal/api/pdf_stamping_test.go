@@ -239,6 +239,16 @@ func TestStampPDFWithLegalNoticeWorksBeforeAnySignature(t *testing.T) {
 	}
 }
 
+func TestLegalNoticeDisplayTextUsesThaiSafeGlyphs(t *testing.T) {
+	text := legalNoticeDisplayText(signingLegalText)
+	if strings.Contains(text, ".") || strings.Contains(text, "2544") {
+		t.Fatalf("display text should avoid glyphs missing from the embedded Thai font: %q", text)
+	}
+	if !strings.Contains(text, "พระราชบัญญัติ") || !strings.Contains(text, "๒๕๔๔") {
+		t.Fatalf("display text should preserve legal meaning in Thai-safe form: %q", text)
+	}
+}
+
 func TestCreatePrintCopyPDFAddsPage(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "source.pdf")
