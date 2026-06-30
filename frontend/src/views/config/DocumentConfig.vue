@@ -49,7 +49,6 @@ const filteredWorkflows = computed(() => {
         normalizeSearch(`${workflow.docFormatCode} ${docFormatName(workflow.docFormat)} ${workflow.screenCode} ${conditionSummaryText(workflow)} ${workflow.stepCount}`).includes(query)
     );
 });
-const hasWorkflows = computed(() => workflows.value.length > 0);
 
 onMounted(loadPage);
 
@@ -133,8 +132,15 @@ function confirmCopy() {
         message: `คัดลอก Workflow จาก ${copySourceDocFormat.value} มาแทน ${copyTarget.value.docFormatCode}? ขั้นตอนเดิมของ ${copyTarget.value.docFormatCode} จะถูกแทนที่ทั้งหมด`,
         header: 'ยืนยันคัดลอก Workflow',
         icon: 'pi pi-copy',
-        acceptLabel: 'คัดลอก Workflow',
-        rejectLabel: 'ยกเลิก',
+        rejectProps: {
+            label: 'ยกเลิก',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'คัดลอก Workflow',
+            severity: 'warn'
+        },
         accept: copyWorkflow
     });
 }
@@ -167,7 +173,7 @@ function conditionSummary(workflow) {
     return [
         { label: 'คนใดคนหนึ่ง', value: Number(counts['1'] || 0), severity: 'info' },
         { label: 'ทุกคน', value: Number(counts['2'] || 0), severity: 'warn' },
-        { label: 'ภายนอก', value: Number(counts['3'] || 0), severity: 'secondary' }
+        { label: 'บุคคลภายนอก', value: Number(counts['3'] || 0), severity: 'secondary' }
     ].filter((item) => item.value > 0);
 }
 
@@ -202,355 +208,129 @@ function sameCode(left, right) {
 </script>
 
 <template>
-    <div class="document-config-page">
-        <section class="page-heading">
-            <div>
-                <h1>Config เอกสาร</h1>
-                <p>ตั้งค่า workflow ต่อชนิดเอกสารครั้งเดียว แล้วใช้ซ้ำตอนสร้างเอกสารเพื่อเซ็น</p>
-            </div>
-            <div class="heading-actions">
-                <Button label="เพิ่ม Workflow" icon="pi pi-plus" :disabled="loading || loadingFormats || availableDocFormatOptions.length === 0" @click="openCreate" />
-            </div>
-        </section>
+    <div class="card">
+        <Toolbar class="mb-6">
+            <template #start>
+                <Button label="เพิ่ม Workflow" icon="pi pi-plus" severity="secondary" :disabled="loading || loadingFormats || availableDocFormatOptions.length === 0" @click="openCreate" />
+            </template>
+            <template #end>
+                <Button label="โหลดใหม่" icon="pi pi-refresh" severity="secondary" outlined :loading="loading" @click="loadPage" />
+            </template>
+        </Toolbar>
 
-        <Message v-if="availableDocFormatOptions.length === 0 && !loading && docFormats.length > 0" severity="info" :closable="false">
-            Doc Format จาก SML ถูกตั้งค่า Workflow ครบแล้ว ถ้าต้องเพิ่มชนิดใหม่ให้เพิ่มใน SML ก่อน
+        <Message v-if="error" severity="error" class="mb-4">{{ error }}</Message>
+        <Message v-if="availableDocFormatOptions.length === 0 && !loading && docFormats.length > 0" severity="info" class="mb-4" :closable="false">
+            Doc Format จาก SML ถูกตั้งค่า Workflow ครบแล้ว
         </Message>
-        <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
 
-        <section class="workflow-toolbar">
-            <span class="p-input-icon-left workflow-search">
-                <i class="pi pi-search" />
-                <InputText v-model="searchQuery" placeholder="ค้นหา PO, ชื่อเอกสาร, เงื่อนไข" />
-            </span>
-            <Button label="โหลดใหม่" icon="pi pi-refresh" outlined :loading="loading" @click="loadPage" />
-        </section>
-
-        <div v-if="loading" class="workflow-grid">
-            <div v-for="index in 6" :key="index" class="workflow-card">
-                <Skeleton width="8rem" height="1.5rem" />
-                <Skeleton width="100%" height="1rem" class="mt-3" />
-                <Skeleton width="70%" height="1rem" class="mt-2" />
-            </div>
-        </div>
-
-        <div v-else-if="!hasWorkflows" class="empty-state">
-            <i class="pi pi-file-edit" />
-            <h2>ยังไม่มี Workflow เอกสาร</h2>
-            <p>เริ่มจากเลือก Doc Format จาก SML แล้วเพิ่มขั้นตอนผู้เซ็นเป็นชุดเดียว</p>
-            <Button label="เพิ่ม Workflow" icon="pi pi-plus" :disabled="availableDocFormatOptions.length === 0" @click="openCreate" />
-        </div>
-
-        <div v-else-if="filteredWorkflows.length === 0" class="empty-state">
-            <i class="pi pi-search" />
-            <h2>ไม่พบ Workflow ที่ค้นหา</h2>
-            <p>ลองค้นด้วยรหัสเอกสาร เช่น PO หรือชื่อเอกสารจาก SML</p>
-        </div>
-
-        <div v-else class="workflow-grid">
-            <article v-for="workflow in filteredWorkflows" :key="workflow.docFormatCode" class="workflow-card">
-                <div class="workflow-card-top">
+        <DataTable :value="filteredWorkflows" :loading="loading" dataKey="docFormatCode" paginator :rows="10" responsiveLayout="scroll" stripedRows>
+            <template #header>
+                <div class="flex flex-wrap gap-2 items-center justify-between">
                     <div>
-                        <div class="doc-code">{{ workflow.docFormatCode }}</div>
-                        <h2>{{ docFormatName(workflow.docFormat) }}</h2>
-                        <p>{{ workflow.screenCode || '-' }}</p>
+                        <h4 class="m-0">ตั้งค่า Workflow เอกสาร</h4>
+                        <p class="text-muted-color m-0 mt-1">1 รายการต่อ Doc Format ใช้กับเอกสารใหม่เท่านั้น</p>
                     </div>
-                    <Tag v-if="workflow.warningCount > 0" severity="warn" :value="`${workflow.warningCount} warning`" />
-                    <Tag v-else severity="success" value="พร้อมใช้งาน" />
+                    <IconField>
+                        <InputIcon>
+                            <i class="pi pi-search" />
+                        </InputIcon>
+                        <InputText v-model="searchQuery" placeholder="ค้นหา Doc Format หรือชื่อเอกสาร" />
+                    </IconField>
                 </div>
-
-                <div class="workflow-stats">
-                    <div>
-                        <strong>{{ workflow.stepCount }}</strong>
-                        <span>ขั้นตอน</span>
-                    </div>
-                    <div>
-                        <strong>{{ workflow.userCount }}</strong>
-                        <span>ผู้เกี่ยวข้อง</span>
-                    </div>
-                    <div>
-                        <strong>{{ formatDateTime(workflow.updatedAt) }}</strong>
-                        <span>แก้ไขล่าสุด</span>
-                    </div>
-                </div>
-
-                <div class="condition-tags">
-                    <Tag v-for="item in conditionSummary(workflow)" :key="item.label" :severity="item.severity" :value="`${item.label} ${item.value}`" rounded />
-                    <Tag v-if="conditionSummary(workflow).length === 0" severity="secondary" value="ยังไม่มีขั้นตอน" rounded />
-                </div>
-
-                <div class="workflow-actions">
-                    <Button label="แก้ Workflow" icon="pi pi-pencil" @click="openWorkflow(workflow.docFormatCode)" />
-                    <Button label="คัดลอก Workflow" icon="pi pi-copy" outlined :disabled="workflows.length < 2" @click="openCopy(workflow)" />
-                    <Button label="Preset กรอบ" icon="pi pi-map-marker" text @click="openPreset(workflow.docFormatCode)" />
-                </div>
-            </article>
-        </div>
-
-        <Dialog v-model:visible="createVisible" modal header="เพิ่ม Workflow เอกสาร" :style="{ width: 'min(36rem, 94vw)' }">
-            <div class="dialog-stack">
-                <label for="newDocFormat">Doc Format จาก SML</label>
-                <Select id="newDocFormat" v-model="selectedNewDocFormat" :options="availableDocFormatOptions" optionLabel="label" optionValue="value" filter fluid />
-                <small>เมื่อเลือกแล้วจะเข้าไปเพิ่มขั้นตอนทั้งหมดของเอกสารนั้นในหน้าเดียว</small>
-            </div>
-            <template #footer>
-                <Button label="ยกเลิก" text @click="createVisible = false" />
-                <Button label="เริ่มตั้งค่า Workflow" icon="pi pi-arrow-right" :disabled="!selectedNewDocFormat" @click="createWorkflow" />
             </template>
-        </Dialog>
 
-        <Dialog v-model:visible="copyVisible" modal header="คัดลอก Workflow" :style="{ width: 'min(48rem, 96vw)' }">
-            <div v-if="copyTarget" class="dialog-stack">
-                <Message severity="warn" :closable="false">
-                    การคัดลอกจะแทนที่ Workflow ปัจจุบันของ {{ copyTarget.docFormatCode }} ทั้งชุด
-                </Message>
-                <label for="sourceWorkflow">เลือก Workflow ต้นทาง</label>
-                <Select id="sourceWorkflow" v-model="copySourceDocFormat" :options="workflowOptions" optionLabel="label" optionValue="value" filter fluid @change="loadCopyPreview" />
-
-                <div class="copy-preview">
-                    <div class="copy-preview-title">
-                        <strong>Preview ขั้นตอนที่จะคัดลอก</strong>
-                        <ProgressSpinner v-if="loadingCopyPreview" style="width: 1.25rem; height: 1.25rem" strokeWidth="6" />
-                    </div>
-                    <div v-if="copyPreview?.steps?.length" class="preview-step-list">
-                        <div v-for="step in copyPreview.steps" :key="step.id" class="preview-step">
-                            <span>{{ step.sequenceNo }}.</span>
-                            <strong>{{ step.positionCode }} - {{ step.positionName }}</strong>
-                            <small>{{ step.user01 || '-' }} {{ step.user02 || '' }} {{ step.user03 || '' }}</small>
-                        </div>
-                    </div>
-                    <p v-else class="muted-text">เลือก workflow ต้นทางเพื่อดู preview</p>
-                </div>
-            </div>
-            <template #footer>
-                <Button label="ยกเลิก" text :disabled="copying" @click="copyVisible = false" />
-                <Button label="คัดลอก Workflow" icon="pi pi-copy" severity="warn" :loading="copying" :disabled="!copyPreview?.steps?.length" @click="confirmCopy" />
+            <template #empty>
+                <div class="py-6 text-center text-muted-color">{{ searchQuery ? 'ไม่พบ Workflow ที่ค้นหา' : 'ยังไม่มี Workflow เอกสาร' }}</div>
             </template>
-        </Dialog>
+
+            <Column field="docFormatCode" header="Doc Format" sortable style="min-width: 14rem">
+                <template #body="{ data }">
+                    <div class="font-medium text-surface-900 dark:text-surface-0">{{ data.docFormatCode }}</div>
+                    <div class="text-sm text-muted-color">{{ docFormatName(data.docFormat) }}</div>
+                </template>
+            </Column>
+            <Column field="screenCode" header="Screen" sortable style="min-width: 8rem">
+                <template #body="{ data }">{{ data.screenCode || '-' }}</template>
+            </Column>
+            <Column field="stepCount" header="ขั้นตอน" sortable style="min-width: 9rem">
+                <template #body="{ data }">
+                    <div class="font-medium">{{ data.stepCount }} ขั้นตอน</div>
+                    <div class="text-sm text-muted-color">{{ data.userCount }} ผู้เกี่ยวข้อง</div>
+                </template>
+            </Column>
+            <Column header="เงื่อนไข" style="min-width: 18rem">
+                <template #body="{ data }">
+                    <div class="flex flex-wrap gap-2">
+                        <Tag v-for="item in conditionSummary(data)" :key="item.label" :severity="item.severity" :value="`${item.label} ${item.value}`" />
+                        <Tag v-if="conditionSummary(data).length === 0" severity="secondary" value="ยังไม่มีขั้นตอน" />
+                    </div>
+                </template>
+            </Column>
+            <Column field="warningCount" header="Preset" sortable style="min-width: 10rem">
+                <template #body="{ data }">
+                    <Tag v-if="data.warningCount > 0" severity="warn" :value="`${data.warningCount} warning`" />
+                    <Tag v-else severity="success" value="ปกติ" />
+                </template>
+            </Column>
+            <Column field="updatedAt" header="แก้ไขล่าสุด" sortable style="min-width: 12rem">
+                <template #body="{ data }">{{ formatDateTime(data.updatedAt) }}</template>
+            </Column>
+            <Column header="จัดการ" :exportable="false" style="min-width: 13rem">
+                <template #body="{ data }">
+                    <div class="flex gap-2">
+                        <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ Workflow" @click="openWorkflow(data.docFormatCode)" />
+                        <Button icon="pi pi-copy" severity="secondary" rounded outlined aria-label="คัดลอก Workflow" :disabled="workflows.length < 2" @click="openCopy(data)" />
+                        <Button icon="pi pi-map-marker" severity="secondary" rounded outlined aria-label="Preset กรอบลายเซ็น" @click="openPreset(data.docFormatCode)" />
+                    </div>
+                </template>
+            </Column>
+        </DataTable>
     </div>
+
+    <Dialog v-model:visible="createVisible" modal header="เพิ่ม Workflow เอกสาร" :style="{ width: 'min(34rem, 92vw)' }">
+        <div class="flex flex-col gap-4">
+            <div>
+                <label for="newDocFormat" class="block font-bold mb-3">Doc Format จาก SML</label>
+                <Select id="newDocFormat" v-model="selectedNewDocFormat" :options="availableDocFormatOptions" optionLabel="label" optionValue="value" filter fluid />
+                <small class="text-muted-color">เลือกครั้งเดียว แล้วเพิ่มขั้นตอนผู้เซ็นในหน้าถัดไป</small>
+            </div>
+        </div>
+        <template #footer>
+            <Button label="ยกเลิก" icon="pi pi-times" text @click="createVisible = false" />
+            <Button label="เริ่มตั้งค่า" icon="pi pi-arrow-right" :disabled="!selectedNewDocFormat" @click="createWorkflow" />
+        </template>
+    </Dialog>
+
+    <Dialog v-model:visible="copyVisible" modal header="คัดลอก Workflow" :style="{ width: 'min(48rem, 94vw)' }">
+        <div v-if="copyTarget" class="flex flex-col gap-4">
+            <Message severity="warn" :closable="false">การคัดลอกจะแทนที่ Workflow ปัจจุบันของ {{ copyTarget.docFormatCode }} ทั้งชุด</Message>
+
+            <div>
+                <label for="sourceWorkflow" class="block font-bold mb-3">Workflow ต้นทาง</label>
+                <Select id="sourceWorkflow" v-model="copySourceDocFormat" :options="workflowOptions" optionLabel="label" optionValue="value" filter fluid @change="loadCopyPreview" />
+            </div>
+
+            <DataTable :value="copyPreview?.steps || []" :loading="loadingCopyPreview" dataKey="id" responsiveLayout="scroll" size="small" stripedRows>
+                <template #header>
+                    <div class="font-semibold">Preview ขั้นตอนที่จะคัดลอก</div>
+                </template>
+                <template #empty>
+                    <div class="py-4 text-center text-muted-color">เลือก workflow ต้นทางเพื่อดู preview</div>
+                </template>
+                <Column field="sequenceNo" header="ลำดับ" style="width: 6rem" />
+                <Column header="Position">
+                    <template #body="{ data }">
+                        <div class="font-medium">{{ data.positionCode }} - {{ data.positionName }}</div>
+                    </template>
+                </Column>
+                <Column header="ผู้เซ็น">
+                    <template #body="{ data }">{{ [data.user01, data.user02, data.user03].filter(Boolean).join(', ') || '-' }}</template>
+                </Column>
+            </DataTable>
+        </div>
+        <template #footer>
+            <Button label="ยกเลิก" icon="pi pi-times" text :disabled="copying" @click="copyVisible = false" />
+            <Button label="คัดลอก Workflow" icon="pi pi-copy" severity="warn" :loading="copying" :disabled="!copyPreview?.steps?.length" @click="confirmCopy" />
+        </template>
+    </Dialog>
 </template>
-
-<style scoped>
-.document-config-page {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-}
-
-.page-heading,
-.workflow-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-}
-
-.page-heading h1 {
-    margin: 0;
-    font-size: 1.5rem;
-    font-weight: 700;
-}
-
-.page-heading p {
-    margin: 0.35rem 0 0;
-    color: var(--text-color-secondary);
-}
-
-.heading-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-}
-
-.workflow-search {
-    width: min(32rem, 100%);
-}
-
-.workflow-search :deep(.p-inputtext) {
-    width: 100%;
-}
-
-.workflow-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
-    gap: 1rem;
-}
-
-.workflow-card {
-    display: flex;
-    min-height: 16rem;
-    flex-direction: column;
-    gap: 1rem;
-    border: 1px solid var(--surface-border);
-    border-radius: 8px;
-    background: var(--surface-card);
-    padding: 1rem;
-}
-
-.workflow-card-top {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-}
-
-.doc-code {
-    color: var(--primary-color);
-    font-size: 1.2rem;
-    font-weight: 800;
-}
-
-.workflow-card h2 {
-    margin: 0.15rem 0;
-    font-size: 1rem;
-    font-weight: 700;
-}
-
-.workflow-card p,
-.muted-text {
-    margin: 0;
-    color: var(--text-color-secondary);
-}
-
-.workflow-stats {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.75rem;
-}
-
-.workflow-stats div {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    gap: 0.2rem;
-}
-
-.workflow-stats strong {
-    min-height: 1.25rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.workflow-stats span {
-    color: var(--text-color-secondary);
-    font-size: 0.82rem;
-}
-
-.condition-tags,
-.workflow-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-}
-
-.workflow-actions {
-    margin-top: auto;
-}
-
-.empty-state {
-    display: flex;
-    min-height: 20rem;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.75rem;
-    border: 1px dashed var(--surface-border);
-    border-radius: 8px;
-    background: var(--surface-card);
-    padding: 2rem;
-    text-align: center;
-}
-
-.empty-state i {
-    color: var(--primary-color);
-    font-size: 2rem;
-}
-
-.empty-state h2 {
-    margin: 0;
-    font-size: 1.2rem;
-}
-
-.empty-state p {
-    max-width: 34rem;
-    margin: 0;
-    color: var(--text-color-secondary);
-}
-
-.dialog-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-}
-
-.dialog-stack label {
-    font-weight: 700;
-}
-
-.dialog-stack small {
-    color: var(--text-color-secondary);
-}
-
-.copy-preview {
-    border: 1px solid var(--surface-border);
-    border-radius: 8px;
-    padding: 0.85rem;
-}
-
-.copy-preview-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    margin-bottom: 0.65rem;
-}
-
-.preview-step-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.preview-step {
-    display: grid;
-    grid-template-columns: 2.5rem minmax(8rem, 1fr);
-    gap: 0.25rem 0.5rem;
-    border-bottom: 1px solid var(--surface-border);
-    padding-bottom: 0.5rem;
-}
-
-.preview-step:last-child {
-    border-bottom: 0;
-    padding-bottom: 0;
-}
-
-.preview-step small {
-    grid-column: 2;
-}
-
-@media (max-width: 720px) {
-    .page-heading,
-    .workflow-toolbar {
-        align-items: stretch;
-        flex-direction: column;
-    }
-
-    .heading-actions,
-    .workflow-toolbar > * {
-        width: 100%;
-    }
-
-    .workflow-grid {
-        grid-template-columns: minmax(0, 1fr);
-    }
-
-    .workflow-stats {
-        grid-template-columns: 1fr;
-    }
-
-    .workflow-actions :deep(.p-button) {
-        width: 100%;
-    }
-}
-</style>

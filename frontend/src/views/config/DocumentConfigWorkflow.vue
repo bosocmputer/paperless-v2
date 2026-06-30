@@ -23,11 +23,20 @@ const loading = ref(false);
 const saving = ref(false);
 const error = ref('');
 const conflictMessage = ref('');
+const searchQuery = ref('');
 const originalSnapshot = ref('');
+const stepDialogVisible = ref(false);
+const editingStepKey = ref('');
+const submitted = ref(false);
+const stepForm = ref(emptyStepForm());
 const sessionId = `workflow-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const openedAt = Date.now();
 
 const docFormatCode = computed(() => String(route.params.docFormatCode || '').trim());
+const docFormatName = computed(() => {
+    const format = workflow.value?.docFormat || {};
+    return format.name_1 || format.name_2 || format.format || 'ไม่มีชื่อเอกสาร';
+});
 const activeUserOptions = computed(() => {
     const options = users.value
         .filter((user) => user.status === 'active')
@@ -39,46 +48,47 @@ const activeUserOptions = computed(() => {
 
     const seen = new Set(options.map((option) => option.value));
     steps.value.forEach((step) => {
-        [step.user01, step.user02, step.user03].forEach((value) => {
-            const normalized = String(value || '').trim();
-            if (normalized && !seen.has(normalized)) {
-                seen.add(normalized);
-                options.push({ label: `${normalized} ${isActiveUserValue(normalized) ? '(เดิม)' : '(ไม่ได้ active)'}`, value: normalized });
+        signerValues(step).forEach((value) => {
+            if (!seen.has(value)) {
+                seen.add(value);
+                options.push({ label: `${value} ${isActiveUserValue(value) ? '(เดิม)' : '(ไม่ได้ active)'}`, value });
             }
         });
     });
     return options;
 });
+const filteredSteps = computed(() => {
+    const query = normalizeSearch(searchQuery.value);
+    if (!query) return steps.value;
+    return steps.value.filter((step) =>
+        normalizeSearch(`${step.sequenceNo} ${step.positionCode} ${step.positionName} ${conditionMeta(step.conditionType).short} ${signerValues(step).join(' ')}`).includes(query)
+    );
+});
 const validationIssues = computed(() => validateSteps(steps.value));
-const invalidByField = computed(() => {
-    const map = new Set();
-    validationIssues.value.forEach((issue) => map.add(`${issue.key}:${issue.field}`));
-    return map;
-});
-const saveDisabledReason = computed(() => {
-    if (loading.value) return 'กำลังโหลดข้อมูล';
-    if (saving.value) return 'กำลังบันทึก';
-    if (!dirty.value) return 'ยังไม่มีการเปลี่ยนแปลง';
-    if (validationIssues.value.length > 0) return 'แก้ field ที่ผิดก่อนบันทึก';
-    return '';
-});
 const dirty = computed(() => snapshotSteps(steps.value) !== originalSnapshot.value);
 const deletedStepCount = computed(() => {
     const currentIds = new Set(steps.value.map((step) => step.id).filter(Boolean));
     return (workflow.value?.steps || []).filter((step) => step.id && !currentIds.has(step.id)).length;
 });
-const docFormatName = computed(() => {
-    const format = workflow.value?.docFormat || {};
-    return format.name_1 || format.name_2 || format.format || 'ไม่มีชื่อเอกสาร';
+const saveDisabledReason = computed(() => {
+    if (loading.value) return 'กำลังโหลดข้อมูล';
+    if (saving.value) return 'กำลังบันทึก';
+    if (!dirty.value) return 'ยังไม่มีการเปลี่ยนแปลง';
+    if (validationIssues.value.length > 0) return 'แก้ขั้นตอนที่ยังไม่สมบูรณ์ก่อนบันทึก';
+    return '';
 });
+const stepDialogTitle = computed(() => (editingStepKey.value ? 'แก้ไข Step' : 'เพิ่ม Step'));
+const stepFormIssues = computed(() => validateStepForm(stepForm.value, editingStepKey.value));
 
 onMounted(async () => {
     window.addEventListener('beforeunload', beforeUnload);
     await loadWorkflow();
 });
+
 onBeforeUnmount(() => {
     window.removeEventListener('beforeunload', beforeUnload);
 });
+
 onBeforeRouteLeave((_to, _from, next) => {
     if (!dirty.value) {
         next();
@@ -100,6 +110,7 @@ async function loadWorkflow() {
         workflow.value = workflowResult.workflow;
         users.value = userResult.users || [];
         steps.value = (workflow.value.steps || []).map(toEditorStep).sort((left, right) => Number(left.sequenceNo) - Number(right.sequenceNo));
+        resequence(false);
         originalSnapshot.value = snapshotSteps(steps.value);
         recordEvent('workflow_open');
     } catch (err) {
@@ -110,66 +121,113 @@ async function loadWorkflow() {
     }
 }
 
-function addStep() {
-    if (steps.value.length >= 30) return;
-    const sequenceNo = nextSequenceNo();
-    steps.value.push({
-        key: `new-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        id: '',
+function openCreateStep() {
+    editingStepKey.value = '';
+    submitted.value = false;
+    stepForm.value = {
+        ...emptyStepForm(),
         positionCode: nextPositionCode(),
-        positionName: '',
-        user01: '',
-        user02: '',
-        user03: '',
-        sequenceNo,
         conditionType: 1
-    });
+    };
+    stepDialogVisible.value = true;
+}
+
+function openEditStep(step) {
+    editingStepKey.value = step.key;
+    submitted.value = false;
+    stepForm.value = {
+        positionCode: step.positionCode || '',
+        positionName: step.positionName || '',
+        user01: step.user01 || '',
+        user02: step.user02 || '',
+        user03: step.user03 || '',
+        conditionType: Number(step.conditionType || 1)
+    };
+    stepDialogVisible.value = true;
+}
+
+function saveStepDialog() {
+    submitted.value = true;
+    if (stepFormIssues.value.length > 0) return;
+
+    const payload = {
+        positionCode: String(stepForm.value.positionCode || '').trim(),
+        positionName: String(stepForm.value.positionName || '').trim(),
+        user01: Number(stepForm.value.conditionType) === 3 ? '' : String(stepForm.value.user01 || '').trim(),
+        user02: Number(stepForm.value.conditionType) === 3 ? '' : String(stepForm.value.user02 || '').trim(),
+        user03: Number(stepForm.value.conditionType) === 3 ? '' : String(stepForm.value.user03 || '').trim(),
+        conditionType: Number(stepForm.value.conditionType || 1)
+    };
+
+    if (editingStepKey.value) {
+        steps.value = steps.value.map((step) => (step.key === editingStepKey.value ? { ...step, ...payload } : step));
+    } else {
+        steps.value.push({
+            key: `new-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            id: '',
+            sequenceNo: steps.value.length + 1,
+            ...payload
+        });
+    }
+    resequence();
+    stepDialogVisible.value = false;
 }
 
 function requestRemoveStep(step) {
-    if (!step.id) {
-        removeStep(step);
-        return;
-    }
     confirm.require({
         message: `ลบ Position ${step.positionCode} - ${step.positionName || ''} ออกจาก Workflow?`,
         header: 'ยืนยันลบขั้นตอน',
         icon: 'pi pi-exclamation-triangle',
-        acceptLabel: 'ลบขั้นตอน',
-        rejectLabel: 'ยกเลิก',
-        accept: () => removeStep(step)
+        rejectProps: {
+            label: 'ยกเลิก',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ลบขั้นตอน',
+            severity: 'danger'
+        },
+        accept: () => {
+            steps.value = steps.value.filter((item) => item.key !== step.key);
+            resequence();
+        }
     });
 }
 
-function removeStep(step) {
-    steps.value = steps.value.filter((item) => item.key !== step.key);
-    resequence();
-}
-
 function moveStep(index, direction) {
-    const nextIndex = index + direction;
+    const source = steps.value.findIndex((step) => step.key === filteredSteps.value[index]?.key);
+    if (source < 0) return;
+    const nextIndex = source + direction;
     if (nextIndex < 0 || nextIndex >= steps.value.length) return;
     const reordered = [...steps.value];
-    const [item] = reordered.splice(index, 1);
+    const [item] = reordered.splice(source, 1);
     reordered.splice(nextIndex, 0, item);
     steps.value = reordered;
     resequence();
     recordEvent('workflow_reorder');
 }
 
-function resequence() {
+function resequence(markDirty = true) {
     steps.value = steps.value.map((step, index) => ({ ...step, sequenceNo: index + 1 }));
+    if (markDirty) conflictMessage.value = '';
 }
 
 function requestSave() {
     if (saveDisabledReason.value) return;
     if (deletedStepCount.value > 0) {
         confirm.require({
-            message: `บันทึกครั้งนี้จะลบ ${deletedStepCount.value} ขั้นตอนที่ไม่มีในหน้าจอแล้ว ต้องการบันทึกต่อหรือไม่?`,
+            message: `บันทึกครั้งนี้จะลบ ${deletedStepCount.value} ขั้นตอนที่ไม่มีในตารางแล้ว ต้องการบันทึกต่อหรือไม่?`,
             header: 'ยืนยันการลบขั้นตอน',
             icon: 'pi pi-exclamation-triangle',
-            acceptLabel: 'บันทึกและลบ',
-            rejectLabel: 'ยกเลิก',
+            rejectProps: {
+                label: 'ยกเลิก',
+                severity: 'secondary',
+                outlined: true
+            },
+            acceptProps: {
+                label: 'บันทึกและลบ',
+                severity: 'warn'
+            },
             accept: saveWorkflow
         });
         return;
@@ -184,19 +242,20 @@ async function saveWorkflow() {
     try {
         const payload = {
             revision: workflow.value?.revision || '',
-            steps: steps.value.map((step) => ({
+            steps: steps.value.map((step, index) => ({
                 positionCode: String(step.positionCode || '').trim(),
                 positionName: String(step.positionName || '').trim(),
                 user01: String(step.user01 || '').trim(),
                 user02: String(step.user02 || '').trim(),
                 user03: String(step.user03 || '').trim(),
-                sequenceNo: Number(step.sequenceNo || 0),
+                sequenceNo: index + 1,
                 conditionType: Number(step.conditionType || 0)
             }))
         };
         const result = await api.saveDocumentConfigWorkflow(docFormatCode.value, payload);
         workflow.value = result.workflow;
         steps.value = (workflow.value.steps || []).map(toEditorStep);
+        resequence(false);
         originalSnapshot.value = snapshotSteps(steps.value);
         recordEvent('workflow_save_success');
         toast.add({ severity: 'success', summary: 'บันทึก Workflow แล้ว', life: 2500 });
@@ -204,21 +263,13 @@ async function saveWorkflow() {
         recordEvent(err.status === 409 ? 'workflow_revision_conflict' : 'workflow_save_error', validationIssues.value.length);
         if (err.status === 409) {
             conflictMessage.value = err.message;
-            toast.add({ severity: 'warn', summary: 'Workflow ถูกแก้จากที่อื่น', detail: 'กรุณา Refresh ก่อนบันทึกอีกครั้ง', life: 5000 });
+            toast.add({ severity: 'warn', summary: 'Workflow ถูกแก้จากที่อื่น', detail: 'กรุณาโหลดใหม่ก่อนบันทึกอีกครั้ง', life: 5000 });
         } else {
             toast.add({ severity: 'error', summary: 'บันทึกไม่สำเร็จ', detail: err.message, life: 5000 });
         }
     } finally {
         saving.value = false;
     }
-}
-
-function backToList() {
-    router.push({ name: 'document-config' });
-}
-
-function openPreset() {
-    router.push({ name: 'signature-template', params: { docFormatCode: docFormatCode.value } });
 }
 
 function toEditorStep(step) {
@@ -235,59 +286,94 @@ function toEditorStep(step) {
     };
 }
 
+function emptyStepForm() {
+    return {
+        positionCode: '',
+        positionName: '',
+        user01: '',
+        user02: '',
+        user03: '',
+        conditionType: 1
+    };
+}
+
 function validateSteps(list) {
     const issues = [];
     const seen = new Map();
-    if (list.length > 30) {
-        issues.push({ key: 'global', field: 'steps', message: 'Workflow มีได้สูงสุด 30 ขั้นตอน' });
-    }
-    list.forEach((step, index) => {
-        const key = step.key;
-        const label = step.positionCode ? `Position ${step.positionCode}` : `แถวที่ ${index + 1}`;
-        if (!String(step.positionCode || '').trim()) issues.push({ key, field: 'positionCode', message: `${label}: ต้องระบุรหัส Position` });
-        if (!String(step.positionName || '').trim()) issues.push({ key, field: 'positionName', message: `${label}: ต้องระบุชื่อ Position` });
-        if (Number(step.sequenceNo || 0) <= 0) issues.push({ key, field: 'sequenceNo', message: `${label}: ลำดับต้องมากกว่า 0` });
-        if (![1, 2, 3].includes(Number(step.conditionType))) issues.push({ key, field: 'conditionType', message: `${label}: เงื่อนไขไม่ถูกต้อง` });
+    list.forEach((step) => {
+        issues.push(...validateSingleStep(step, step.key));
         const duplicateKey = normalizeCode(step.positionCode);
         if (duplicateKey) {
             if (seen.has(duplicateKey)) {
-                issues.push({ key, field: 'positionCode', message: `${label}: รหัส Position ซ้ำกับแถวอื่น` });
-                issues.push({ key: seen.get(duplicateKey), field: 'positionCode', message: `${label}: รหัส Position ซ้ำกับแถวอื่น` });
+                issues.push({ key: step.key, message: `Position ${step.positionCode} ซ้ำกับแถวอื่น` });
+                issues.push({ key: seen.get(duplicateKey), message: `Position ${step.positionCode} ซ้ำกับแถวอื่น` });
             } else {
-                seen.set(duplicateKey, key);
+                seen.set(duplicateKey, step.key);
             }
-        }
-        if ([1, 2].includes(Number(step.conditionType)) && stepUsers(step).length === 0) {
-            issues.push({ key, field: 'user01', message: `${label}: เงื่อนไข 1/2 ต้องมี user อย่างน้อย 1 คน` });
-        }
-        if ([1, 2].includes(Number(step.conditionType))) {
-            stepUsers(step).forEach((value) => {
-                if (!isActiveUserValue(value)) {
-                    issues.push({ key, field: userFieldForValue(step, value), message: `${label}: ${value} ไม่ใช่ user active` });
-                }
-            });
         }
     });
     return issues;
 }
 
-function fieldInvalid(step, field) {
-    return invalidByField.value.has(`${step.key}:${field}`);
+function validateStepForm(form, editingKey) {
+    const draft = {
+        key: editingKey || 'draft',
+        positionCode: form.positionCode,
+        positionName: form.positionName,
+        user01: form.user01,
+        user02: form.user02,
+        user03: form.user03,
+        conditionType: form.conditionType
+    };
+    const issues = validateSingleStep(draft, draft.key);
+    const duplicate = steps.value.find((step) => step.key !== editingKey && normalizeCode(step.positionCode) === normalizeCode(form.positionCode));
+    if (duplicate && form.positionCode) issues.push({ key: draft.key, message: `รหัส Position ${form.positionCode} ซ้ำกับขั้นตอนอื่น` });
+    return issues;
 }
 
-function stepUsers(step) {
+function validateSingleStep(step, key) {
+    const issues = [];
+    const label = step.positionCode ? `Position ${step.positionCode}` : 'Step';
+    if (!String(step.positionCode || '').trim()) issues.push({ key, message: `${label}: ต้องระบุรหัส Position` });
+    if (!String(step.positionName || '').trim()) issues.push({ key, message: `${label}: ต้องระบุชื่อ Position` });
+    if (![1, 2, 3].includes(Number(step.conditionType))) issues.push({ key, message: `${label}: เงื่อนไขไม่ถูกต้อง` });
+    if ([1, 2].includes(Number(step.conditionType)) && signerValues(step).length === 0) {
+        issues.push({ key, message: `${label}: เงื่อนไข 1/2 ต้องมีผู้เซ็นอย่างน้อย 1 คน` });
+    }
+    if ([1, 2].includes(Number(step.conditionType))) {
+        const seenUsers = new Set();
+        signerValues(step).forEach((value) => {
+            const username = signerUsername(value);
+            if (!isActiveUserValue(value)) issues.push({ key, message: `${label}: ${value} ไม่ใช่ user active` });
+            if (username && seenUsers.has(username)) issues.push({ key, message: `${label}: ผู้เซ็นซ้ำ ${username}` });
+            if (username) seenUsers.add(username);
+        });
+    }
+    return issues;
+}
+
+function rowIssues(step) {
+    return validationIssues.value.filter((issue) => issue.key === step.key);
+}
+
+function rowSeverity(step) {
+    return rowIssues(step).length > 0 ? 'danger' : 'success';
+}
+
+function rowStatus(step) {
+    return rowIssues(step).length > 0 ? 'ต้องแก้ไข' : 'สมบูรณ์';
+}
+
+function signerValues(step) {
     return [step.user01, step.user02, step.user03].map((value) => String(value || '').trim()).filter(Boolean);
 }
 
-function userFieldForValue(step, value) {
-    if (step.user01 === value) return 'user01';
-    if (step.user02 === value) return 'user02';
-    if (step.user03 === value) return 'user03';
-    return 'user01';
+function signerUsername(value) {
+    return String(value || '').split(':')[0]?.trim().toLowerCase() || '';
 }
 
 function isActiveUserValue(value) {
-    const username = String(value || '').split(':')[0]?.trim().toLowerCase();
+    const username = signerUsername(value);
     return users.value.some((user) => user.status === 'active' && String(user.username || '').trim().toLowerCase() === username);
 }
 
@@ -295,40 +381,33 @@ function conditionMeta(value) {
     return conditionOptions.find((item) => item.value === Number(value)) || conditionOptions[0];
 }
 
-function nextSequenceNo() {
-    return steps.value.reduce((max, step) => Math.max(max, Number(step.sequenceNo || 0)), 0) + 1;
+function routePreview(step) {
+    const count = signerValues(step).length;
+    if (Number(step.conditionType) === 3) return 'ส่งให้บุคคลภายนอกผ่าน link/OTP';
+    if (Number(step.conditionType) === 2) return `ต้องเซ็นครบ ${count} คน`;
+    return count > 0 ? `ส่งให้ ${count} คน, ใครเซ็นก่อนถือว่าผ่าน` : 'ยังไม่ได้เลือกผู้เซ็น';
 }
 
 function nextPositionCode() {
     const numericCodes = steps.value
         .map((step) => Number(step.positionCode))
         .filter((value) => Number.isFinite(value) && value > 0);
-    if (numericCodes.length === steps.value.length) {
-        return String(Math.max(0, ...numericCodes) + 1);
-    }
+    if (numericCodes.length === steps.value.length) return String(Math.max(0, ...numericCodes) + 1);
     return '';
 }
 
 function snapshotSteps(list) {
     return JSON.stringify(
-        list.map((step) => ({
+        list.map((step, index) => ({
             positionCode: String(step.positionCode || '').trim(),
             positionName: String(step.positionName || '').trim(),
             user01: String(step.user01 || '').trim(),
             user02: String(step.user02 || '').trim(),
             user03: String(step.user03 || '').trim(),
-            sequenceNo: Number(step.sequenceNo || 0),
+            sequenceNo: index + 1,
             conditionType: Number(step.conditionType || 0)
         }))
     );
-}
-
-function userValue(user) {
-    return `${user.username}:${user.displayName}`;
-}
-
-function normalizeCode(value) {
-    return String(value || '').trim().toUpperCase();
 }
 
 function beforeUnload(event) {
@@ -346,324 +425,155 @@ function recordEvent(event, issueCount = validationIssues.value.length) {
         elapsedMs: Date.now() - openedAt
     }).catch(() => {});
 }
+
+function userValue(user) {
+    return `${user.username}:${user.displayName}`;
+}
+
+function normalizeSearch(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function normalizeCode(value) {
+    return String(value || '').trim().toUpperCase();
+}
 </script>
 
 <template>
-    <div class="workflow-page">
-        <section class="editor-bar">
-            <Button icon="pi pi-arrow-left" text rounded aria-label="กลับ" @click="backToList" />
-            <div class="editor-title">
-                <h1>{{ docFormatCode }} - {{ docFormatName }}</h1>
-                <p>{{ workflow?.docFormat?.screen_code || workflow?.docFormat?.screenCode || '-' }} · {{ steps.length }} ขั้นตอน</p>
-            </div>
-            <div class="editor-actions">
-                <Tag v-if="dirty" severity="warn" value="ยังไม่บันทึก" />
-                <Tag v-else severity="success" value="บันทึกแล้ว" />
-                <Button label="Preset กรอบ" icon="pi pi-map-marker" outlined @click="openPreset" />
-                <Button label="บันทึก Workflow" icon="pi pi-save" :loading="saving" :disabled="Boolean(saveDisabledReason)" @click="requestSave" />
-            </div>
-        </section>
+    <div class="card">
+        <Toolbar class="mb-6">
+            <template #start>
+                <div class="flex flex-wrap gap-2">
+                    <Button label="กลับ" icon="pi pi-arrow-left" severity="secondary" text @click="router.push({ name: 'document-config' })" />
+                    <Button label="เพิ่ม Step" icon="pi pi-plus" severity="secondary" @click="openCreateStep" />
+                    <Button label="Preset กรอบ" icon="pi pi-map-marker" severity="secondary" outlined @click="router.push({ name: 'signature-template', params: { docFormatCode } })" />
+                </div>
+            </template>
+            <template #end>
+                <div class="flex flex-wrap gap-2 items-center justify-end">
+                    <Tag v-if="dirty" severity="warn" value="ยังไม่บันทึก" />
+                    <Tag v-else severity="success" value="บันทึกแล้ว" />
+                    <Button label="บันทึก Workflow" icon="pi pi-save" :loading="saving" :disabled="Boolean(saveDisabledReason)" @click="requestSave" />
+                </div>
+            </template>
+        </Toolbar>
 
-        <Message v-if="saveDisabledReason && dirty" severity="warn" :closable="false">{{ saveDisabledReason }}</Message>
-        <Message v-if="conflictMessage" severity="warn" :closable="false">
+        <Message v-if="saveDisabledReason && dirty" severity="warn" class="mb-4" :closable="false">{{ saveDisabledReason }}</Message>
+        <Message v-if="conflictMessage" severity="warn" class="mb-4" :closable="false">
             {{ conflictMessage }}
             <Button label="โหลดใหม่" icon="pi pi-refresh" text size="small" @click="loadWorkflow" />
         </Message>
-        <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
-        <Message v-for="warning in workflow?.presetWarnings || []" :key="`${warning.code}-${warning.positionCode}`" severity="warn" :closable="false">
+        <Message v-if="error" severity="error" class="mb-4" :closable="false">{{ error }}</Message>
+        <Message v-for="warning in workflow?.presetWarnings || []" :key="`${warning.code}-${warning.positionCode}`" severity="warn" class="mb-4" :closable="false">
             {{ warning.message }} Preset เป็นตัวช่วยเท่านั้น จึงยังบันทึก Workflow ได้
         </Message>
 
-        <section class="workflow-tools">
-            <div>
-                <h2>ขั้นตอนผู้เซ็น</h2>
-                <p>แก้ทั้งชุดในหน้านี้ เพิ่มขั้นตอนแล้วระบบเติม Doc Format และลำดับให้เอง</p>
-            </div>
-            <Button label="เพิ่ม Step" icon="pi pi-plus" outlined :disabled="steps.length >= 30" @click="addStep" />
-        </section>
-
-        <section v-if="loading" class="workflow-list">
-            <div v-for="index in 4" :key="index" class="workflow-row">
-                <Skeleton width="10rem" height="1.4rem" />
-                <Skeleton width="100%" height="4rem" class="mt-3" />
-            </div>
-        </section>
-
-        <section v-else-if="steps.length === 0" class="empty-state">
-            <i class="pi pi-list-check" />
-            <h2>ยังไม่มีขั้นตอนใน Workflow นี้</h2>
-            <p>เพิ่ม Step แรกเพื่อกำหนดตำแหน่งและผู้เซ็นของเอกสาร {{ docFormatCode }}</p>
-            <Button label="เพิ่ม Step" icon="pi pi-plus" @click="addStep" />
-        </section>
-
-        <section v-else class="workflow-list">
-            <article v-for="(step, index) in steps" :key="step.key" class="workflow-row">
-                <div class="row-head">
-                    <div class="sequence-pill">{{ index + 1 }}</div>
+        <DataTable :value="filteredSteps" :loading="loading" dataKey="key" responsiveLayout="scroll" stripedRows>
+            <template #header>
+                <div class="flex flex-wrap gap-2 items-center justify-between">
                     <div>
-                        <h3>{{ step.positionCode || 'ยังไม่ระบุรหัส' }} - {{ step.positionName || 'ยังไม่ระบุชื่อ' }}</h3>
-                        <Tag :severity="conditionMeta(step.conditionType).severity" :value="conditionMeta(step.conditionType).short" rounded />
+                        <h4 class="m-0">{{ docFormatCode }} - {{ docFormatName }}</h4>
+                        <p class="text-muted-color m-0 mt-1">แก้ workflow ทั้งชุด การเปลี่ยนแปลงมีผลกับเอกสารใหม่เท่านั้น</p>
                     </div>
-                    <div class="row-actions">
-                        <Button icon="pi pi-arrow-up" text rounded aria-label="เลื่อนขึ้น" :disabled="index === 0" @click="moveStep(index, -1)" />
-                        <Button icon="pi pi-arrow-down" text rounded aria-label="เลื่อนลง" :disabled="index === steps.length - 1" @click="moveStep(index, 1)" />
-                        <Button icon="pi pi-trash" text rounded severity="danger" aria-label="ลบขั้นตอน" @click="requestRemoveStep(step)" />
-                    </div>
+                    <IconField>
+                        <InputIcon>
+                            <i class="pi pi-search" />
+                        </InputIcon>
+                        <InputText v-model="searchQuery" placeholder="ค้นหา Position หรือผู้เซ็น" />
+                    </IconField>
                 </div>
+            </template>
 
-                <div class="row-grid">
-                    <div class="field">
-                        <label>รหัส Position</label>
-                        <InputText v-model="step.positionCode" :class="{ 'p-invalid': fieldInvalid(step, 'positionCode') }" />
-                    </div>
-                    <div class="field field-wide">
-                        <label>ชื่อ Position</label>
-                        <InputText v-model="step.positionName" :class="{ 'p-invalid': fieldInvalid(step, 'positionName') }" />
-                    </div>
-                    <div class="field">
-                        <label>ลำดับ</label>
-                        <InputNumber v-model="step.sequenceNo" :min="1" :max="30" :class="{ 'p-invalid': fieldInvalid(step, 'sequenceNo') }" showButtons />
-                    </div>
-                    <div class="field">
-                        <label>เงื่อนไข</label>
-                        <Select v-model="step.conditionType" :options="conditionOptions" optionLabel="label" optionValue="value" :class="{ 'p-invalid': fieldInvalid(step, 'conditionType') }" fluid />
-                    </div>
-                    <div class="field">
-                        <label>User01</label>
-                        <Select v-model="step.user01" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(step.conditionType) === 3" :class="{ 'p-invalid': fieldInvalid(step, 'user01') }" />
-                    </div>
-                    <div class="field">
-                        <label>User02</label>
-                        <Select v-model="step.user02" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(step.conditionType) === 3" :class="{ 'p-invalid': fieldInvalid(step, 'user02') }" />
-                    </div>
-                    <div class="field">
-                        <label>User03</label>
-                        <Select v-model="step.user03" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(step.conditionType) === 3" :class="{ 'p-invalid': fieldInvalid(step, 'user03') }" />
-                    </div>
-                </div>
+            <template #empty>
+                <div class="py-6 text-center text-muted-color">{{ searchQuery ? 'ไม่พบ Step ที่ค้นหา' : 'ยังไม่มี Step ใน Workflow นี้' }}</div>
+            </template>
 
-                <div v-if="validationIssues.some((issue) => issue.key === step.key)" class="row-issues">
-                    <div v-for="issue in validationIssues.filter((item) => item.key === step.key)" :key="`${issue.field}-${issue.message}`">
-                        <i class="pi pi-exclamation-circle" />
-                        <span>{{ issue.message }}</span>
+            <Column field="sequenceNo" header="ลำดับ" sortable style="width: 7rem">
+                <template #body="{ data }">
+                    <Tag :value="data.sequenceNo" severity="secondary" />
+                </template>
+            </Column>
+            <Column header="Position" sortable sortField="positionCode" style="min-width: 16rem">
+                <template #body="{ data }">
+                    <div class="font-medium text-surface-900 dark:text-surface-0">{{ data.positionCode }} - {{ data.positionName }}</div>
+                    <div class="text-sm text-muted-color">{{ routePreview(data) }}</div>
+                </template>
+            </Column>
+            <Column header="เงื่อนไข" sortable sortField="conditionType" style="min-width: 10rem">
+                <template #body="{ data }">
+                    <Tag :severity="conditionMeta(data.conditionType).severity" :value="conditionMeta(data.conditionType).short" />
+                </template>
+            </Column>
+            <Column header="ผู้เซ็น" style="min-width: 22rem">
+                <template #body="{ data }">
+                    <div v-if="signerValues(data).length" class="flex flex-wrap gap-2">
+                        <Tag v-for="signer in signerValues(data)" :key="signer" :value="signer" severity="secondary" />
                     </div>
-                </div>
-            </article>
-        </section>
+                    <span v-else class="text-muted-color">ไม่ใช้ user ภายใน</span>
+                </template>
+            </Column>
+            <Column header="สถานะ" style="min-width: 9rem">
+                <template #body="{ data }">
+                    <Tag :severity="rowSeverity(data)" :value="rowStatus(data)" />
+                </template>
+            </Column>
+            <Column header="จัดการ" :exportable="false" style="min-width: 13rem">
+                <template #body="{ data, index }">
+                    <div class="flex gap-2">
+                        <Button icon="pi pi-arrow-up" severity="secondary" rounded outlined aria-label="เลื่อนขึ้น" :disabled="data.sequenceNo === 1 || searchQuery" @click="moveStep(index, -1)" />
+                        <Button icon="pi pi-arrow-down" severity="secondary" rounded outlined aria-label="เลื่อนลง" :disabled="data.sequenceNo === steps.length || searchQuery" @click="moveStep(index, 1)" />
+                        <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ไข Step" @click="openEditStep(data)" />
+                        <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบ Step" @click="requestRemoveStep(data)" />
+                    </div>
+                </template>
+            </Column>
+        </DataTable>
     </div>
+
+    <Dialog v-model:visible="stepDialogVisible" modal :header="stepDialogTitle" :style="{ width: 'min(46rem, 94vw)' }">
+        <div class="flex flex-col gap-5">
+            <Message v-if="submitted && stepFormIssues.length" severity="error" :closable="false">
+                <ul class="m-0 pl-4">
+                    <li v-for="issue in stepFormIssues" :key="issue.message">{{ issue.message }}</li>
+                </ul>
+            </Message>
+
+            <div class="grid grid-cols-12 gap-4">
+                <div class="col-span-12 md:col-span-4">
+                    <label for="positionCode" class="block font-bold mb-3">รหัส Position</label>
+                    <InputText id="positionCode" v-model.trim="stepForm.positionCode" fluid autofocus />
+                </div>
+                <div class="col-span-12 md:col-span-8">
+                    <label for="positionName" class="block font-bold mb-3">ชื่อ Position</label>
+                    <InputText id="positionName" v-model.trim="stepForm.positionName" fluid />
+                </div>
+            </div>
+
+            <div>
+                <label for="conditionType" class="block font-bold mb-3">เงื่อนไข</label>
+                <Select id="conditionType" v-model="stepForm.conditionType" :options="conditionOptions" optionLabel="label" optionValue="value" fluid />
+                <small class="text-muted-color">{{ Number(stepForm.conditionType) === 1 ? 'ส่งให้ทุกคนในขั้นตอนนี้ ใครเซ็นก่อนถือว่าผ่าน' : Number(stepForm.conditionType) === 2 ? 'ทุกคนในขั้นตอนนี้ต้องเซ็นครบ' : 'ใช้สำหรับบุคคลภายนอก ไม่ต้องเลือก user ภายใน' }}</small>
+            </div>
+
+            <div class="grid grid-cols-12 gap-4">
+                <div class="col-span-12 md:col-span-4">
+                    <label for="user01" class="block font-bold mb-3">ผู้เซ็น 1</label>
+                    <Select id="user01" v-model="stepForm.user01" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(stepForm.conditionType) === 3" />
+                </div>
+                <div class="col-span-12 md:col-span-4">
+                    <label for="user02" class="block font-bold mb-3">ผู้เซ็น 2</label>
+                    <Select id="user02" v-model="stepForm.user02" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(stepForm.conditionType) === 3" />
+                </div>
+                <div class="col-span-12 md:col-span-4">
+                    <label for="user03" class="block font-bold mb-3">ผู้เซ็น 3</label>
+                    <Select id="user03" v-model="stepForm.user03" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(stepForm.conditionType) === 3" />
+                </div>
+            </div>
+        </div>
+
+        <template #footer>
+            <Button label="ยกเลิก" icon="pi pi-times" text @click="stepDialogVisible = false" />
+            <Button label="บันทึก Step" icon="pi pi-check" @click="saveStepDialog" />
+        </template>
+    </Dialog>
 </template>
-
-<style scoped>
-.workflow-page {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-}
-
-.editor-bar {
-    position: sticky;
-    top: 0;
-    z-index: 4;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 0.75rem;
-    border: 1px solid var(--surface-border);
-    border-radius: 8px;
-    background: var(--surface-card);
-    padding: 0.75rem;
-}
-
-.editor-title {
-    min-width: 0;
-}
-
-.editor-title h1 {
-    margin: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 1.12rem;
-    font-weight: 800;
-}
-
-.editor-title p,
-.workflow-tools p {
-    margin: 0.25rem 0 0;
-    color: var(--text-color-secondary);
-}
-
-.editor-actions,
-.row-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-}
-
-.workflow-tools {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-}
-
-.workflow-tools h2 {
-    margin: 0;
-    font-size: 1.1rem;
-}
-
-.workflow-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
-}
-
-.workflow-row {
-    border: 1px solid var(--surface-border);
-    border-radius: 8px;
-    background: var(--surface-card);
-    padding: 0.9rem;
-}
-
-.row-head {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.85rem;
-}
-
-.sequence-pill {
-    display: grid;
-    width: 2.25rem;
-    height: 2.25rem;
-    place-items: center;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--primary-color) 12%, var(--surface-card));
-    color: var(--primary-color);
-    font-weight: 800;
-}
-
-.row-head h3 {
-    margin: 0 0 0.35rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 1rem;
-}
-
-.row-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(10rem, 1fr));
-    gap: 0.75rem;
-}
-
-.field {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    gap: 0.35rem;
-}
-
-.field-wide {
-    grid-column: span 2;
-}
-
-.field label {
-    font-size: 0.85rem;
-    font-weight: 700;
-}
-
-.field :deep(.p-inputtext),
-.field :deep(.p-inputnumber),
-.field :deep(.p-select) {
-    width: 100%;
-}
-
-.row-issues {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    margin-top: 0.75rem;
-    color: var(--red-600);
-    font-size: 0.9rem;
-}
-
-.row-issues div {
-    display: flex;
-    gap: 0.45rem;
-}
-
-.empty-state {
-    display: flex;
-    min-height: 18rem;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.75rem;
-    border: 1px dashed var(--surface-border);
-    border-radius: 8px;
-    background: var(--surface-card);
-    padding: 2rem;
-    text-align: center;
-}
-
-.empty-state i {
-    color: var(--primary-color);
-    font-size: 2rem;
-}
-
-.empty-state h2,
-.empty-state p {
-    margin: 0;
-}
-
-.empty-state p {
-    color: var(--text-color-secondary);
-}
-
-@media (max-width: 980px) {
-    .editor-bar {
-        grid-template-columns: auto minmax(0, 1fr);
-    }
-
-    .editor-actions {
-        grid-column: 1 / -1;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-    }
-
-    .row-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
-@media (max-width: 640px) {
-    .editor-actions :deep(.p-button),
-    .workflow-tools :deep(.p-button) {
-        width: 100%;
-    }
-
-    .workflow-tools {
-        align-items: stretch;
-        flex-direction: column;
-    }
-
-    .row-head {
-        grid-template-columns: auto minmax(0, 1fr);
-    }
-
-    .row-actions {
-        grid-column: 1 / -1;
-        justify-content: flex-end;
-    }
-
-    .row-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .field-wide {
-        grid-column: auto;
-    }
-}
-</style>
