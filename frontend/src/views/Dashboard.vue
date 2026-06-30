@@ -300,7 +300,7 @@ function movementEventView(event) {
 
         <div class="grid grid-cols-12 gap-4 items-start">
             <div class="col-span-12 xl:col-span-8">
-                <div class="card">
+                <div class="card dashboard-stack-card">
                     <Toolbar class="mb-4">
                         <template #start>
                             <div>
@@ -352,7 +352,7 @@ function movementEventView(event) {
             </div>
 
             <div class="col-span-12 xl:col-span-4 flex flex-col gap-4">
-                <div class="card">
+                <div class="card dashboard-stack-card">
                     <div class="flex items-start justify-between gap-3 mb-4">
                         <div>
                             <div class="font-semibold text-lg">สรุปคิวรอลายเซ็น</div>
@@ -453,6 +453,10 @@ function movementEventView(event) {
 }
 
 .dashboard-header-card {
+    margin-bottom: 0;
+}
+
+.dashboard-stack-card {
     margin-bottom: 0;
 }
 
