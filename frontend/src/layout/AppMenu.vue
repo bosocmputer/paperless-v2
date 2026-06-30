@@ -29,10 +29,21 @@ const model = computed(() => {
                     to: '/'
                 },
                 {
-                    label: 'เอกสารเซ็น',
+                    label: 'เอกสารเตรียมส่ง',
+                    icon: 'pi pi-fw pi-file-plus',
+                    to: '/signing/documents/drafts',
+                    activeMatch: '/signing/documents/drafts'
+                },
+                {
+                    label: 'เอกสารรอเซ็น',
                     icon: 'pi pi-fw pi-send',
-                    to: '/signing/documents',
-                    activeMatch: '/signing/documents'
+                    to: '/signing/documents'
+                },
+                {
+                    label: 'ประวัติเอกสารเซ็น',
+                    icon: 'pi pi-fw pi-history',
+                    to: '/signing/documents/history',
+                    activeMatch: '/signing/documents/history'
                 }
             ]
         },

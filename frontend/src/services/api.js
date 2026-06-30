@@ -171,8 +171,15 @@ export const api = {
     signatureTemplateSamplePDFUrl(id) {
         return `/api/signature-templates/${id}/sample-pdf`;
     },
-    listSigningDocuments() {
-        return request('/api/signing-documents');
+    listSigningDocuments(params = {}) {
+        return request(
+            withQuery('/api/signing-documents', {
+                queue: params.queue,
+                search: params.search,
+                page: params.page,
+                size: params.size
+            })
+        );
     },
     getAdminDashboard() {
         return request('/api/admin/dashboard');
@@ -212,6 +219,30 @@ export const api = {
     createSigningDocument(payload) {
         const { body, headers } = splitIdempotencyPayload(payload);
         return request('/api/signing-documents', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+        });
+    },
+    sendSigningDocument(id, payload = {}) {
+        const { body, headers } = splitIdempotencyPayload(payload);
+        return request(`/api/signing-documents/${id}/send`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+        });
+    },
+    confirmSigningDocument(id, payload = {}) {
+        const { body, headers } = splitIdempotencyPayload(payload);
+        return request(`/api/signing-documents/${id}/confirm`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+        });
+    },
+    cancelSigningDocument(id, payload = {}) {
+        const { body, headers } = splitIdempotencyPayload(payload);
+        return request(`/api/signing-documents/${id}/cancel`, {
             method: 'POST',
             headers,
             body: JSON.stringify(body)

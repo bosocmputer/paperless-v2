@@ -38,7 +38,7 @@ let createFinished = false;
 const wizardSteps = [
     { label: 'เลือกเอกสาร', shortLabel: 'เอกสาร', icon: 'pi pi-file' },
     { label: 'PDF และกรอบ', shortLabel: 'PDF/กรอบ', icon: 'pi pi-pencil' },
-    { label: 'ตรวจสอบและส่งเซ็น', shortLabel: 'ส่งเซ็น', icon: 'pi pi-send' }
+    { label: 'ตรวจสอบและบันทึก', shortLabel: 'บันทึก', icon: 'pi pi-save' }
 ];
 
 const docFormatOptions = computed(() =>
@@ -128,8 +128,8 @@ onBeforeRouteLeave((_to, _from, next) => {
         return;
     }
     confirm.require({
-        message: 'ยังไม่ได้ส่งเอกสาร ต้องการออกจากหน้านี้หรือไม่?',
-        header: 'ออกจากหน้าส่งเอกสาร',
+        message: 'ยังไม่ได้บันทึกเอกสาร ต้องการออกจากหน้านี้หรือไม่?',
+        header: 'ออกจากหน้าสร้างเอกสาร',
         icon: 'pi pi-exclamation-triangle',
         rejectProps: {
             label: 'อยู่หน้านี้ต่อ',
@@ -332,7 +332,7 @@ async function loadLayoutContext() {
 function onApplyPreset(template) {
     form.value.selectedPresetId = template?.id || '';
     recordCreateEvent('preset_applied');
-    toast.add({ severity: 'success', summary: 'ใช้กรอบเริ่มต้นแล้ว', detail: 'ตรวจตำแหน่งกับ PDF จริงก่อนส่งเซ็น', life: 3000 });
+    toast.add({ severity: 'success', summary: 'ใช้กรอบเริ่มต้นแล้ว', detail: 'ตรวจตำแหน่งกับ PDF จริงก่อนบันทึก', life: 3000 });
 }
 
 function applyPresetAfterUpload() {
@@ -377,7 +377,7 @@ function applyPresetAfterUpload() {
     toast.add({
         severity: 'success',
         summary: 'ดึงกรอบเริ่มต้นมาให้แล้ว',
-        detail: 'ตรวจตำแหน่งกับ PDF จริงก่อนส่งเซ็น',
+        detail: 'ตรวจตำแหน่งกับ PDF จริงก่อนบันทึก',
         life: 3000
     });
 }
@@ -457,7 +457,7 @@ async function submitDocument() {
     const disabledReason = createDisabledReason.value;
     if (disabledReason) {
         recordCreateEvent('validation_blocked');
-        toast.add({ severity: 'warn', summary: 'ยังส่งเซ็นไม่ได้', detail: disabledReason, life: 3500 });
+        toast.add({ severity: 'warn', summary: 'ยังบันทึกไม่ได้', detail: disabledReason, life: 3500 });
         return;
     }
     if (lockedBySML.value && !form.value.confirmLocked) {
@@ -466,7 +466,7 @@ async function submitDocument() {
             header: 'ยืนยันเอกสาร SML ที่ lock แล้ว',
             icon: 'pi pi-exclamation-triangle',
             rejectProps: { label: 'ยกเลิก', severity: 'secondary', outlined: true },
-            acceptProps: { label: 'ยืนยันและส่งเซ็น', severity: 'warn' },
+            acceptProps: { label: 'ยืนยันและบันทึก', severity: 'warn' },
             accept: () => {
                 form.value.confirmLocked = true;
                 void submitDocument();
@@ -489,8 +489,8 @@ async function submitDocument() {
         });
         discardDraft();
         recordCreateEvent('create_success');
-        toast.add({ severity: 'success', summary: 'ส่งเอกสารให้ผู้เซ็นแล้ว', life: 2500 });
-        router.push({ name: 'signing-document-detail', params: { id: result.document.id } });
+        toast.add({ severity: 'success', summary: 'บันทึกเอกสารเตรียมส่งแล้ว', detail: 'ไปที่เมนูเอกสารเตรียมส่งเพื่อกดส่งให้ผู้เซ็น', life: 3200 });
+        router.push({ name: 'signing-document-drafts' });
     } catch (err) {
         recordCreateEvent('create_error');
         toast.add({ severity: 'error', summary: 'สร้างเอกสารไม่สำเร็จ', detail: err.message, life: 5000 });
@@ -729,10 +729,10 @@ function makeLayoutBoxKey() {
     <div class="card min-w-0 overflow-hidden signing-create-card" :class="{ 'signing-create-card-designer': designerMode }">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div class="flex min-w-0 items-center gap-3">
-                <Button icon="pi pi-arrow-left" severity="secondary" rounded outlined aria-label="กลับ" @click="router.push({ name: 'signing-documents' })" />
+                <Button icon="pi pi-arrow-left" severity="secondary" rounded outlined aria-label="กลับ" @click="router.push({ name: 'signing-document-drafts' })" />
                 <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
                     <div class="font-semibold text-xl whitespace-nowrap truncate">
-                        {{ designerMode ? form.selectedCandidate?.doc_no || 'ส่งเอกสารใหม่' : 'ส่งเอกสารใหม่' }}
+                        {{ designerMode ? form.selectedCandidate?.doc_no || 'สร้างเอกสารใหม่' : 'สร้างเอกสารใหม่' }}
                     </div>
                     <p class="text-muted-color m-0 min-w-0 truncate">{{ designerMode ? selectedDocFormatLabel : headerSummary }}</p>
                 </div>
@@ -833,7 +833,7 @@ function makeLayoutBoxKey() {
                                 <small class="text-muted-color">พบ {{ candidateTotal }} รายการ</small>
                                 <Button v-if="candidateHasMore" label="โหลดเพิ่ม" severity="secondary" outlined :loading="searchingCandidates" @click="loadMoreCandidates" />
                             </div>
-                            <Message v-if="lockedBySML" severity="warn">เอกสารนี้ lock ใน SML แล้ว ระบบจะถามยืนยันอีกครั้งก่อนส่งเซ็น</Message>
+                            <Message v-if="lockedBySML" severity="warn">เอกสารนี้ lock ใน SML แล้ว ระบบจะถามยืนยันอีกครั้งก่อนบันทึก</Message>
                         </div>
                     </Panel>
                 </StepPanel>
@@ -875,7 +875,7 @@ function makeLayoutBoxKey() {
                 </StepPanel>
 
                 <StepPanel :value="3">
-                    <Panel header="ตรวจสอบและส่งเซ็น" class="min-w-0">
+                    <Panel header="ตรวจสอบและบันทึกเตรียมส่ง" class="min-w-0">
                         <div class="grid min-w-0 grid-cols-12 gap-4">
                             <div class="col-span-12 min-w-0 md:col-span-6">
                                 <dl class="grid grid-cols-12 gap-2 m-0">
@@ -895,7 +895,7 @@ function makeLayoutBoxKey() {
                             </div>
                             <div class="col-span-12 min-w-0 md:col-span-6">
                                 <Message v-if="createDisabledReason" severity="warn">{{ createDisabledReason }}</Message>
-                                <Message v-else severity="success">ข้อมูลพร้อมส่งเซ็นแล้ว</Message>
+                                <Message v-else severity="success">ข้อมูลพร้อมบันทึกเป็นเอกสารเตรียมส่งแล้ว</Message>
                                 <Message v-if="lockedBySML" severity="warn" class="mt-3">เอกสาร SML lock แล้ว ต้องยืนยันก่อนสร้างเอกสาร</Message>
                             </div>
                         </div>
@@ -912,7 +912,7 @@ function makeLayoutBoxKey() {
                 <div class="flex flex-wrap justify-end items-center gap-3">
                     <small v-if="activeStep < wizardSteps.length - 1 && currentStepReason" class="text-muted-color">{{ currentStepReason }}</small>
                     <Button v-if="activeStep < wizardSteps.length - 1" label="ถัดไป" icon="pi pi-arrow-right" iconPos="right" :disabled="!canGoNext" @click="nextStep" />
-                    <Button v-else label="ส่งเซ็น" icon="pi pi-send" :loading="creating" :disabled="!!createDisabledReason || uploading" @click="submitDocument" />
+                    <Button v-else label="บันทึกเตรียมส่ง" icon="pi pi-save" :loading="creating" :disabled="!!createDisabledReason || uploading" @click="submitDocument" />
                 </div>
             </template>
         </Toolbar>

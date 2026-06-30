@@ -1,6 +1,7 @@
 const statusText = {
     draft: 'แบบร่าง',
     in_progress: 'รอเซ็น',
+    pending_confirm: 'รอยืนยัน',
     pending: 'รอเซ็น',
     waiting: 'รอลำดับ',
     signed: 'เซ็นแล้ว',
@@ -15,6 +16,7 @@ const statusText = {
 const statusSeverity = {
     draft: 'secondary',
     in_progress: 'info',
+    pending_confirm: 'warn',
     pending: 'info',
     waiting: 'secondary',
     signed: 'success',

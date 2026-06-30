@@ -69,10 +69,22 @@ const router = createRouter({
                     meta: { role: 'admin' }
                 },
                 {
+                    path: '/signing/documents/drafts',
+                    name: 'signing-document-drafts',
+                    component: () => import('@/views/signing/SigningDocuments.vue'),
+                    meta: { role: 'admin', queue: 'draft' }
+                },
+                {
                     path: '/signing/documents',
                     name: 'signing-documents',
                     component: () => import('@/views/signing/SigningDocuments.vue'),
-                    meta: { role: 'admin' }
+                    meta: { role: 'admin', queue: 'active' }
+                },
+                {
+                    path: '/signing/documents/history',
+                    name: 'signing-document-history',
+                    component: () => import('@/views/signing/SigningDocuments.vue'),
+                    meta: { role: 'admin', queue: 'history' }
                 },
                 {
                     path: '/document-flow',

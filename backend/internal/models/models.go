@@ -364,6 +364,7 @@ type SigningDocumentTotals struct {
 	Total                   int `json:"total"`
 	Draft                   int `json:"draft"`
 	InProgress              int `json:"inProgress"`
+	PendingConfirm          int `json:"pendingConfirm"`
 	Rejected                int `json:"rejected"`
 	Completed               int `json:"completed"`
 	CompletedEvidenceFailed int `json:"completedEvidenceFailed"`
@@ -374,6 +375,7 @@ type SigningDocumentTotals struct {
 type AdminDashboardWorkflowSummary struct {
 	PendingDocuments   int `json:"pendingDocuments"`
 	PendingSigners     int `json:"pendingSigners"`
+	PendingConfirm     int `json:"pendingConfirm"`
 	AttentionDocuments int `json:"attentionDocuments"`
 	CompletedDocuments int `json:"completedDocuments"`
 	EvidenceFailed     int `json:"evidenceFailed"`

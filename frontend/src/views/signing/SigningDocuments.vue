@@ -4,15 +4,18 @@ import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStat
 import DocumentFlowViewer from '@/views/signing/components/DocumentFlowViewer.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
 const route = useRoute();
 const router = useRouter();
+const confirm = useConfirm();
 const toast = useToast();
 
 const documents = ref([]);
 const loading = ref(false);
 const searchQuery = ref('');
+const transitioningIds = ref(new Set());
 const flowDialog = ref(false);
 const flowLoading = ref(false);
 const flowError = ref('');
@@ -28,12 +31,40 @@ const pdfTitle = ref('');
 const flowCache = new Map();
 const flowSessionId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 const openedAt = Date.now();
+let searchTimer = null;
 
-const filteredDocuments = computed(() => {
-    const query = normalize(searchQuery.value);
-    if (!query) return documents.value;
-    return documents.value.filter((doc) => normalize(`${doc.docFormatCode} ${doc.docNo} ${doc.partyName} ${doc.partyCode} ${signingStatusLabel(doc.status)}`).includes(query));
+const queue = computed(() => route.meta.queue || 'active');
+const pageConfig = computed(() => {
+    if (queue.value === 'draft') {
+        return {
+            title: 'เอกสารเตรียมส่ง',
+            subtitle: 'เอกสารที่สร้างไว้แล้ว แต่ยังไม่ส่งให้ผู้เซ็น',
+            empty: 'ยังไม่มีเอกสารเตรียมส่ง',
+            searchPlaceholder: 'ค้นหาเลขเอกสาร หรือคู่ค้า',
+            countSeverity: 'secondary',
+            showCreate: true
+        };
+    }
+    if (queue.value === 'history') {
+        return {
+            title: 'ประวัติเอกสารเซ็น',
+            subtitle: 'เอกสารที่ยืนยันแล้ว สร้างหลักฐานและ Lock SML สำเร็จ',
+            empty: 'ยังไม่มีประวัติเอกสารเซ็น',
+            searchPlaceholder: 'ค้นหาเลขเอกสาร หรือคู่ค้า',
+            countSeverity: 'success',
+            showCreate: false
+        };
+    }
+    return {
+        title: 'เอกสารรอเซ็น',
+        subtitle: 'ติดตามเอกสารที่ส่งไปเซ็น รอยืนยัน หรือมีปัญหาที่ต้องแก้',
+        empty: 'ยังไม่มีเอกสารรอเซ็น',
+        searchPlaceholder: 'ค้นหาเลขเอกสาร คู่ค้า สถานะ',
+        countSeverity: 'info',
+        showCreate: false
+    };
 });
+const filteredDocuments = computed(() => documents.value);
 
 const flowHeader = computed(() => {
     const doc = flowDocument.value;
@@ -43,6 +74,19 @@ const flowHeader = computed(() => {
 });
 
 onMounted(loadPage);
+
+watch(
+    () => route.name,
+    () => {
+        documents.value = [];
+        void loadPage();
+    }
+);
+
+watch(searchQuery, () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => void loadPage(), 300);
+});
 
 watch(
     () => [route.query.flow_doc_no, route.query.flow_doc_format_code],
@@ -60,13 +104,14 @@ watch(
 );
 
 onBeforeUnmount(() => {
+    clearTimeout(searchTimer);
     clearPDFUrl();
 });
 
 async function loadPage() {
     loading.value = true;
     try {
-        const result = await api.listSigningDocuments();
+        const result = await api.listSigningDocuments({ queue: queue.value, search: searchQuery.value, page: 1, size: 100 });
         documents.value = result.documents || [];
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลดเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
@@ -81,19 +126,6 @@ function openCreate() {
 
 function openDetail(doc) {
     router.push({ name: 'signing-document-detail', params: { id: doc.id } });
-}
-
-function openDocumentFlowFromRow(doc) {
-    if (!doc?.docNo) return;
-    const { flow_doc_no: _flowDocNo, flow_doc_format_code: _flowDocFormatCode, ...rest } = route.query;
-    router.replace({
-        name: 'signing-documents',
-        query: {
-            ...rest,
-            flow_doc_no: doc.docNo,
-            ...(doc.docFormatCode ? { flow_doc_format_code: doc.docFormatCode } : {})
-        }
-    });
 }
 
 async function openDocumentFlow(doc, options = {}) {
@@ -113,7 +145,7 @@ async function openDocumentFlow(doc, options = {}) {
     if (options.syncQuery !== false) {
         const { flow_doc_no: _flowDocNo, flow_doc_format_code: _flowDocFormatCode, ...rest } = route.query;
         router.replace({
-            name: 'signing-documents',
+            name: route.name,
             query: {
                 ...rest,
                 flow_doc_no: docNo,
@@ -178,7 +210,20 @@ function closeFlowDialog() {
     flowError.value = '';
     flowNotice.value = '';
     const { flow_doc_no: _flowDocNo, flow_doc_format_code: _flowDocFormatCode, ...rest } = route.query;
-    if (_flowDocNo || _flowDocFormatCode) router.replace({ name: 'signing-documents', query: rest });
+    if (_flowDocNo || _flowDocFormatCode) router.replace({ name: route.name, query: rest });
+}
+
+function openDocumentFlowFromRow(doc) {
+    if (!doc?.docNo) return;
+    const { flow_doc_no: _flowDocNo, flow_doc_format_code: _flowDocFormatCode, ...rest } = route.query;
+    router.replace({
+        name: route.name,
+        query: {
+            ...rest,
+            flow_doc_no: doc.docNo,
+            ...(doc.docFormatCode ? { flow_doc_format_code: doc.docFormatCode } : {})
+        }
+    });
 }
 
 async function previewFlowPDF(payload = {}) {
@@ -212,6 +257,111 @@ async function previewFlowPDF(payload = {}) {
     }
 }
 
+async function previewDocumentPDF(doc, version = 'current') {
+    if (!doc?.id) return;
+    clearPDFUrl();
+    pdfLoading.value = true;
+    pdfDialog.value = true;
+    pdfTitle.value = `${doc.docNo || 'เอกสาร'} · ${version === 'final' ? 'PDF ที่เซ็นครบแล้ว' : 'PDF ล่าสุด'}`;
+    try {
+        const response = await fetch(api.signingDocumentPDFUrl(doc.id, version), { headers: api.authHeaders() });
+        if (!response.ok) throw new Error('โหลด PDF ไม่สำเร็จ');
+        const blob = await response.blob();
+        pdfUrl.value = URL.createObjectURL(blob);
+    } catch (err) {
+        pdfDialog.value = false;
+        toast.add({ severity: 'error', summary: 'เปิด PDF ไม่สำเร็จ', detail: err?.message || 'กรุณาลองใหม่', life: 3500 });
+    } finally {
+        pdfLoading.value = false;
+    }
+}
+
+function confirmSend(doc) {
+    confirm.require({
+        header: 'ส่งเอกสารไปเซ็น',
+        message: `ต้องการส่ง ${doc.docNo} ให้ผู้เซ็นใช่ไหม? หลังส่งแล้วเอกสารจะย้ายไปเมนูเอกสารรอเซ็น`,
+        icon: 'pi pi-send',
+        acceptLabel: 'ส่งไปเซ็น',
+        rejectLabel: 'ยกเลิก',
+        accept: () => transitionDocument(doc, 'send')
+    });
+}
+
+function confirmAdminConfirm(doc) {
+    confirm.require({
+        header: 'ยืนยันเอกสาร',
+        message: `ต้องการยืนยัน ${doc.docNo} ใช่ไหม? ระบบจะสร้าง final PDF/evidence และ Lock SML`,
+        icon: 'pi pi-check-circle',
+        acceptLabel: 'ยืนยันเอกสาร',
+        rejectLabel: 'ยกเลิก',
+        accept: () => transitionDocument(doc, 'confirm')
+    });
+}
+
+function confirmCancel(doc) {
+    confirm.require({
+        header: 'ยกเลิกเอกสาร',
+        message: `ต้องการยกเลิก ${doc.docNo} ใช่ไหม? เอกสารจะไม่ถูกส่งไปเซ็น`,
+        icon: 'pi pi-exclamation-triangle',
+        acceptLabel: 'ยกเลิกเอกสาร',
+        rejectLabel: 'กลับ',
+        acceptClass: 'p-button-danger',
+        accept: () => transitionDocument(doc, 'cancel')
+    });
+}
+
+async function transitionDocument(doc, action) {
+    if (!doc?.id) return;
+    setTransitioning(doc.id, true);
+    try {
+        const payload = { idempotencyKey: makeIdempotencyKey(action, doc.id) };
+        let result;
+        if (action === 'send') result = await api.sendSigningDocument(doc.id, payload);
+        if (action === 'confirm') result = await api.confirmSigningDocument(doc.id, payload);
+        if (action === 'cancel') result = await api.cancelSigningDocument(doc.id, payload);
+
+        if (action === 'send') {
+            toast.add({ severity: 'success', summary: 'ส่งเอกสารไปเซ็นแล้ว', life: 2500 });
+        } else if (action === 'confirm') {
+            toast.add({
+                severity: result?.finalOk && result?.lockOk ? 'success' : 'warn',
+                summary: result?.finalOk && result?.lockOk ? 'ยืนยันเอกสารสำเร็จ' : 'ยืนยันแล้วแต่ยังมีงานต้องตรวจสอบ',
+                detail: result?.finalOk ? (result?.lockOk ? '' : 'Lock SML ไม่สำเร็จ กรุณา retry') : 'สร้าง final PDF/evidence ไม่สำเร็จ กรุณา retry',
+                life: 4000
+            });
+        } else if (action === 'cancel') {
+            toast.add({ severity: 'success', summary: 'ยกเลิกเอกสารแล้ว', life: 2500 });
+        }
+        await loadPage();
+    } catch (err) {
+        toast.add({ severity: 'error', summary: actionErrorTitle(action), detail: err.message, life: 4000 });
+    } finally {
+        setTransitioning(doc.id, false);
+    }
+}
+
+function setTransitioning(id, active) {
+    const next = new Set(transitioningIds.value);
+    if (active) next.add(id);
+    else next.delete(id);
+    transitioningIds.value = next;
+}
+
+function isTransitioning(id) {
+    return transitioningIds.value.has(id);
+}
+
+function makeIdempotencyKey(action, id) {
+    return `${action}-${id}-${crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`}`;
+}
+
+function actionErrorTitle(action) {
+    if (action === 'send') return 'ส่งเอกสารไม่สำเร็จ';
+    if (action === 'confirm') return 'ยืนยันเอกสารไม่สำเร็จ';
+    if (action === 'cancel') return 'ยกเลิกเอกสารไม่สำเร็จ';
+    return 'ดำเนินการไม่สำเร็จ';
+}
+
 function clearPDFUrl() {
     if (pdfUrl.value) URL.revokeObjectURL(pdfUrl.value);
     pdfUrl.value = '';
@@ -242,33 +392,30 @@ function documentLine(doc) {
 function formatMoney(value) {
     return Number(value || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
 }
-
-function normalize(value) {
-    return String(value || '').toLowerCase().trim();
-}
 </script>
 
 <template>
     <div class="card">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <div class="font-semibold text-xl whitespace-nowrap truncate">เอกสารเซ็น</div>
-                <p class="text-muted-color m-0 min-w-0 truncate">ส่งเอกสารใหม่และติดตามสถานะการเซ็น</p>
+                <div class="font-semibold text-xl whitespace-nowrap truncate">{{ pageConfig.title }}</div>
+                <p class="text-muted-color m-0 min-w-0 truncate">{{ pageConfig.subtitle }}</p>
+                <Tag :value="`${documents.length} รายการ`" :severity="pageConfig.countSeverity" />
             </div>
             <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
                 <IconField class="w-full sm:w-80">
                     <InputIcon><i class="pi pi-search" /></InputIcon>
-                    <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร คู่ค้า สถานะ" class="w-full" />
+                    <InputText v-model="searchQuery" type="search" :placeholder="pageConfig.searchPlaceholder" class="w-full" />
                 </IconField>
                 <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
-                <Button label="ส่งเอกสารใหม่" icon="pi pi-send" @click="openCreate" />
+                <Button v-if="pageConfig.showCreate" label="สร้างเอกสารใหม่" icon="pi pi-plus" @click="openCreate" />
             </div>
         </div>
 
         <DataTable :value="filteredDocuments" :loading="loading" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows>
             <template #empty>
                 <div class="py-8 text-center text-muted-color">
-                    {{ searchQuery ? 'ไม่พบเอกสารที่ค้นหา' : 'ยังไม่มีเอกสารเซ็น เริ่มจากปุ่มส่งเอกสารใหม่' }}
+                    {{ searchQuery ? 'ไม่พบเอกสารที่ค้นหา' : pageConfig.empty }}
                 </div>
             </template>
 
@@ -293,11 +440,50 @@ function normalize(value) {
             <Column field="updatedAt" header="อัปเดตล่าสุด" sortable style="min-width: 14rem">
                 <template #body="{ data }">{{ formatThaiDateTime(data.updatedAt) }}</template>
             </Column>
-            <Column header="จัดการ" :exportable="false" style="width: 9rem">
+            <Column header="จัดการ" :exportable="false" style="min-width: 13rem">
                 <template #body="{ data }">
                     <div class="flex gap-2">
+                        <Button
+                            v-if="data.status === 'draft'"
+                            icon="pi pi-send"
+                            rounded
+                            outlined
+                            severity="success"
+                            aria-label="ส่งไปเซ็น"
+                            :loading="isTransitioning(data.id)"
+                            @click="confirmSend(data)"
+                        />
+                        <Button
+                            v-if="data.status === 'pending_confirm'"
+                            icon="pi pi-check-circle"
+                            rounded
+                            outlined
+                            severity="success"
+                            aria-label="ยืนยันเอกสาร"
+                            :loading="isTransitioning(data.id)"
+                            @click="confirmAdminConfirm(data)"
+                        />
+                        <Button
+                            v-if="queue === 'history'"
+                            icon="pi pi-file-pdf"
+                            rounded
+                            outlined
+                            severity="secondary"
+                            aria-label="ดู PDF ที่เซ็นครบแล้ว"
+                            @click="previewDocumentPDF(data, 'final')"
+                        />
                         <Button icon="pi pi-sitemap" rounded outlined severity="secondary" aria-label="ดู Flow เอกสาร" @click="openDocumentFlowFromRow(data)" />
                         <Button icon="pi pi-eye" rounded outlined severity="secondary" aria-label="ดูเอกสาร" @click="openDetail(data)" />
+                        <Button
+                            v-if="data.status === 'draft'"
+                            icon="pi pi-trash"
+                            rounded
+                            outlined
+                            severity="danger"
+                            aria-label="ยกเลิกเอกสาร"
+                            :loading="isTransitioning(data.id)"
+                            @click="confirmCancel(data)"
+                        />
                     </div>
                 </template>
             </Column>

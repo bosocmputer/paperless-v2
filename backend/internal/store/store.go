@@ -34,6 +34,7 @@ var (
 	ErrSigningDocumentNotFound        = errors.New("signing document not found")
 	ErrSigningDocumentDuplicate       = errors.New("signing document already exists")
 	ErrSigningDocumentUploadNotFound  = errors.New("signing document upload not found")
+	ErrSigningDocumentInvalidStatus   = errors.New("signing document status does not allow this action")
 	ErrSigningTaskNotFound            = errors.New("signing task not found")
 	ErrSigningTaskUnavailable         = errors.New("signing task is not available")
 	ErrExternalTokenNotFound          = errors.New("external signing token not found")
@@ -224,7 +225,7 @@ CREATE TABLE IF NOT EXISTS signing_documents (
     doc_date DATE,
     total_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
     sml_is_lock_record INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'rejected', 'completed', 'completed_evidence_failed', 'completed_lock_failed', 'cancelled')),
+    status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'rejected', 'completed', 'completed_evidence_failed', 'completed_lock_failed', 'cancelled')),
     current_version INTEGER NOT NULL DEFAULT 1 CHECK (current_version > 0),
     original_file_id UUID REFERENCES uploaded_files(id),
     current_file_id UUID REFERENCES uploaded_files(id),
@@ -248,13 +249,18 @@ DROP CONSTRAINT IF EXISTS signing_documents_status_check;
 
 ALTER TABLE signing_documents
 ADD CONSTRAINT signing_documents_status_check
-CHECK (status IN ('draft', 'in_progress', 'rejected', 'completed', 'completed_evidence_failed', 'completed_lock_failed', 'cancelled'));
+CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'rejected', 'completed', 'completed_evidence_failed', 'completed_lock_failed', 'cancelled'));
 
 DROP INDEX IF EXISTS signing_documents_active_doc_unique_idx;
 
 CREATE UNIQUE INDEX signing_documents_active_doc_unique_idx
 ON signing_documents (lower(doc_format_code), doc_no)
-WHERE status IN ('draft', 'in_progress', 'completed_evidence_failed', 'completed_lock_failed');
+WHERE status IN ('draft', 'in_progress', 'pending_confirm', 'completed_evidence_failed', 'completed_lock_failed');
+
+DROP INDEX IF EXISTS signing_documents_search_idx;
+
+CREATE INDEX signing_documents_search_idx
+ON signing_documents (lower(doc_no), lower(doc_format_code), updated_at DESC);
 
 CREATE INDEX IF NOT EXISTS signing_documents_status_idx
 ON signing_documents (status, updated_at DESC);

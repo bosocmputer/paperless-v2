@@ -19,6 +19,7 @@ const emptyTotals = {
     total: 0,
     draft: 0,
     inProgress: 0,
+    pendingConfirm: 0,
     rejected: 0,
     completed: 0,
     completedEvidenceFailed: 0,
@@ -28,6 +29,7 @@ const emptyTotals = {
 const emptyWorkflowSummary = {
     pendingDocuments: 0,
     pendingSigners: 0,
+    pendingConfirm: 0,
     attentionDocuments: 0,
     completedDocuments: 0,
     evidenceFailed: 0,
@@ -63,7 +65,7 @@ const actionRows = computed(() => {
             currentPositionName: problemReason(doc.status),
             statusLabel: signingStatusLabel(doc.status),
             statusSeverity: signingStatusSeverity(doc.status),
-            helper: 'เปิดเอกสารเพื่อลองสร้างหลักฐานหรือส่งสถานะกลับ SML อีกครั้ง',
+            helper: doc.status === 'pending_confirm' ? 'เซ็นครบแล้ว รอผู้ดูแลยืนยันเพื่อสร้างหลักฐานและ Lock SML' : 'เปิดเอกสารเพื่อลองสร้างหลักฐานหรือส่งสถานะกลับ SML อีกครั้ง',
             priority: 1
         });
     });
@@ -89,11 +91,11 @@ const actionRows = computed(() => {
 });
 const metricCards = computed(() => [
     {
-        label: 'เอกสารทั้งหมด',
-        value: totals.value.total,
-        helperStrong: `${totals.value.inProgress} รอเซ็น`,
-        helper: '· ในระบบ',
-        icon: 'pi pi-file',
+        label: 'เตรียมส่ง',
+        value: totals.value.draft,
+        helperStrong: 'ยังไม่ส่ง',
+        helper: '· ให้ผู้เซ็น',
+        icon: 'pi pi-file-plus',
         accentClass: 'bg-linear-to-b from-slate-400 dark:from-slate-300 to-slate-600 dark:to-slate-500'
     },
     {
@@ -105,11 +107,11 @@ const metricCards = computed(() => [
         accentClass: 'bg-linear-to-b from-cyan-400 dark:from-cyan-300 to-cyan-600 dark:to-cyan-500'
     },
     {
-        label: 'มีปัญหาต้องแก้',
-        value: workflowSummary.value.attentionDocuments || workflowSummary.value.evidenceFailed + workflowSummary.value.lockFailed,
+        label: 'รอยืนยัน',
+        value: workflowSummary.value.pendingConfirm || totals.value.pendingConfirm,
         helperStrong: `${workflowSummary.value.evidenceFailed} PDF`,
-        helper: `· ${workflowSummary.value.lockFailed} SML`,
-        icon: 'pi pi-exclamation-triangle',
+        helper: `· ${workflowSummary.value.lockFailed} SML ต้องแก้`,
+        icon: 'pi pi-check-circle',
         accentClass: 'bg-linear-to-b from-orange-400 dark:from-orange-300 to-orange-600 dark:to-orange-500'
     },
     {
@@ -172,6 +174,7 @@ function documentLine(doc) {
 }
 
 function problemReason(status) {
+    if (status === 'pending_confirm') return 'รอยืนยันเอกสาร';
     if (status === 'completed_evidence_failed') return 'สร้างไฟล์หลักฐานไม่สำเร็จ';
     if (status === 'completed_lock_failed') return 'ส่งสถานะกลับ SML ไม่สำเร็จ';
     return 'ต้องตรวจสอบ';
@@ -225,11 +228,23 @@ function movementEventView(event) {
     const action = String(event?.action || '');
     const metadata = event?.metadata || {};
     const labels = {
+        document_draft_created: {
+            title: 'สร้างเอกสารเตรียมส่ง',
+            icon: 'pi pi-file-plus',
+            severity: 'info',
+            detail: event.message || 'สร้างเอกสารไว้ก่อนส่งให้ผู้เซ็น'
+        },
         document_created: {
             title: 'สร้างเอกสารเซ็น',
             icon: 'pi pi-send',
             severity: 'info',
             detail: event.message || 'เริ่ม workflow เอกสารนี้'
+        },
+        document_sent: {
+            title: 'ส่งเอกสารไปเซ็น',
+            icon: 'pi pi-send',
+            severity: 'info',
+            detail: event.message || 'เปิดคิวให้ผู้เซ็นดำเนินการ'
         },
         signed: {
             title: `${event.actorLabel || 'ผู้เซ็น'} เซ็นแล้ว`,
@@ -242,6 +257,24 @@ function movementEventView(event) {
             icon: 'pi pi-times',
             severity: 'danger',
             detail: metadata.reason ? `เหตุผล: ${metadata.reason}` : event.message || 'เอกสารถูกปฏิเสธ'
+        },
+        document_ready_to_confirm: {
+            title: 'เซ็นครบ รอยืนยัน',
+            icon: 'pi pi-verified',
+            severity: 'success',
+            detail: event.message || 'เอกสารพร้อมให้ผู้ดูแลยืนยัน'
+        },
+        document_confirm_attempt: {
+            title: 'เริ่มยืนยันเอกสาร',
+            icon: 'pi pi-check-circle',
+            severity: 'info',
+            detail: event.message || 'กำลังสร้างหลักฐานและส่งสถานะกลับ SML'
+        },
+        document_confirmed: {
+            title: 'ยืนยันเอกสารแล้ว',
+            icon: 'pi pi-check-circle',
+            severity: 'success',
+            detail: event.message || 'เอกสารเสร็จสมบูรณ์'
         },
         document_completed: {
             title: 'เซ็นครบทุกขั้นตอน',

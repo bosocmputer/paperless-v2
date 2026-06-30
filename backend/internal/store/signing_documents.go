@@ -51,6 +51,21 @@ type CreatePrintEventInput struct {
 	UserAgent       string
 }
 
+type SigningDocumentListQuery struct {
+	Queue  string
+	Search string
+	Page   int
+	Size   int
+}
+
+type SigningDocumentListResult struct {
+	Documents []models.SigningDocument `json:"documents"`
+	Page      int                      `json:"page"`
+	Size      int                      `json:"size"`
+	Total     int                      `json:"total"`
+	HasMore   bool                     `json:"hasMore"`
+}
+
 func (s *Store) CreateSigningDocument(ctx context.Context, input CreateSigningDocumentInput) (models.SigningDocument, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -88,7 +103,7 @@ INSERT INTO signing_documents (
     doc_date, total_amount, sml_is_lock_record, status, current_version,
     original_file_id, current_file_id, signature_template_id, config_snapshot, template_snapshot, legal_notice_snapshot, created_by
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::date,$10,$11,'in_progress',1,$12,$13,$14,$15::jsonb,$16::jsonb,$17::jsonb,NULLIF($18,'')::uuid)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::date,$10,$11,'draft',1,$12,$13,$14,$15::jsonb,$16::jsonb,$17::jsonb,NULLIF($18,'')::uuid)
 RETURNING id::text
 `, input.ScreenCode, input.Format.Code, input.Candidate.DocNo, input.Candidate.Table, input.Candidate.TransFlag,
 		input.Candidate.PartyCode, input.Candidate.PartyName, input.Candidate.PartyType, input.Candidate.DocDate,
@@ -116,11 +131,6 @@ VALUES ($1, 1, $2, 'original', NULLIF($4,'')::uuid),
 		}
 		return configs[i].SequenceNo < configs[j].SequenceNo
 	})
-	firstSequence := 0.0
-	if len(configs) > 0 {
-		firstSequence = configs[0].SequenceNo
-	}
-
 	boxesByPosition := map[string][]models.SignatureTemplateBoxRequest{}
 	for _, box := range input.LayoutBoxes {
 		key := strings.ToLower(strings.TrimSpace(box.PositionCode))
@@ -134,9 +144,6 @@ VALUES ($1, 1, $2, 'original', NULLIF($4,'')::uuid),
 
 	for _, step := range configs {
 		stepStatus := "waiting"
-		if step.SequenceNo == firstSequence {
-			stepStatus = "pending"
-		}
 		var stepID string
 		if err := tx.QueryRow(ctx, `
 INSERT INTO signing_document_steps (
@@ -169,7 +176,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		}
 	}
 
-	if err := insertSigningEvent(ctx, tx, documentID, input.ActorID, "", "document_created", "สร้างเอกสารเพื่อเซ็น", input.IPAddress, input.UserAgent, map[string]any{
+	if err := insertSigningEvent(ctx, tx, documentID, input.ActorID, "", "document_draft_created", "สร้างเอกสารเตรียมส่ง", input.IPAddress, input.UserAgent, map[string]any{
 		"docNo": input.Candidate.DocNo,
 	}); err != nil {
 		return models.SigningDocument{}, err
@@ -210,14 +217,207 @@ WHERE file_id = $1
 	return nil
 }
 
-func (s *Store) ListSigningDocuments(ctx context.Context) ([]models.SigningDocument, error) {
-	rows, err := s.pool.Query(ctx, signingDocumentSelect()+`
-ORDER BY d.updated_at DESC, d.created_at DESC
-`)
-	if err != nil {
-		return nil, err
+func (s *Store) ListSigningDocuments(ctx context.Context, query SigningDocumentListQuery) (SigningDocumentListResult, error) {
+	query.Queue = strings.ToLower(strings.TrimSpace(query.Queue))
+	if query.Queue == "" {
+		query.Queue = "all"
 	}
-	return scanSigningDocumentRows(rows)
+	query.Search = strings.TrimSpace(query.Search)
+	if query.Page < 1 {
+		query.Page = 1
+	}
+	if query.Size < 1 {
+		query.Size = 20
+	}
+	if query.Size > 100 {
+		query.Size = 100
+	}
+
+	where, args := signingDocumentListWhere(query)
+	countSQL := `SELECT COUNT(*)::int FROM signing_documents d ` + where
+	var total int
+	if err := s.pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
+		return SigningDocumentListResult{}, err
+	}
+
+	offset := (query.Page - 1) * query.Size
+	args = append(args, query.Size, offset)
+	rows, err := s.pool.Query(ctx, signingDocumentSelect()+where+fmt.Sprintf(`
+ORDER BY d.updated_at DESC, d.created_at DESC
+LIMIT $%d OFFSET $%d
+`, len(args)-1, len(args)), args...)
+	if err != nil {
+		return SigningDocumentListResult{}, err
+	}
+	documents, err := scanSigningDocumentRows(rows)
+	if err != nil {
+		return SigningDocumentListResult{}, err
+	}
+	return SigningDocumentListResult{
+		Documents: documents,
+		Page:      query.Page,
+		Size:      query.Size,
+		Total:     total,
+		HasMore:   offset+len(documents) < total,
+	}, nil
+}
+
+func signingDocumentListWhere(query SigningDocumentListQuery) (string, []any) {
+	clauses := []string{}
+	args := []any{}
+
+	statuses := statusesForSigningDocumentQueue(query.Queue)
+	if len(statuses) > 0 {
+		placeholders := make([]string, 0, len(statuses))
+		for _, status := range statuses {
+			args = append(args, status)
+			placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+		}
+		clauses = append(clauses, "d.status IN ("+strings.Join(placeholders, ",")+")")
+	}
+
+	if query.Search != "" {
+		args = append(args, "%"+strings.ToLower(query.Search)+"%")
+		placeholder := fmt.Sprintf("$%d", len(args))
+		clauses = append(clauses, "(lower(d.doc_no) LIKE "+placeholder+" OR lower(d.doc_format_code) LIKE "+placeholder+" OR lower(d.party_name) LIKE "+placeholder+" OR lower(d.party_code) LIKE "+placeholder+" OR lower(d.status) LIKE "+placeholder+")")
+	}
+
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func statusesForSigningDocumentQueue(queue string) []string {
+	switch queue {
+	case "draft":
+		return []string{"draft"}
+	case "active":
+		return []string{"in_progress", "pending_confirm", "completed_evidence_failed", "completed_lock_failed", "rejected"}
+	case "history":
+		return []string{"completed"}
+	default:
+		return nil
+	}
+}
+
+func (s *Store) SendSigningDocument(ctx context.Context, documentID, actorID, ipAddress, userAgent string) (models.SigningDocument, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT status FROM signing_documents WHERE id = $1 FOR UPDATE`, documentID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.SigningDocument{}, ErrSigningDocumentNotFound
+		}
+		return models.SigningDocument{}, err
+	}
+	if status != "draft" {
+		return models.SigningDocument{}, ErrSigningDocumentInvalidStatus
+	}
+
+	var firstStepID string
+	if err := tx.QueryRow(ctx, `
+SELECT id::text
+FROM signing_document_steps
+WHERE document_id = $1 AND status = 'waiting'
+ORDER BY sequence_no, position_code
+LIMIT 1
+`, documentID).Scan(&firstStepID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.SigningDocument{}, ErrSigningDocumentInvalidStatus
+		}
+		return models.SigningDocument{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE signing_documents
+SET status = 'in_progress', updated_at = now()
+WHERE id = $1
+`, documentID); err != nil {
+		return models.SigningDocument{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE signing_document_steps SET status = 'pending' WHERE id = $1`, firstStepID); err != nil {
+		return models.SigningDocument{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE signing_document_signers SET status = 'pending' WHERE step_id = $1 AND status = 'waiting'`, firstStepID); err != nil {
+		return models.SigningDocument{}, err
+	}
+	if err := insertSigningEvent(ctx, tx, documentID, actorID, "", "document_sent", "ส่งเอกสารไปให้ผู้เซ็นแล้ว", ipAddress, userAgent, map[string]any{"stepId": firstStepID}); err != nil {
+		return models.SigningDocument{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return models.SigningDocument{}, err
+	}
+	return s.FindSigningDocumentByID(ctx, documentID)
+}
+
+func (s *Store) PrepareSigningDocumentConfirmation(ctx context.Context, documentID, actorID, ipAddress, userAgent string) (models.SigningDocument, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT status FROM signing_documents WHERE id = $1 FOR UPDATE`, documentID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.SigningDocument{}, ErrSigningDocumentNotFound
+		}
+		return models.SigningDocument{}, err
+	}
+	if status != "pending_confirm" {
+		return models.SigningDocument{}, ErrSigningDocumentInvalidStatus
+	}
+	if err := insertSigningEvent(ctx, tx, documentID, actorID, "", "document_confirm_attempt", "ผู้ดูแลยืนยันเอกสารเพื่อสร้างหลักฐานและ Lock SML", ipAddress, userAgent, nil); err != nil {
+		return models.SigningDocument{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return models.SigningDocument{}, err
+	}
+	return s.FindSigningDocumentByID(ctx, documentID)
+}
+
+func (s *Store) CancelSigningDocument(ctx context.Context, documentID, actorID, ipAddress, userAgent string) (models.SigningDocument, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT status FROM signing_documents WHERE id = $1 FOR UPDATE`, documentID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.SigningDocument{}, ErrSigningDocumentNotFound
+		}
+		return models.SigningDocument{}, err
+	}
+	if status == "completed" || status == "cancelled" {
+		return models.SigningDocument{}, ErrSigningDocumentInvalidStatus
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE signing_documents
+SET status = 'cancelled', updated_at = now()
+WHERE id = $1
+`, documentID); err != nil {
+		return models.SigningDocument{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE external_signing_tokens
+SET status = 'revoked', revoked_at = now()
+WHERE document_id = $1 AND status IN ('active', 'verified')
+`, documentID); err != nil {
+		return models.SigningDocument{}, err
+	}
+	if err := insertSigningEvent(ctx, tx, documentID, actorID, "", "document_cancelled", "ยกเลิกเอกสารเซ็น", ipAddress, userAgent, map[string]any{"previousStatus": status}); err != nil {
+		return models.SigningDocument{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return models.SigningDocument{}, err
+	}
+	return s.FindSigningDocumentByID(ctx, documentID)
 }
 
 func (s *Store) GetAdminDashboard(ctx context.Context) (models.AdminDashboard, error) {
@@ -243,6 +443,8 @@ GROUP BY status
 			dashboard.Totals.Draft = count
 		case "in_progress":
 			dashboard.Totals.InProgress = count
+		case "pending_confirm":
+			dashboard.Totals.PendingConfirm = count
 		case "rejected":
 			dashboard.Totals.Rejected = count
 		case "completed":
@@ -259,12 +461,13 @@ GROUP BY status
 		return dashboard, err
 	}
 	dashboard.WorkflowSummary.CompletedDocuments = dashboard.Totals.Completed
+	dashboard.WorkflowSummary.PendingConfirm = dashboard.Totals.PendingConfirm
 	dashboard.WorkflowSummary.EvidenceFailed = dashboard.Totals.CompletedEvidenceFailed
 	dashboard.WorkflowSummary.LockFailed = dashboard.Totals.CompletedLockFailed
-	dashboard.WorkflowSummary.AttentionDocuments = dashboard.Totals.CompletedEvidenceFailed + dashboard.Totals.CompletedLockFailed
+	dashboard.WorkflowSummary.AttentionDocuments = dashboard.Totals.PendingConfirm + dashboard.Totals.CompletedEvidenceFailed + dashboard.Totals.CompletedLockFailed
 
 	needsAttention, err := s.listSigningDocumentsByQuery(ctx, `
-WHERE d.status IN ('completed_evidence_failed', 'completed_lock_failed')
+WHERE d.status IN ('pending_confirm', 'completed_evidence_failed', 'completed_lock_failed')
 ORDER BY d.updated_at DESC, d.created_at DESC
 LIMIT 5
 `)
@@ -1200,6 +1403,13 @@ func (s *Store) signTask(ctx context.Context, taskID, username, signatureFileID,
 	if external && signer.SignerType != "external" {
 		return SignTaskResult{}, ErrSigningTaskUnavailable
 	}
+	var documentStatus string
+	if err := tx.QueryRow(ctx, `SELECT status FROM signing_documents WHERE id = $1 FOR UPDATE`, signer.DocumentID).Scan(&documentStatus); err != nil {
+		return SignTaskResult{}, err
+	}
+	if documentStatus != "in_progress" {
+		return SignTaskResult{}, ErrSigningTaskUnavailable
+	}
 
 	if _, err := tx.Exec(ctx, `
 UPDATE signing_document_signers
@@ -1252,6 +1462,13 @@ func (s *Store) rejectTask(ctx context.Context, taskID, username, reason, device
 		return "", ErrSigningTaskUnavailable
 	}
 	if external && signer.SignerType != "external" {
+		return "", ErrSigningTaskUnavailable
+	}
+	var documentStatus string
+	if err := tx.QueryRow(ctx, `SELECT status FROM signing_documents WHERE id = $1 FOR UPDATE`, signer.DocumentID).Scan(&documentStatus); err != nil {
+		return "", err
+	}
+	if documentStatus != "in_progress" {
 		return "", ErrSigningTaskUnavailable
 	}
 	reason = strings.TrimSpace(reason)
@@ -1329,12 +1546,12 @@ LIMIT 1
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, err := tx.Exec(ctx, `
 UPDATE signing_documents
-SET status = 'completed', completed_at = now(), updated_at = now()
+SET status = 'pending_confirm', completed_at = now(), updated_at = now()
 WHERE id = $1
 `, signer.DocumentID); err != nil {
 			return false, err
 		}
-		if err := insertSigningEvent(ctx, tx, signer.DocumentID, "", "", "document_completed", "เอกสารเซ็นครบแล้ว", "", "", nil); err != nil {
+		if err := insertSigningEvent(ctx, tx, signer.DocumentID, "", "", "document_ready_to_confirm", "เอกสารเซ็นครบแล้ว รอผู้ดูแลยืนยัน", "", "", nil); err != nil {
 			return false, err
 		}
 		return true, nil

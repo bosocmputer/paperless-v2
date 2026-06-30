@@ -7,12 +7,14 @@ import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflo
 import RelatedDocumentsPanel from '@/views/signing/components/RelatedDocumentsPanel.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const route = useRoute();
 const router = useRouter();
+const confirm = useConfirm();
 const toast = useToast();
 
 const document = ref(null);
@@ -30,6 +32,9 @@ const fitWidthActive = ref(true);
 const retryingLock = ref(false);
 const retryingFinalPDF = ref(false);
 const printing = ref(false);
+const sending = ref(false);
+const confirmingDocument = ref(false);
+const cancellingDocument = ref(false);
 const tokenDialog = ref(false);
 const generatedToken = ref(null);
 const activeTab = ref('progress');
@@ -49,6 +54,11 @@ const documentHeaderLine = computed(() => {
     const doc = document.value;
     if (!doc) return 'เอกสาร';
     return `${doc.docNo || 'เอกสาร'} ~ ${doc.docFormatCode || '-'} · ${doc.partyName || doc.partyCode || '-'}`;
+});
+const backRouteName = computed(() => {
+    if (document.value?.status === 'draft') return 'signing-document-drafts';
+    if (document.value?.status === 'completed') return 'signing-document-history';
+    return 'signing-documents';
 });
 
 onMounted(async () => {
@@ -201,6 +211,91 @@ async function retryFinalPDF() {
     }
 }
 
+function confirmSendDocument() {
+    confirm.require({
+        header: 'ส่งเอกสารไปเซ็น',
+        message: `ต้องการส่ง ${document.value?.docNo || 'เอกสารนี้'} ให้ผู้เซ็นใช่ไหม?`,
+        icon: 'pi pi-send',
+        acceptLabel: 'ส่งไปเซ็น',
+        rejectLabel: 'ยกเลิก',
+        accept: () => sendDocument()
+    });
+}
+
+async function sendDocument() {
+    if (!document.value?.id) return;
+    sending.value = true;
+    try {
+        await api.sendSigningDocument(document.value.id, { idempotencyKey: makeTransitionKey('send') });
+        toast.add({ severity: 'success', summary: 'ส่งเอกสารไปเซ็นแล้ว', life: 2500 });
+        await loadPage();
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'ส่งเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        sending.value = false;
+    }
+}
+
+function confirmAdminConfirmDocument() {
+    confirm.require({
+        header: 'ยืนยันเอกสาร',
+        message: `ต้องการยืนยัน ${document.value?.docNo || 'เอกสารนี้'} ใช่ไหม? ระบบจะสร้าง final PDF/evidence และ Lock SML`,
+        icon: 'pi pi-check-circle',
+        acceptLabel: 'ยืนยันเอกสาร',
+        rejectLabel: 'ยกเลิก',
+        accept: () => adminConfirmDocument()
+    });
+}
+
+async function adminConfirmDocument() {
+    if (!document.value?.id) return;
+    confirmingDocument.value = true;
+    try {
+        const result = await api.confirmSigningDocument(document.value.id, { idempotencyKey: makeTransitionKey('confirm') });
+        toast.add({
+            severity: result.finalOk && result.lockOk ? 'success' : 'warn',
+            summary: result.finalOk && result.lockOk ? 'ยืนยันเอกสารสำเร็จ' : 'ยืนยันแล้วแต่ยังมีงานต้องตรวจสอบ',
+            detail: result.finalOk ? (result.lockOk ? '' : 'Lock SML ไม่สำเร็จ กรุณา retry') : 'สร้าง final PDF/evidence ไม่สำเร็จ กรุณา retry',
+            life: 4000
+        });
+        await loadPage();
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'ยืนยันเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        confirmingDocument.value = false;
+    }
+}
+
+function confirmCancelDocument() {
+    confirm.require({
+        header: 'ยกเลิกเอกสาร',
+        message: `ต้องการยกเลิก ${document.value?.docNo || 'เอกสารนี้'} ใช่ไหม?`,
+        icon: 'pi pi-exclamation-triangle',
+        acceptLabel: 'ยกเลิกเอกสาร',
+        rejectLabel: 'กลับ',
+        acceptClass: 'p-button-danger',
+        accept: () => cancelDocument()
+    });
+}
+
+async function cancelDocument() {
+    if (!document.value?.id) return;
+    cancellingDocument.value = true;
+    try {
+        await api.cancelSigningDocument(document.value.id, { idempotencyKey: makeTransitionKey('cancel') });
+        toast.add({ severity: 'success', summary: 'ยกเลิกเอกสารแล้ว', life: 2500 });
+        router.push({ name: 'signing-document-drafts' });
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'ยกเลิกเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        cancellingDocument.value = false;
+    }
+}
+
+function makeTransitionKey(action) {
+    return `${action}-${document.value?.id || 'document'}-${crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`}`;
+}
+
 async function printOfficialCopy() {
     if (!document.value?.id) return;
     const popup = window.open('', '_blank');
@@ -281,7 +376,7 @@ function openRelatedDocument(documentId) {
 function openDocumentFlow(doc = document.value) {
     if (!doc?.docNo) return;
     router.push({
-        name: 'signing-documents',
+        name: backRouteName.value,
         query: {
             flow_doc_no: doc.docNo,
             ...(doc.docFormatCode ? { flow_doc_format_code: doc.docFormatCode } : {})
@@ -308,11 +403,23 @@ function movementEventView(event) {
     const action = String(event?.action || '');
     const metadata = event?.metadata || {};
     const labels = {
+        document_draft_created: {
+            title: 'สร้างเอกสารเตรียมส่ง',
+            icon: 'pi pi-file-plus',
+            severity: 'info',
+            detail: event.message || 'สร้างเอกสารไว้ก่อนส่งให้ผู้เซ็น'
+        },
         document_created: {
             title: 'สร้างเอกสารเซ็น',
             icon: 'pi pi-send',
             severity: 'info',
             detail: event.message || 'เริ่ม workflow เอกสารนี้'
+        },
+        document_sent: {
+            title: 'ส่งเอกสารไปเซ็น',
+            icon: 'pi pi-send',
+            severity: 'info',
+            detail: event.message || 'เปิดคิวให้ผู้เซ็นดำเนินการ'
         },
         signed: {
             title: `${event.actorLabel || 'ผู้เซ็น'} เซ็นแล้ว`,
@@ -325,6 +432,24 @@ function movementEventView(event) {
             icon: 'pi pi-times',
             severity: 'danger',
             detail: metadata.reason ? `เหตุผล: ${metadata.reason}` : event.message || 'เอกสารถูกปฏิเสธ'
+        },
+        document_ready_to_confirm: {
+            title: 'เซ็นครบ รอยืนยัน',
+            icon: 'pi pi-verified',
+            severity: 'success',
+            detail: event.message || 'เอกสารพร้อมให้ผู้ดูแลยืนยัน'
+        },
+        document_confirm_attempt: {
+            title: 'เริ่มยืนยันเอกสาร',
+            icon: 'pi pi-check-circle',
+            severity: 'info',
+            detail: event.message || 'กำลังสร้างหลักฐานและส่งสถานะกลับ SML'
+        },
+        document_confirmed: {
+            title: 'ยืนยันเอกสารแล้ว',
+            icon: 'pi pi-check-circle',
+            severity: 'success',
+            detail: event.message || 'เอกสารเสร็จสมบูรณ์'
         },
         document_completed: {
             title: 'เซ็นครบทุกขั้นตอน',
@@ -380,12 +505,15 @@ function clamp(value, min, max) {
 <template>
     <div class="signing-detail">
         <div class="editor-bar">
-            <Button icon="pi pi-arrow-left" text rounded aria-label="กลับ" @click="router.push({ name: 'signing-documents' })" />
+            <Button icon="pi pi-arrow-left" text rounded aria-label="กลับ" @click="router.push({ name: backRouteName })" />
             <div class="bar-title">
                 <strong>{{ documentHeaderLine }}</strong>
             </div>
             <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
             <Button v-if="document" label="ตรวจสอบ Flow" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
+            <Button v-if="document?.status === 'draft'" label="ส่งไปเซ็น" icon="pi pi-send" severity="success" :loading="sending" @click="confirmSendDocument" />
+            <Button v-if="document?.status === 'draft'" label="ยกเลิก" icon="pi pi-trash" severity="danger" outlined :loading="cancellingDocument" @click="confirmCancelDocument" />
+            <Button v-if="document?.status === 'pending_confirm'" label="ยืนยันเอกสาร" icon="pi pi-check-circle" severity="success" :loading="confirmingDocument" @click="confirmAdminConfirmDocument" />
             <Button v-if="document?.status === 'completed_evidence_failed'" label="สร้าง PDF อีกครั้ง" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
             <Button v-if="document?.status === 'completed_lock_failed'" label="Lock SML อีกครั้ง" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
             <Button v-if="document?.status === 'completed'" label="พิมพ์เอกสาร" icon="pi pi-print" severity="primary" :loading="printing" @click="printOfficialCopy" />
@@ -443,7 +571,7 @@ function clamp(value, min, max) {
                                     </div>
                                     <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
                                 </div>
-                                <DocumentWorkflowTimeline :document="document" show-external-actions @generate-external="generateExternal" />
+                                <DocumentWorkflowTimeline :document="document" :show-external-actions="document?.status === 'in_progress'" @generate-external="generateExternal" />
                             </div>
                         </TabPanel>
                         <TabPanel value="related">

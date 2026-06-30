@@ -40,6 +40,12 @@ export function documentProgressIssue(document) {
             message: 'เอกสารเซ็นครบและสร้าง PDF แล้ว แต่ยังส่งสถานะกลับ SML ไม่สำเร็จ ต้อง Lock SML อีกครั้ง'
         };
     }
+    if (status === 'pending_confirm') {
+        return {
+            severity: 'info',
+            message: 'เอกสารเซ็นครบแล้ว รอผู้ดูแลยืนยันเพื่อสร้าง PDF หลักฐานและส่งสถานะกลับ SML'
+        };
+    }
     if (status === 'rejected') {
         return {
             severity: 'error',
@@ -116,7 +122,7 @@ function resolveStepStatus(step, signers, document) {
     if (completedStatuses.has(step.status)) return 'completed';
     if (signers.length > 0 && signers.every((signer) => signer.status === 'skipped')) return 'skipped';
     if (signers.length > 0 && signers.every((signer) => signer.status === 'signed' || signer.status === 'skipped')) return 'completed';
-    if (document?.status === 'completed' && signers.length === 0) return 'completed';
+    if ((document?.status === 'completed' || document?.status === 'pending_confirm') && signers.length === 0) return 'completed';
     if (waitingStatuses.has(step.status) || signers.some((signer) => signer.status === 'waiting')) return 'waiting';
     return step.status || 'waiting';
 }

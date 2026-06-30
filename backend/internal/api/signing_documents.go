@@ -94,13 +94,22 @@ type signingCreateEventRequest struct {
 }
 
 func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
-	documents, err := s.store.ListSigningDocuments(r.Context())
+	size := parsePositiveQueryInt(r, "size", 100)
+	if size > 100 {
+		size = 100
+	}
+	result, err := s.store.ListSigningDocuments(r.Context(), store.SigningDocumentListQuery{
+		Queue:  r.URL.Query().Get("queue"),
+		Search: r.URL.Query().Get("search"),
+		Page:   parsePositiveQueryInt(r, "page", 1),
+		Size:   size,
+	})
 	if err != nil {
 		s.logger.Error("list signing documents failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "signing_documents_failed", "Cannot load signing documents right now.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"documents": documents})
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) getAdminDashboard(w http.ResponseWriter, r *http.Request) {
@@ -294,6 +303,113 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 	s.completeIdempotency(idempotencyScope, actor.ID, r, http.StatusCreated, payload)
 	idempotencyCompleted = true
 	writeJSON(w, http.StatusCreated, payload)
+}
+
+func (s *Server) sendSigningDocument(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
+	documentID := strings.TrimSpace(r.PathValue("id"))
+	scope := "signing_document_send:" + documentID
+	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
+		writeError(w, http.StatusBadRequest, "idempotency_key_required", "Idempotency-Key is required when sending a signing document.")
+		return
+	}
+	if s.replayIdempotentResponse(w, r, scope, actor.ID) {
+		return
+	}
+	idempotencyCompleted := false
+	defer func() {
+		if !idempotencyCompleted {
+			s.releaseIdempotency(scope, actor.ID, r)
+		}
+	}()
+
+	document, err := s.store.SendSigningDocument(r.Context(), documentID, actor.ID, clientIP(r), r.UserAgent())
+	if s.writeSigningDocumentTransitionError(w, err, "send_signing_document_failed", "Cannot send signing document right now.") {
+		return
+	}
+	payload := map[string]any{"document": s.withExternalURLs(r, document)}
+	s.completeIdempotency(scope, actor.ID, r, http.StatusOK, payload)
+	idempotencyCompleted = true
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) confirmSigningDocument(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
+	documentID := strings.TrimSpace(r.PathValue("id"))
+	scope := "signing_document_confirm:" + documentID
+	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
+		writeError(w, http.StatusBadRequest, "idempotency_key_required", "Idempotency-Key is required when confirming a signing document.")
+		return
+	}
+	if s.replayIdempotentResponse(w, r, scope, actor.ID) {
+		return
+	}
+	idempotencyCompleted := false
+	defer func() {
+		if !idempotencyCompleted {
+			s.releaseIdempotency(scope, actor.ID, r)
+		}
+	}()
+
+	if _, err := s.store.PrepareSigningDocumentConfirmation(r.Context(), documentID, actor.ID, clientIP(r), r.UserAgent()); s.writeSigningDocumentTransitionError(w, err, "confirm_signing_document_failed", "Cannot confirm signing document right now.") {
+		return
+	}
+	finalOK, lockOK := s.finalizeCompletedDocument(r.Context(), documentID, clientIP(r), r.UserAgent())
+	updated, _ := s.store.FindSigningDocumentByID(r.Context(), documentID)
+	payload := map[string]any{"document": s.withExternalURLs(r, updated), "finalOk": finalOK, "lockOk": lockOK}
+	if lockOK {
+		_ = s.store.AddSigningEvent(context.Background(), documentID, actor.ID, "", "document_confirmed", "ผู้ดูแลยืนยันเอกสารเรียบร้อยแล้ว", clientIP(r), r.UserAgent(), nil)
+		updated, _ = s.store.FindSigningDocumentByID(r.Context(), documentID)
+		payload["document"] = s.withExternalURLs(r, updated)
+	}
+	s.completeIdempotency(scope, actor.ID, r, http.StatusOK, payload)
+	idempotencyCompleted = true
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) cancelSigningDocument(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
+	documentID := strings.TrimSpace(r.PathValue("id"))
+	scope := "signing_document_cancel:" + documentID
+	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
+		writeError(w, http.StatusBadRequest, "idempotency_key_required", "Idempotency-Key is required when cancelling a signing document.")
+		return
+	}
+	if s.replayIdempotentResponse(w, r, scope, actor.ID) {
+		return
+	}
+	idempotencyCompleted := false
+	defer func() {
+		if !idempotencyCompleted {
+			s.releaseIdempotency(scope, actor.ID, r)
+		}
+	}()
+
+	document, err := s.store.CancelSigningDocument(r.Context(), documentID, actor.ID, clientIP(r), r.UserAgent())
+	if s.writeSigningDocumentTransitionError(w, err, "cancel_signing_document_failed", "Cannot cancel signing document right now.") {
+		return
+	}
+	payload := map[string]any{"document": s.withExternalURLs(r, document)}
+	s.completeIdempotency(scope, actor.ID, r, http.StatusOK, payload)
+	idempotencyCompleted = true
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) writeSigningDocumentTransitionError(w http.ResponseWriter, err error, code, message string) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, store.ErrSigningDocumentNotFound) {
+		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
+		return true
+	}
+	if errors.Is(err, store.ErrSigningDocumentInvalidStatus) {
+		writeError(w, http.StatusConflict, "signing_document_status_invalid", "Document status does not allow this action.")
+		return true
+	}
+	s.logger.Error(message, "error", err)
+	writeError(w, http.StatusInternalServerError, code, message)
+	return true
 }
 
 func (s *Server) decodeCreateSigningDocumentRequest(w http.ResponseWriter, r *http.Request) (createSigningDocumentRequest, bool) {
@@ -639,9 +755,11 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := currentUser(r)
-	if user.Role != "admin" && !documentHasSigner(document, user.Username) {
-		writeError(w, http.StatusForbidden, "forbidden", "You cannot view this document.")
-		return
+	if user.Role != "admin" {
+		if document.Status != "in_progress" || !documentHasSigner(document, user.Username) {
+			writeError(w, http.StatusForbidden, "forbidden", "You cannot view this document.")
+			return
+		}
 	}
 	version := strings.TrimSpace(r.URL.Query().Get("version"))
 	if version == "" && document.Status == "in_progress" && currentPDFNeedsLegalNoticeRefresh(document) {
@@ -900,6 +1018,10 @@ func (s *Server) getMySigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
+	if document.Status != "in_progress" {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"document": sanitizeSigningDocumentForSigner(document), "task": sanitizeSigningTaskForUser(signer), "legal": signingLegalPayload()})
 }
 
@@ -979,6 +1101,11 @@ func (s *Server) uploadMySigningTaskAttachment(w http.ResponseWriter, r *http.Re
 	}
 	if signer.Status != "pending" {
 		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
+		return
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil || document.Status != "in_progress" {
+		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
 		return
 	}
 	uploaded, note, err := s.readAndStoreSigningAttachment(w, r, user.ID)
@@ -1086,6 +1213,10 @@ func (s *Server) getPublicSigningDocument(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
+	if document.Status != "in_progress" {
+		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"document": document, "task": signer, "legal": signingLegalPayload()})
 }
 
@@ -1097,6 +1228,10 @@ func (s *Server) getPublicSigningPDF(w http.ResponseWriter, r *http.Request) {
 	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
 	if err != nil || document.CurrentFile == nil {
 		writeError(w, http.StatusNotFound, "pdf_not_found", "PDF was not found.")
+		return
+	}
+	if document.Status != "in_progress" {
+		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
 		return
 	}
 	if document.Status == "in_progress" && currentPDFNeedsLegalNoticeRefresh(document) {
@@ -1150,6 +1285,11 @@ func (s *Server) uploadPublicSigningTaskAttachment(w http.ResponseWriter, r *htt
 	}
 	if signer.Status != "pending" {
 		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
+		return
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil || document.Status != "in_progress" {
+		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
 		return
 	}
 	uploaded, note, err := s.readAndStoreSigningAttachment(w, r, "")
@@ -1244,9 +1384,6 @@ func (s *Server) writeTaskMutationResult(w http.ResponseWriter, r *http.Request,
 		_ = s.store.AddSigningEvent(context.Background(), result.DocumentID, "", "", "pdf_stamp_failed", "สร้าง PDF พร้อมลายเซ็นไม่สำเร็จ", clientIP(r), r.UserAgent(), map[string]any{
 			"error": err.Error(),
 		})
-	}
-	if result.Completed {
-		s.finalizeCompletedDocument(r.Context(), result.DocumentID, clientIP(r), r.UserAgent())
 	}
 	document, _ := s.store.FindSigningDocumentByID(r.Context(), result.DocumentID)
 	payload := map[string]any{"document": document}
