@@ -756,12 +756,12 @@ function makeClientId() {
 
 <style scoped>
 .signing-create-card {
-    min-height: calc(100dvh - 7rem);
+    min-height: calc(100dvh - 6.25rem);
 }
 
 .signing-create-card-designer {
     display: flex;
-    height: calc(100dvh - 5.25rem);
+    height: calc(100dvh - 6.25rem);
     min-height: 0;
     flex-direction: column;
     padding: 1rem;

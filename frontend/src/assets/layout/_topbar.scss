@@ -2,7 +2,7 @@
 
 .layout-topbar {
     position: fixed;
-    height: 4rem;
+    height: 3.25rem;
     z-index: 997;
     left: 0;
     top: 0;
@@ -38,12 +38,12 @@
         }
 
         strong {
-            font-size: 1.15rem;
+            font-size: 1.05rem;
             font-weight: 700;
         }
 
         small {
-            font-size: 0.78rem;
+            font-size: 0.72rem;
             color: var(--text-color-secondary);
             font-weight: 500;
         }
@@ -58,8 +58,8 @@
         justify-content: center;
         align-items: center;
         border-radius: 50%;
-        width: 2.5rem;
-        height: 2.5rem;
+        width: 2.25rem;
+        height: 2.25rem;
         color: var(--text-color);
         transition: background-color var(--element-transition-duration);
         cursor: pointer;
@@ -73,7 +73,7 @@
         }
 
         i {
-            font-size: 1.25rem;
+            font-size: 1.1rem;
         }
 
         span {
@@ -98,17 +98,17 @@
     .layout-topbar-actions {
         margin-left: auto;
         display: flex;
-        gap: 1rem;
+        gap: 0.75rem;
     }
 
     .layout-topbar-menu-content {
         display: flex;
-        gap: 1rem;
+        gap: 0.75rem;
     }
 
     .layout-config-menu {
         display: flex;
-        gap: 1rem;
+        gap: 0.75rem;
     }
 }
 
@@ -140,7 +140,7 @@
             border-radius: var(--content-border-radius);
             padding: 1rem;
             right: 2rem;
-            top: 4rem;
+            top: 3.25rem;
             min-width: 15rem;
             border: 1px solid var(--surface-border);
 
