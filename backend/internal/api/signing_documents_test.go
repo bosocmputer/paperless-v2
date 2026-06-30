@@ -84,6 +84,15 @@ func TestSanitizeRelatedDocumentsForSignerRemovesOpenIds(t *testing.T) {
 			PaperlessDocumentID: "doc-1",
 			PaperlessStatus:     "in_progress",
 			CanOpenPaperless:    true,
+			CanViewCurrentPDF:   true,
+			CanViewSignedPDF:    true,
+			CurrentPDFURL:       "/api/signing-documents/doc-1/pdf?version=current",
+			SignedPDFURL:        "/api/signing-documents/doc-1/pdf?version=final",
+			PaperlessMatches: []models.SigningDocumentReference{{
+				ID:               "doc-1",
+				CanOpenPaperless: true,
+				CurrentPDFURL:    "/api/signing-documents/doc-1/pdf?version=current",
+			}},
 		},
 		Nodes: []models.SMLRelatedDocumentNode{{
 			DocNo:               "PA26060001",
@@ -91,6 +100,15 @@ func TestSanitizeRelatedDocumentsForSignerRemovesOpenIds(t *testing.T) {
 			PaperlessDocumentID: "doc-2",
 			PaperlessStatus:     "completed",
 			CanOpenPaperless:    true,
+			CanViewCurrentPDF:   true,
+			CanViewSignedPDF:    true,
+			CurrentPDFURL:       "/api/signing-documents/doc-2/pdf?version=current",
+			SignedPDFURL:        "/api/signing-documents/doc-2/pdf?version=final",
+			PaperlessMatches: []models.SigningDocumentReference{{
+				ID:               "doc-2",
+				CanOpenPaperless: true,
+				SignedPDFURL:     "/api/signing-documents/doc-2/pdf?version=final",
+			}},
 		}},
 	}
 	sanitized := sanitizeRelatedDocumentsForSigner(graph)
@@ -100,8 +118,40 @@ func TestSanitizeRelatedDocumentsForSignerRemovesOpenIds(t *testing.T) {
 	if sanitized.Nodes[0].PaperlessDocumentID != "" || sanitized.Nodes[0].CanOpenPaperless {
 		t.Fatalf("node should not expose open id: %#v", sanitized.Nodes[0])
 	}
+	if sanitized.Root.CurrentPDFURL != "" || sanitized.Root.SignedPDFURL != "" || sanitized.Root.CanViewCurrentPDF || sanitized.Root.CanViewSignedPDF || sanitized.Root.PaperlessMatches != nil {
+		t.Fatalf("root should not expose pdf urls or matches: %#v", sanitized.Root)
+	}
+	if sanitized.Nodes[0].CurrentPDFURL != "" || sanitized.Nodes[0].SignedPDFURL != "" || sanitized.Nodes[0].CanViewCurrentPDF || sanitized.Nodes[0].CanViewSignedPDF || sanitized.Nodes[0].PaperlessMatches != nil {
+		t.Fatalf("node should not expose pdf urls or matches: %#v", sanitized.Nodes[0])
+	}
 	if sanitized.Nodes[0].PaperlessStatus != "completed" {
 		t.Fatal("status metadata should remain visible")
+	}
+}
+
+func TestNormalizeDocumentFlowEventMetadata(t *testing.T) {
+	metadata, err := normalizeDocumentFlowEventMetadata(documentFlowEventRequest{
+		Event:         "document_flow_load_success",
+		SessionID:     strings.Repeat("s", 120),
+		DocFormatCode: "po",
+		ElapsedMS:     -1,
+		NodeCount:     99,
+		ErrorCode:     strings.Repeat("e", 120),
+	})
+	if err != nil {
+		t.Fatalf("expected document flow event metadata, got %v", err)
+	}
+	if metadata["event"] != "document_flow_load_success" || metadata["docFormatCode"] != "PO" {
+		t.Fatalf("unexpected metadata %#v", metadata)
+	}
+	if got := metadata["sessionId"].(string); len(got) != 80 {
+		t.Fatalf("session id should be truncated, got %d", len(got))
+	}
+	if metadata["elapsedMs"] != int64(0) || metadata["nodeCount"] != 30 {
+		t.Fatalf("metadata bounds were not clamped: %#v", metadata)
+	}
+	if _, ok := metadata["docNo"]; ok {
+		t.Fatal("metadata must not include document number")
 	}
 }
 

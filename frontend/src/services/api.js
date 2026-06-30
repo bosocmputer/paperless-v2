@@ -174,6 +174,21 @@ export const api = {
     getAdminDashboard() {
         return request('/api/admin/dashboard');
     },
+    getAdminDocumentFlow(params = {}) {
+        return request(
+            withQuery('/api/admin/document-flow', {
+                doc_no: params.docNo,
+                doc_format_code: params.docFormatCode,
+                depth: params.depth
+            })
+        );
+    },
+    recordDocumentFlowEvent(payload) {
+        return request('/api/admin/document-flow/events', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
     uploadSigningDocumentPDF(file) {
         const form = new FormData();
         form.set('file', file);

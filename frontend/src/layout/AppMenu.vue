@@ -33,6 +33,12 @@ const model = computed(() => {
                     icon: 'pi pi-fw pi-send',
                     to: '/signing/documents',
                     activeMatch: '/signing/documents'
+                },
+                {
+                    label: 'ตรวจสอบ Flow เอกสาร',
+                    icon: 'pi pi-fw pi-sitemap',
+                    to: '/document-flow',
+                    activeMatch: '/document-flow'
                 }
             ]
         },

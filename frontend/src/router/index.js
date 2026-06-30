@@ -75,6 +75,12 @@ const router = createRouter({
                     meta: { role: 'admin' }
                 },
                 {
+                    path: '/document-flow',
+                    name: 'document-flow',
+                    component: () => import('@/views/signing/DocumentFlow.vue'),
+                    meta: { role: 'admin' }
+                },
+                {
                     path: '/signing/documents/new',
                     name: 'signing-document-new',
                     component: () => import('@/views/signing/SigningDocumentCreate.vue'),

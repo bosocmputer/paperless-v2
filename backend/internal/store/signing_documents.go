@@ -447,7 +447,10 @@ func (s *Store) ListSigningDocumentReferencesByDocNos(ctx context.Context, docNo
 		return []models.SigningDocumentReference{}, nil
 	}
 	rows, err := s.pool.Query(ctx, `
-SELECT id::text, doc_no, doc_format_code, status
+SELECT id::text, doc_no, doc_format_code, status,
+       current_file_id IS NOT NULL AS has_current_pdf,
+       final_file_id IS NOT NULL AS has_final_pdf,
+       created_at, updated_at
 FROM signing_documents
 WHERE doc_no = ANY($1)
 ORDER BY updated_at DESC
@@ -459,7 +462,7 @@ ORDER BY updated_at DESC
 	items := []models.SigningDocumentReference{}
 	for rows.Next() {
 		var item models.SigningDocumentReference
-		if err := rows.Scan(&item.ID, &item.DocNo, &item.DocFormatCode, &item.Status); err != nil {
+		if err := rows.Scan(&item.ID, &item.DocNo, &item.DocFormatCode, &item.Status, &item.HasCurrentPDF, &item.HasFinalPDF, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)
