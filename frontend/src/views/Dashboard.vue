@@ -89,25 +89,36 @@ const actionRows = computed(() => {
 });
 const metricCards = computed(() => [
     {
+        label: 'เอกสารทั้งหมด',
+        value: totals.value.total,
+        helperStrong: `${totals.value.inProgress} รอเซ็น`,
+        helper: '· ในระบบ',
+        icon: 'pi pi-file',
+        accentClass: 'bg-linear-to-b from-slate-400 dark:from-slate-300 to-slate-600 dark:to-slate-500'
+    },
+    {
         label: 'รอลายเซ็น',
         value: workflowSummary.value.pendingDocuments || totals.value.inProgress,
-        helper: `${workflowSummary.value.pendingSigners || 0} คนต้องเซ็น`,
+        helperStrong: `${workflowSummary.value.pendingSigners || 0} คน`,
+        helper: '· ต้องเซ็น',
         icon: 'pi pi-clock',
-        severity: 'info'
+        accentClass: 'bg-linear-to-b from-cyan-400 dark:from-cyan-300 to-cyan-600 dark:to-cyan-500'
     },
     {
         label: 'มีปัญหาต้องแก้',
         value: workflowSummary.value.attentionDocuments || workflowSummary.value.evidenceFailed + workflowSummary.value.lockFailed,
-        helper: `${workflowSummary.value.evidenceFailed} ไฟล์หลักฐาน, ${workflowSummary.value.lockFailed} ส่งกลับ SML`,
+        helperStrong: `${workflowSummary.value.evidenceFailed} PDF`,
+        helper: `· ${workflowSummary.value.lockFailed} SML`,
         icon: 'pi pi-exclamation-triangle',
-        severity: workflowSummary.value.attentionDocuments ? 'warn' : 'success'
+        accentClass: 'bg-linear-to-b from-orange-400 dark:from-orange-300 to-orange-600 dark:to-orange-500'
     },
     {
         label: 'เสร็จสมบูรณ์',
         value: workflowSummary.value.completedDocuments || totals.value.completed,
-        helper: 'พร้อมตรวจย้อนหลังหรือพิมพ์เอกสาร',
+        helperStrong: 'พร้อมพิมพ์',
+        helper: '· และตรวจย้อนหลัง',
         icon: 'pi pi-check-circle',
-        severity: 'success'
+        accentClass: 'bg-linear-to-b from-emerald-400 dark:from-emerald-300 to-emerald-600 dark:to-emerald-500'
     }
 ]);
 
@@ -290,15 +301,20 @@ function movementEventView(event) {
             </div>
         </div>
 
-        <div class="grid grid-cols-12 gap-4">
-            <div v-for="item in metricCards" :key="item.label" class="col-span-12 md:col-span-4">
-                <div class="card metric-card">
-                    <span class="metric-icon" :class="`metric-${item.severity}`"><i :class="item.icon"></i></span>
-                    <div class="min-w-0">
-                        <div class="metric-value">{{ item.value }}</div>
-                        <div class="font-semibold truncate">{{ item.label }}</div>
-                        <small class="text-muted-color">{{ item.helper }}</small>
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div v-for="item in metricCards" :key="item.label" class="bg-surface-0 dark:bg-surface-900 shadow-sm p-5 rounded-2xl">
+                <div class="flex justify-between gap-4">
+                    <div class="flex flex-col gap-2 min-w-0">
+                        <span class="text-surface-700 dark:text-surface-300 font-normal leading-tight truncate">{{ item.label }}</span>
+                        <div class="text-surface-900 dark:text-surface-0 font-semibold text-2xl leading-tight">{{ item.value }}</div>
                     </div>
+                    <div class="flex items-center justify-center rounded-lg w-10 h-10 flex-none" :class="item.accentClass">
+                        <i :class="item.icon" class="text-surface-0 dark:text-surface-900 text-xl leading-none" />
+                    </div>
+                </div>
+                <div class="mt-4">
+                    <span class="text-surface-600 dark:text-surface-300 font-medium leading-tight">{{ item.helperStrong }}</span>
+                    <span class="ml-1 text-surface-500 dark:text-surface-300 leading-tight">{{ item.helper }}</span>
                 </div>
             </div>
         </div>
@@ -469,49 +485,12 @@ function movementEventView(event) {
 </template>
 
 <style scoped>
-.metric-card {
-    min-height: 5.25rem;
-    display: flex;
-    align-items: center;
-    gap: 0.85rem;
-}
-
 .dashboard-header-card {
     margin-bottom: 0;
 }
 
 .dashboard-stack-card {
     margin-bottom: 0;
-}
-
-.metric-icon {
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: 8px;
-    display: inline-grid;
-    place-items: center;
-    flex: 0 0 auto;
-}
-
-.metric-info {
-    color: var(--blue-700, #1d4ed8);
-    background: var(--blue-100, #dbeafe);
-}
-
-.metric-success {
-    color: var(--green-700, #15803d);
-    background: var(--green-100, #dcfce7);
-}
-
-.metric-warn {
-    color: var(--yellow-800, #854d0e);
-    background: var(--yellow-100, #fef9c3);
-}
-
-.metric-value {
-    font-size: 1.65rem;
-    font-weight: 700;
-    line-height: 1;
 }
 
 .surface-row {
