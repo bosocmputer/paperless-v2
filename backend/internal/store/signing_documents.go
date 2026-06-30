@@ -431,6 +431,42 @@ func (s *Store) FindSigningDocumentByID(ctx context.Context, id string) (models.
 	return doc, nil
 }
 
+func (s *Store) ListSigningDocumentReferencesByDocNos(ctx context.Context, docNos []string) ([]models.SigningDocumentReference, error) {
+	seen := map[string]bool{}
+	clean := []string{}
+	for _, docNo := range docNos {
+		docNo = strings.TrimSpace(docNo)
+		key := strings.ToUpper(docNo)
+		if docNo == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		clean = append(clean, docNo)
+	}
+	if len(clean) == 0 {
+		return []models.SigningDocumentReference{}, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT id::text, doc_no, doc_format_code, status
+FROM signing_documents
+WHERE doc_no = ANY($1)
+ORDER BY updated_at DESC
+`, clean)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []models.SigningDocumentReference{}
+	for rows.Next() {
+		var item models.SigningDocumentReference
+		if err := rows.Scan(&item.ID, &item.DocNo, &item.DocFormatCode, &item.Status); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) ListPendingSigningTasksForUser(ctx context.Context, username string) ([]models.SigningDocument, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT DISTINCT d.id::text

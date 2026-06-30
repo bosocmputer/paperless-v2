@@ -95,6 +95,10 @@ function recordEvent(payload) {
     if (!sessionToken.value) return;
     api.recordPublicSigningTaskEvent(token, sessionToken.value, payload).catch(() => {});
 }
+
+function loadRelatedDocuments() {
+    return api.getPublicSigningRelatedDocuments(token, sessionToken.value);
+}
 </script>
 
 <template>
@@ -127,6 +131,7 @@ function recordEvent(payload) {
             :on-reject="rejectTask"
             :on-attach="attachFile"
             :on-record-event="recordEvent"
+            :related-loader="loadRelatedDocuments"
         />
     </main>
 </template>

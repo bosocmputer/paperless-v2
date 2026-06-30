@@ -63,7 +63,7 @@ func TestNormalizeSigningTaskEventMetadataRejectsInvalidEvent(t *testing.T) {
 }
 
 func TestNormalizeSigningTaskEventMetadataAcceptsQueueEvents(t *testing.T) {
-	for _, event := range []string{"ready_task_open", "waiting_queue_seen", "waiting_task_open"} {
+	for _, event := range []string{"ready_task_open", "waiting_queue_seen", "waiting_task_open", "related_documents_open", "related_documents_load_success", "related_documents_load_error", "related_document_click"} {
 		t.Run(event, func(t *testing.T) {
 			metadata, err := normalizeSigningTaskEventMetadata(models.SigningTaskEventRequest{Event: event}, models.SigningDocument{DocFormatCode: "PO"}, models.SigningDocumentSigner{Status: "waiting"})
 			if err != nil {
@@ -73,6 +73,35 @@ func TestNormalizeSigningTaskEventMetadataAcceptsQueueEvents(t *testing.T) {
 				t.Fatalf("unexpected event metadata %#v", metadata)
 			}
 		})
+	}
+}
+
+func TestSanitizeRelatedDocumentsForSignerRemovesOpenIds(t *testing.T) {
+	graph := models.SMLRelatedDocumentsGraph{
+		Root: models.SMLRelatedDocumentNode{
+			DocNo:               "PO26060001",
+			DocFormatCode:       "PO",
+			PaperlessDocumentID: "doc-1",
+			PaperlessStatus:     "in_progress",
+			CanOpenPaperless:    true,
+		},
+		Nodes: []models.SMLRelatedDocumentNode{{
+			DocNo:               "PA26060001",
+			DocFormatCode:       "PA",
+			PaperlessDocumentID: "doc-2",
+			PaperlessStatus:     "completed",
+			CanOpenPaperless:    true,
+		}},
+	}
+	sanitized := sanitizeRelatedDocumentsForSigner(graph)
+	if sanitized.Root.PaperlessDocumentID != "" || sanitized.Root.CanOpenPaperless {
+		t.Fatalf("root should not expose open id: %#v", sanitized.Root)
+	}
+	if sanitized.Nodes[0].PaperlessDocumentID != "" || sanitized.Nodes[0].CanOpenPaperless {
+		t.Fatalf("node should not expose open id: %#v", sanitized.Nodes[0])
+	}
+	if sanitized.Nodes[0].PaperlessStatus != "completed" {
+		t.Fatal("status metadata should remain visible")
 	}
 }
 

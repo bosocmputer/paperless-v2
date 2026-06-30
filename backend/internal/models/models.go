@@ -253,6 +253,52 @@ type SMLDocumentCandidate struct {
 	IsLockRecord  int     `json:"is_lock_record"`
 }
 
+type SMLRelatedDocumentsGraph struct {
+	Root      SMLRelatedDocumentNode      `json:"root"`
+	Nodes     []SMLRelatedDocumentNode    `json:"nodes"`
+	Edges     []SMLRelatedDocumentEdge    `json:"edges"`
+	Warnings  []SMLRelatedDocumentWarning `json:"warnings,omitempty"`
+	Depth     int                         `json:"depth"`
+	Truncated bool                        `json:"truncated"`
+}
+
+type SMLRelatedDocumentNode struct {
+	DocNo               string  `json:"doc_no"`
+	DocDate             string  `json:"doc_date"`
+	DocFormatCode       string  `json:"doc_format_code"`
+	TransFlag           int     `json:"trans_flag"`
+	Table               string  `json:"table"`
+	PartyCode           string  `json:"party_code"`
+	PartyName           string  `json:"party_name"`
+	PartyType           string  `json:"party_type"`
+	TotalAmount         float64 `json:"total_amount"`
+	IsLockRecord        int     `json:"is_lock_record"`
+	PaperlessDocumentID string  `json:"paperlessDocumentId,omitempty"`
+	PaperlessStatus     string  `json:"paperlessStatus,omitempty"`
+	CanOpenPaperless    bool    `json:"canOpenPaperless"`
+}
+
+type SMLRelatedDocumentEdge struct {
+	FromDocNo    string `json:"from_doc_no"`
+	ToDocNo      string `json:"to_doc_no"`
+	Relation     string `json:"relation"`
+	SourceTable  string `json:"source_table"`
+	SourceColumn string `json:"source_column"`
+}
+
+type SMLRelatedDocumentWarning struct {
+	Code    string `json:"code"`
+	DocNo   string `json:"doc_no,omitempty"`
+	Message string `json:"message"`
+}
+
+type SigningDocumentReference struct {
+	ID            string `json:"id"`
+	DocNo         string `json:"docNo"`
+	DocFormatCode string `json:"docFormatCode"`
+	Status        string `json:"status"`
+}
+
 type SigningDocument struct {
 	ID                  string                      `json:"id"`
 	ScreenCode          string                      `json:"screenCode"`

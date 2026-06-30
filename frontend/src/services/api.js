@@ -202,6 +202,9 @@ export const api = {
     getSigningDocument(id) {
         return request(`/api/signing-documents/${id}`);
     },
+    getSigningDocumentRelatedDocuments(id, depth = 3) {
+        return request(withQuery(`/api/signing-documents/${id}/related-documents`, { depth }));
+    },
     signingDocumentPDFUrl(id, version = 'current') {
         return withQuery(`/api/signing-documents/${id}/pdf`, { version });
     },
@@ -234,6 +237,9 @@ export const api = {
     },
     getMySigningTask(taskId) {
         return request(`/api/my/signing-tasks/${taskId}`);
+    },
+    getMySigningTaskRelatedDocuments(taskId, depth = 3) {
+        return request(withQuery(`/api/my/signing-tasks/${taskId}/related-documents`, { depth }));
     },
     signMyTask(taskId, payload) {
         const { body, headers } = splitIdempotencyPayload(payload);
@@ -274,6 +280,11 @@ export const api = {
     },
     getPublicSigningDocument(token, sessionToken) {
         return request(`/api/public/signing/${token}`, {
+            headers: { Authorization: `Bearer ${sessionToken}` }
+        });
+    },
+    getPublicSigningRelatedDocuments(token, sessionToken, depth = 3) {
+        return request(withQuery(`/api/public/signing/${token}/related-documents`, { depth }), {
             headers: { Authorization: `Bearer ${sessionToken}` }
         });
     },

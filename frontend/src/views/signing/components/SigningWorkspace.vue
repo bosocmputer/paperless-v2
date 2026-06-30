@@ -2,6 +2,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
+import RelatedDocumentsPanel from '@/views/signing/components/RelatedDocumentsPanel.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
@@ -24,7 +25,8 @@ const props = defineProps({
     onSign: { type: Function, default: null },
     onReject: { type: Function, default: null },
     onAttach: { type: Function, default: null },
-    onRecordEvent: { type: Function, default: null }
+    onRecordEvent: { type: Function, default: null },
+    relatedLoader: { type: Function, default: null }
 });
 
 const confirm = useConfirm();
@@ -48,6 +50,7 @@ const attachmentNote = ref('');
 const uploadingAttachment = ref(false);
 const attachmentCount = ref(0);
 const localSaving = ref(false);
+const relatedVisible = ref(false);
 
 const sessionId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 const openedAt = Date.now();
@@ -451,6 +454,11 @@ function deviceId() {
     return value;
 }
 
+function toggleRelatedDocuments() {
+    relatedVisible.value = !relatedVisible.value;
+    if (relatedVisible.value) recordEvent('related_documents_open');
+}
+
 function statusMeta(status) {
     switch (status) {
         case 'pending':
@@ -533,6 +541,18 @@ function clamp(value, min, max) {
                     <Message :severity="canInteract ? 'info' : statusView.severity">{{ statusView.message }}</Message>
                 </div>
 
+                <div v-if="relatedLoader" class="related-section">
+                    <Button
+                        :label="relatedVisible ? 'ซ่อนเอกสารประกอบ' : 'ดูเอกสารประกอบ'"
+                        :icon="relatedVisible ? 'pi pi-chevron-up' : 'pi pi-sitemap'"
+                        severity="secondary"
+                        outlined
+                        class="w-full"
+                        @click="toggleRelatedDocuments"
+                    />
+                    <RelatedDocumentsPanel v-if="relatedVisible" compact :loader="relatedLoader" :record-event="recordEvent" />
+                </div>
+
                 <div class="signature-block">
                     <div class="section-heading">
                         <strong>ลายเซ็น</strong>
@@ -587,6 +607,17 @@ function clamp(value, min, max) {
                     <Tag :value="statusView.label" :severity="statusView.severity" />
                 </div>
                 <DocumentWorkflowTimeline :document="document" compact />
+                <div v-if="relatedLoader" class="related-section">
+                    <Button
+                        :label="relatedVisible ? 'ซ่อนเอกสารประกอบ' : 'ดูเอกสารประกอบ'"
+                        :icon="relatedVisible ? 'pi pi-chevron-up' : 'pi pi-sitemap'"
+                        severity="secondary"
+                        outlined
+                        class="w-full"
+                        @click="toggleRelatedDocuments"
+                    />
+                    <RelatedDocumentsPanel v-if="relatedVisible" compact :loader="relatedLoader" :record-event="recordEvent" />
+                </div>
             </aside>
         </div>
 
@@ -780,6 +811,12 @@ function clamp(value, min, max) {
 
 .readonly-heading {
     margin-bottom: 0;
+}
+
+.related-section {
+    min-width: 0;
+    display: grid;
+    gap: 0.75rem;
 }
 
 .signature-canvas {

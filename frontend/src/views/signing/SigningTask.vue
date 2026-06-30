@@ -74,6 +74,10 @@ async function attachFile(file, note) {
 function recordEvent(payload) {
     api.recordMySigningTaskEvent(route.params.taskId, payload).catch(() => {});
 }
+
+function loadRelatedDocuments() {
+    return api.getMySigningTaskRelatedDocuments(route.params.taskId);
+}
 </script>
 
 <template>
@@ -92,5 +96,6 @@ function recordEvent(payload) {
         :on-reject="rejectTask"
         :on-attach="attachFile"
         :on-record-event="recordEvent"
+        :related-loader="loadRelatedDocuments"
     />
 </template>

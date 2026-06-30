@@ -4,6 +4,7 @@ import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { api } from '@/services/api';
 import { formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
+import RelatedDocumentsPanel from '@/views/signing/components/RelatedDocumentsPanel.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -31,6 +32,7 @@ const retryingFinalPDF = ref(false);
 const printing = ref(false);
 const tokenDialog = ref(false);
 const generatedToken = ref(null);
+const activeTab = ref('progress');
 let renderSequence = 0;
 let renderTask = null;
 let resizeObserver = null;
@@ -267,6 +269,15 @@ function formatTimelineDate(value) {
     return formatThaiDateTime(value);
 }
 
+function loadRelatedDocuments() {
+    return api.getSigningDocumentRelatedDocuments(document.value.id);
+}
+
+function openRelatedDocument(documentId) {
+    if (!documentId || documentId === document.value?.id) return;
+    router.push({ name: 'signing-document-detail', params: { id: documentId } });
+}
+
 function movementEventView(event) {
     const action = String(event?.action || '');
     const metadata = event?.metadata || {};
@@ -388,9 +399,10 @@ function clamp(value, min, max) {
             </section>
 
             <aside class="side-panel">
-                <Tabs value="progress">
+                <Tabs v-model:value="activeTab">
                     <TabList>
                         <Tab value="progress">ความคืบหน้า</Tab>
+                        <Tab value="related">เอกสารประกอบ</Tab>
                         <Tab value="print">พิมพ์</Tab>
                         <Tab value="events">เหตุการณ์</Tab>
                     </TabList>
@@ -405,6 +417,16 @@ function clamp(value, min, max) {
                                     <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
                                 </div>
                                 <DocumentWorkflowTimeline :document="document" show-external-actions @generate-external="generateExternal" />
+                            </div>
+                        </TabPanel>
+                        <TabPanel value="related">
+                            <div class="info-block">
+                                <RelatedDocumentsPanel
+                                    v-if="activeTab === 'related' && document?.id"
+                                    admin
+                                    :loader="loadRelatedDocuments"
+                                    @open-document="openRelatedDocument"
+                                />
                             </div>
                         </TabPanel>
                         <TabPanel value="print">
