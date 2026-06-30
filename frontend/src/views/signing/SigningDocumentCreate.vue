@@ -492,6 +492,7 @@ function restoreDraft() {
         if (!raw) return;
         const parsed = JSON.parse(raw);
         if (parsed.idempotencyKey) createIdempotencyKey.value = parsed.idempotencyKey;
+        suppressSearchWatch = true;
         form.value = { ...emptyForm(), ...(parsed.form || {}) };
         if (form.value.fileId && !form.value.fileUrl) form.value.fileUrl = api.signingDocumentUploadPDFUrl(form.value.fileId);
         const restoredStep = isLegacyDraft ? migrateLegacyStep(parsed.activeStep) : Number(parsed.activeStep || 0);
