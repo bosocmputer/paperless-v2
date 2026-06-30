@@ -16,15 +16,17 @@ import (
 )
 
 type CreateSigningDocumentInput struct {
-	ScreenCode string
-	Format     models.SMLDocFormat
-	Candidate  models.SMLDocumentCandidate
-	Template   models.SignatureTemplate
-	Configs    []models.DocumentConfigStep
-	File       models.UploadedFile
-	ActorID    string
-	IPAddress  string
-	UserAgent  string
+	ScreenCode          string
+	Format              models.SMLDocFormat
+	Candidate           models.SMLDocumentCandidate
+	SignatureTemplateID string
+	TemplateSnapshot    any
+	LayoutBoxes         []models.SignatureTemplateBoxRequest
+	Configs             []models.DocumentConfigStep
+	File                models.UploadedFile
+	ActorID             string
+	IPAddress           string
+	UserAgent           string
 }
 
 type SignTaskResult struct {
@@ -57,8 +59,12 @@ func (s *Store) CreateSigningDocument(ctx context.Context, input CreateSigningDo
 	if err != nil {
 		return models.SigningDocument{}, err
 	}
-	templateSnapshot, err := json.Marshal(input.Template)
+	templateSnapshot, err := json.Marshal(input.TemplateSnapshot)
 	if err != nil {
+		return models.SigningDocument{}, err
+	}
+
+	if err := consumeSigningDocumentUpload(ctx, tx, input.File.ID, input.ActorID); err != nil {
 		return models.SigningDocument{}, err
 	}
 
@@ -73,7 +79,7 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::date,$10,$11,'in_progress',1,$12,
 RETURNING id::text
 `, input.ScreenCode, input.Format.Code, input.Candidate.DocNo, input.Candidate.Table, input.Candidate.TransFlag,
 		input.Candidate.PartyCode, input.Candidate.PartyName, input.Candidate.PartyType, input.Candidate.DocDate,
-		input.Candidate.TotalAmount, input.Candidate.IsLockRecord, input.File.ID, input.Template.ID,
+		input.Candidate.TotalAmount, input.Candidate.IsLockRecord, input.File.ID, input.SignatureTemplateID,
 		string(configSnapshot), string(templateSnapshot), input.ActorID).Scan(&documentID)
 	if err != nil {
 		if strings.Contains(err.Error(), "signing_documents_active_doc_unique_idx") {
@@ -102,8 +108,8 @@ VALUES ($1, 1, $2, 'original', NULLIF($3,'')::uuid),
 		firstSequence = configs[0].SequenceNo
 	}
 
-	boxesByPosition := map[string][]models.SignatureTemplateBox{}
-	for _, box := range input.Template.Boxes {
+	boxesByPosition := map[string][]models.SignatureTemplateBoxRequest{}
+	for _, box := range input.LayoutBoxes {
 		key := strings.ToLower(strings.TrimSpace(box.PositionCode))
 		boxesByPosition[key] = append(boxesByPosition[key], box)
 	}
@@ -160,6 +166,24 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		return models.SigningDocument{}, err
 	}
 	return s.FindSigningDocumentByID(ctx, documentID)
+}
+
+func consumeSigningDocumentUpload(ctx context.Context, tx pgx.Tx, fileID, actorID string) error {
+	tag, err := tx.Exec(ctx, `
+UPDATE signing_document_uploads
+SET consumed_at = now()
+WHERE file_id = $1
+  AND created_by = NULLIF($2, '')::uuid
+  AND consumed_at IS NULL
+  AND created_at >= now() - interval '24 hours'
+`, fileID, actorID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrSigningDocumentUploadNotFound
+	}
+	return nil
 }
 
 func (s *Store) ListSigningDocuments(ctx context.Context) ([]models.SigningDocument, error) {
@@ -904,7 +928,7 @@ WHERE id = $1
 	return false, nil
 }
 
-func signerRowsForStep(step models.DocumentConfigStep, boxes []models.SignatureTemplateBox, status string) ([]models.SigningDocumentSigner, error) {
+func signerRowsForStep(step models.DocumentConfigStep, boxes []models.SignatureTemplateBoxRequest, status string) ([]models.SigningDocumentSigner, error) {
 	if len(boxes) == 0 {
 		return nil, fmt.Errorf("missing signature box for position %s", step.PositionCode)
 	}
@@ -920,15 +944,14 @@ func signerRowsForStep(step models.DocumentConfigStep, boxes []models.SignatureT
 			out = append(out, signerFromBox(step, box, i+1, "any", user, status))
 		}
 	case 2:
-		if len(users) == 0 {
-			return nil, fmt.Errorf("missing signer users for position %s", step.PositionCode)
+		if len(boxes) == 0 {
+			return nil, fmt.Errorf("missing signature box for position %s", step.PositionCode)
 		}
-		for i, user := range users {
-			box := findBoxForUser(boxes, user)
-			if box.ID == "" {
-				return nil, fmt.Errorf("missing signature box for user %s", user)
+		for i, box := range boxes {
+			if strings.TrimSpace(box.SignerUser) == "" {
+				return nil, fmt.Errorf("missing signer user for position %s", step.PositionCode)
 			}
-			out = append(out, signerFromBox(step, box, i+1, "internal", user, status))
+			out = append(out, signerFromBox(step, box, i+1, "internal", box.SignerUser, status))
 		}
 	case 3:
 		box := boxes[0]
@@ -939,7 +962,7 @@ func signerRowsForStep(step models.DocumentConfigStep, boxes []models.SignatureT
 	return out, nil
 }
 
-func signerFromBox(step models.DocumentConfigStep, box models.SignatureTemplateBox, slot int, signerType, user, status string) models.SigningDocumentSigner {
+func signerFromBox(step models.DocumentConfigStep, box models.SignatureTemplateBoxRequest, slot int, signerType, user, status string) models.SigningDocumentSigner {
 	username, display := splitSignerUser(user)
 	if signerType == "external" {
 		display = "บุคคลภายนอก"
@@ -963,7 +986,7 @@ func signerFromBox(step models.DocumentConfigStep, box models.SignatureTemplateB
 	}
 }
 
-func findBoxForUser(boxes []models.SignatureTemplateBox, user string) models.SignatureTemplateBox {
+func findBoxForUser(boxes []models.SignatureTemplateBoxRequest, user string) models.SignatureTemplateBoxRequest {
 	username, _ := splitSignerUser(user)
 	for _, box := range boxes {
 		boxUser, _ := splitSignerUser(box.SignerUser)
@@ -971,7 +994,7 @@ func findBoxForUser(boxes []models.SignatureTemplateBox, user string) models.Sig
 			return box
 		}
 	}
-	return models.SignatureTemplateBox{}
+	return models.SignatureTemplateBoxRequest{}
 }
 
 func configStepUsers(step models.DocumentConfigStep) []string {

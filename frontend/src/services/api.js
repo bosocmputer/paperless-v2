@@ -150,15 +150,29 @@ export const api = {
     getAdminDashboard() {
         return request('/api/admin/dashboard');
     },
-    createSigningDocument(payload) {
+    uploadSigningDocumentPDF(file) {
         const form = new FormData();
-        form.set('docFormatCode', payload.docFormatCode);
-        form.set('docNo', payload.docNo);
-        if (payload.confirmLocked) form.set('confirmLocked', '1');
-        form.set('file', payload.file);
-        return request('/api/signing-documents', {
+        form.set('file', file);
+        return request('/api/signing-documents/uploads', {
             method: 'POST',
             body: form
+        });
+    },
+    signingDocumentUploadPDFUrl(fileId) {
+        return `/api/signing-documents/uploads/${fileId}/pdf`;
+    },
+    recordSigningDocumentCreateEvent(payload) {
+        return request('/api/signing-documents/create-events', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+    createSigningDocument(payload) {
+        const { body, headers } = splitIdempotencyPayload(payload);
+        return request('/api/signing-documents', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
         });
     },
     getSigningDocument(id) {

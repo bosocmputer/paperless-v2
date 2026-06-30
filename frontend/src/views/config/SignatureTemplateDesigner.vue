@@ -571,6 +571,7 @@ function validateBoxes() {
 
     configs.value.forEach((step) => {
         const stepBoxes = byPosition.get(step.positionCode) || [];
+        if (stepBoxes.length === 0) return;
         if (step.conditionType === 1 && !stepBoxes.some((box) => box.signerType === 'any')) {
             issues.push({ code: 'condition_any_box_required', positionCode: step.positionCode, message: `${step.positionName} ต้องมีกรอบอย่างน้อย 1 กรอบ` });
         }
@@ -582,17 +583,14 @@ function validateBoxes() {
         }
         if (step.conditionType === 2) {
             const required = stepUsers(step);
-            if (stepBoxes.length !== required.length) {
-                issues.push({ code: 'condition_all_box_count_invalid', positionCode: step.positionCode, message: `${step.positionName} ต้องมี ${required.length} กรอบตามจำนวน user` });
-            }
+            const seen = new Map();
             stepBoxes.forEach((box) => {
                 if (box.signerType !== 'internal' || !box.signerUser) {
                     issues.push({ code: 'condition_all_type_invalid', positionCode: step.positionCode, message: `${step.positionName} ต้องผูก user ภายในทุกกรอบ` });
                 }
+                if (box.signerUser) seen.set(box.signerUser, (seen.get(box.signerUser) || 0) + 1);
             });
-            required.forEach((user) => {
-                const count = stepBoxes.filter((box) => box.signerType === 'internal' && box.signerUser === user).length;
-                if (count === 0) issues.push({ code: 'condition_all_missing_user_box', positionCode: step.positionCode, message: `${step.positionName} ต้องมีกรอบสำหรับ ${user}` });
+            Array.from(seen.entries()).forEach(([user, count]) => {
                 if (count > 1) issues.push({ code: 'condition_all_duplicate_user_box', positionCode: step.positionCode, message: `${step.positionName} มีกรอบของ ${user} ซ้ำ` });
             });
             stepBoxes
@@ -804,7 +802,7 @@ function recordDesignerEvent(event, extra = {}) {
                 <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="requestBackNavigation" />
                 <div class="min-w-0">
                     <div class="doc-heading">
-                        <span>ตั้งค่ากรอบลายเซ็น {{ docFormatCode }}</span>
+                        <span>Preset กรอบลายเซ็น {{ docFormatCode }}</span>
                         <Tag :value="boxProgressLabel" :severity="validationStatusSeverity" />
                         <Tag :value="validationStatusLabel" :severity="validationStatusSeverity" />
                         <Tag v-if="dirty" value="ยังไม่ได้บันทึก" severity="warn" />

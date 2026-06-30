@@ -288,7 +288,7 @@ function normalizeSearch(value) {
             <div class="flex flex-col lg:flex-row gap-2 lg:items-center">
                 <InputText v-model="searchQuery" type="search" placeholder="ค้นหา doc, position, user" class="w-full lg:w-80" />
                 <Button icon="pi pi-refresh" severity="secondary" outlined :loading="loadingPage" aria-label="โหลดใหม่" @click="initializePage" />
-                <Button label="ตั้งค่ากรอบลายเซ็น" icon="pi pi-pencil" severity="secondary" outlined @click="router.push({ name: 'signature-templates' })" />
+                <Button label="Preset กรอบลายเซ็น" icon="pi pi-pencil" severity="secondary" outlined @click="router.push({ name: 'signature-templates' })" />
                 <Button label="เพิ่ม Position" icon="pi pi-plus" :disabled="!canAdd" @click="openCreate" />
             </div>
         </div>
@@ -329,7 +329,7 @@ function normalizeSearch(value) {
                 <template #body="{ data }">
                     <div class="flex flex-wrap gap-2">
                         <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ไข Config เอกสาร" @click="openEdit(data)" />
-                        <Button label="กรอบลายเซ็น" icon="pi pi-pencil" severity="info" outlined @click="openSignatureTemplate(data.docFormatCode)" />
+                        <Button label="Preset กรอบลายเซ็น" icon="pi pi-pencil" severity="info" outlined @click="openSignatureTemplate(data.docFormatCode)" />
                         <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบ Config เอกสาร" @click="confirmDelete(data)" />
                     </div>
                 </template>

@@ -521,7 +521,21 @@ func validationIssuesForTemplate(template *models.SignatureTemplate, configs []m
 	if template == nil {
 		return []models.SignatureValidationIssue{}
 	}
-	return validateSignatureTemplate(*template, configs, maxPages)
+	return validateSignaturePreset(*template, configs, maxPages)
+}
+
+func validateSignaturePreset(template models.SignatureTemplate, configs []models.DocumentConfigStep, maxPages int) []models.SignatureValidationIssue {
+	issues := []models.SignatureValidationIssue{}
+	if template.SampleFile != nil && template.SampleFile.PageCount > maxPages {
+		issues = append(issues, signatureIssue("pdf_too_many_pages", "", fmt.Sprintf("Sample PDF must be %d pages or fewer.", maxPages)))
+	}
+	normalizedBoxes, boxIssues := normalizeAndValidateBoxRequests(boxRequestsFromTemplate(template.Boxes), maxPages)
+	issues = append(issues, boxIssues...)
+	issues = append(issues, validateSignatureBoxSaveLimits(normalizedBoxes, configs)...)
+	sort.SliceStable(issues, func(i, j int) bool {
+		return issues[i].PositionCode < issues[j].PositionCode
+	})
+	return issues
 }
 
 func validateSignatureBoxSaveLimits(boxes []models.SignatureTemplateBoxRequest, configs []models.DocumentConfigStep) []models.SignatureValidationIssue {

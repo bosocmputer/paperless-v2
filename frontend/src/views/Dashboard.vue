@@ -162,7 +162,7 @@ function formatDate(value) {
                 </div>
                 <Button label="เอกสารเพื่อเซ็น" icon="pi pi-send" outlined @click="router.push({ name: 'signing-documents' })" />
                 <Button label="Config เอกสาร" icon="pi pi-file-edit" outlined @click="router.push({ name: 'document-config' })" />
-                <Button label="กรอบลายเซ็น" icon="pi pi-pencil" outlined @click="router.push({ name: 'signature-templates' })" />
+                <Button label="Preset กรอบลายเซ็น" icon="pi pi-pencil" outlined @click="router.push({ name: 'signature-templates' })" />
                 <Button label="ผู้ใช้งาน" icon="pi pi-users" outlined @click="router.push({ name: 'users' })" />
             </aside>
         </div>

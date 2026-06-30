@@ -45,7 +45,7 @@ const model = computed(() => {
                     to: '/config/documents'
                 },
                 {
-                    label: 'กรอบลายเซ็น',
+                    label: 'Preset กรอบลายเซ็น',
                     icon: 'pi pi-fw pi-pencil',
                     to: '/config/signature-templates'
                 }

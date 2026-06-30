@@ -19,21 +19,22 @@ type Store struct {
 }
 
 var (
-	ErrUsernameTaken             = errors.New("username already exists")
-	ErrUserNotFound              = errors.New("user not found")
-	ErrDocumentConfigDuplicate   = errors.New("document config step already exists")
-	ErrDocumentConfigNotFound    = errors.New("document config step not found")
-	ErrSignatureTemplateNotFound = errors.New("signature template not found")
-	ErrSignatureRevisionConflict = errors.New("signature template revision conflict")
-	ErrSignatureTemplateNotDraft = errors.New("signature template is not draft")
-	ErrSignatureTemplateArchived = errors.New("signature template is archived")
-	ErrSigningDocumentNotFound   = errors.New("signing document not found")
-	ErrSigningDocumentDuplicate  = errors.New("signing document already exists")
-	ErrSigningTaskNotFound       = errors.New("signing task not found")
-	ErrSigningTaskUnavailable    = errors.New("signing task is not available")
-	ErrExternalTokenNotFound     = errors.New("external signing token not found")
-	ErrExternalTokenInvalid      = errors.New("external signing token invalid")
-	ErrIdempotencyInProgress     = errors.New("idempotency key is already in progress")
+	ErrUsernameTaken                 = errors.New("username already exists")
+	ErrUserNotFound                  = errors.New("user not found")
+	ErrDocumentConfigDuplicate       = errors.New("document config step already exists")
+	ErrDocumentConfigNotFound        = errors.New("document config step not found")
+	ErrSignatureTemplateNotFound     = errors.New("signature template not found")
+	ErrSignatureRevisionConflict     = errors.New("signature template revision conflict")
+	ErrSignatureTemplateNotDraft     = errors.New("signature template is not draft")
+	ErrSignatureTemplateArchived     = errors.New("signature template is archived")
+	ErrSigningDocumentNotFound       = errors.New("signing document not found")
+	ErrSigningDocumentDuplicate      = errors.New("signing document already exists")
+	ErrSigningDocumentUploadNotFound = errors.New("signing document upload not found")
+	ErrSigningTaskNotFound           = errors.New("signing task not found")
+	ErrSigningTaskUnavailable        = errors.New("signing task is not available")
+	ErrExternalTokenNotFound         = errors.New("external signing token not found")
+	ErrExternalTokenInvalid          = errors.New("external signing token invalid")
+	ErrIdempotencyInProgress         = errors.New("idempotency key is already in progress")
 )
 
 type IdempotencyClaim struct {
@@ -138,6 +139,17 @@ ALTER TABLE uploaded_files
 ADD COLUMN IF NOT EXISTS page_count INTEGER NOT NULL DEFAULT 0 CHECK (page_count >= 0);
 
 CREATE INDEX IF NOT EXISTS uploaded_files_sha256_idx ON uploaded_files (sha256);
+
+CREATE TABLE IF NOT EXISTS signing_document_uploads (
+    file_id UUID PRIMARY KEY REFERENCES uploaded_files(id) ON DELETE CASCADE,
+    created_by UUID NOT NULL REFERENCES users(id),
+    consumed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS signing_document_uploads_open_idx
+ON signing_document_uploads (created_by, created_at DESC)
+WHERE consumed_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS signature_templates (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -782,6 +794,57 @@ SELECT id::text, original_name, stored_name, storage_path, content_type, size_by
 FROM uploaded_files
 WHERE id = $1
 `, id))
+}
+
+func (s *Store) CreateSigningDocumentUpload(ctx context.Context, fileID, actorID string) error {
+	_, err := s.pool.Exec(ctx, `
+INSERT INTO signing_document_uploads (file_id, created_by)
+VALUES ($1, NULLIF($2, '')::uuid)
+`, fileID, actorID)
+	return err
+}
+
+func (s *Store) FindSigningDocumentUploadFile(ctx context.Context, fileID, actorID string) (models.UploadedFile, error) {
+	file, err := scanUploadedFile(s.pool.QueryRow(ctx, `
+SELECT f.id::text, f.original_name, f.stored_name, f.storage_path, f.content_type,
+       f.size_bytes, f.page_count, f.sha256, COALESCE(f.created_by::text, ''), f.created_at
+FROM signing_document_uploads u
+JOIN uploaded_files f ON f.id = u.file_id
+WHERE u.file_id = $1
+  AND u.created_by = NULLIF($2, '')::uuid
+  AND u.consumed_at IS NULL
+  AND u.created_at >= now() - interval '24 hours'
+`, fileID, actorID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.UploadedFile{}, ErrSigningDocumentUploadNotFound
+	}
+	return file, err
+}
+
+func (s *Store) CleanupExpiredSigningDocumentUploads(ctx context.Context, cutoff time.Time) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+DELETE FROM uploaded_files f
+USING signing_document_uploads u
+WHERE u.file_id = f.id
+  AND u.consumed_at IS NULL
+  AND u.created_at < $1
+RETURNING f.storage_path
+`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	paths := []string{}
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(path) != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths, rows.Err()
 }
 
 func (s *Store) GetSignatureTemplateState(ctx context.Context, screenCode, docFormatCode string) (*models.SignatureTemplate, *models.SignatureTemplate, error) {

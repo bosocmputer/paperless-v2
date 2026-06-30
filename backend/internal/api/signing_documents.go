@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +43,38 @@ var signingUXEventNames = map[string]bool{
 	"blocked_rejected":  true,
 }
 
+var signingCreateEventNames = map[string]bool{
+	"create_layout_open":      true,
+	"pdf_upload_success":      true,
+	"pdf_upload_error":        true,
+	"preset_applied":          true,
+	"box_add":                 true,
+	"box_delete":              true,
+	"layout_validation_error": true,
+	"create_submit_success":   true,
+	"create_submit_error":     true,
+	"pdf_render_error":        true,
+}
+
+type createSigningDocumentRequest struct {
+	DocFormatCode       string                               `json:"docFormatCode"`
+	DocNo               string                               `json:"docNo"`
+	FileID              string                               `json:"fileId"`
+	SignatureTemplateID string                               `json:"signatureTemplateId"`
+	ConfirmLocked       bool                                 `json:"confirmLocked"`
+	LayoutBoxes         []models.SignatureTemplateBoxRequest `json:"layoutBoxes"`
+}
+
+type signingCreateEventRequest struct {
+	Event                string                           `json:"event"`
+	SessionID            string                           `json:"sessionId"`
+	DocFormatCode        string                           `json:"docFormatCode"`
+	ElapsedMS            int64                            `json:"elapsedMs"`
+	BoxCount             int                              `json:"boxCount"`
+	ValidationIssueCount int                              `json:"validationIssueCount"`
+	Viewport             models.SignatureDesignerViewport `json:"viewport"`
+}
+
 func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 	documents, err := s.store.ListSigningDocuments(r.Context())
 	if err != nil {
@@ -62,39 +95,118 @@ func (s *Server) getAdminDashboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dashboard)
 }
 
-func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
+func (s *Server) uploadSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 	actor, _ := currentUser(r)
 	maxBytes := s.cfg.MaxUploadMB * 1024 * 1024
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+1024)
-	if err := r.ParseMultipartForm(maxBytes + 1024); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_form", "Document form is invalid.")
+	uploaded, err := s.readAndStorePDFUpload(w, r, "file", actor.ID, "document.pdf")
+	if err != nil {
 		return
 	}
-	docFormatCode := strings.TrimSpace(r.FormValue("docFormatCode"))
-	if docFormatCode == "" {
-		docFormatCode = strings.TrimSpace(r.FormValue("doc_format_code"))
+	if err := s.store.CreateSigningDocumentUpload(r.Context(), uploaded.ID, actor.ID); err != nil {
+		s.logger.Error("create signing document upload session failed", "error", err)
+		_ = os.Remove(uploaded.StoragePath)
+		writeError(w, http.StatusInternalServerError, "upload_session_failed", "Cannot prepare document upload right now.")
+		return
 	}
-	docNo := strings.TrimSpace(r.FormValue("docNo"))
-	if docNo == "" {
-		docNo = strings.TrimSpace(r.FormValue("doc_no"))
+	go s.cleanupExpiredSigningUploads()
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"file":    uploaded,
+		"fileUrl": fmt.Sprintf("/api/signing-documents/uploads/%s/pdf", uploaded.ID),
+	})
+}
+
+func (s *Server) getSigningDocumentUploadPDF(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
+	file, err := s.store.FindSigningDocumentUploadFile(r.Context(), strings.TrimSpace(r.PathValue("fileId")), actor.ID)
+	if errors.Is(err, store.ErrSigningDocumentUploadNotFound) {
+		writeError(w, http.StatusNotFound, "upload_not_found", "Uploaded PDF was not found or has expired.")
+		return
 	}
-	if docFormatCode == "" || docNo == "" {
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "upload_failed", "Cannot load uploaded PDF right now.")
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", file.OriginalName))
+	http.ServeFile(w, r, file.StoragePath)
+}
+
+func (s *Server) recordSigningDocumentCreateEvent(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r)
+	req, err := decodeSigningCreateEventPayload(r.Body, maxSigningEventBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_create_event", "Create event payload is invalid.")
+		return
+	}
+	metadata, err := normalizeSigningCreateEventMetadata(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_create_event", "Create event payload is invalid.")
+		return
+	}
+	if err := s.store.WriteAuditWithMetadata(r.Context(), user.ID, "signing_document.create_ux_event", "signing_document_create", "", clientIP(r), r.UserAgent(), metadata); err != nil {
+		s.logger.Warn("write signing create event failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "create_event_failed", "Cannot record create event right now.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
+	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
+		writeError(w, http.StatusBadRequest, "idempotency_key_required", "Idempotency-Key is required when creating a signing document.")
+		return
+	}
+	const idempotencyScope = "signing_document_create"
+	if s.replayIdempotentResponse(w, r, idempotencyScope, actor.ID) {
+		return
+	}
+	idempotencyCompleted := false
+	defer func() {
+		if !idempotencyCompleted {
+			s.releaseIdempotency(idempotencyScope, actor.ID, r)
+		}
+	}()
+
+	req, ok := s.decodeCreateSigningDocumentRequest(w, r)
+	if !ok {
+		return
+	}
+	req.DocFormatCode = strings.TrimSpace(req.DocFormatCode)
+	req.DocNo = strings.TrimSpace(req.DocNo)
+	req.FileID = strings.TrimSpace(req.FileID)
+	req.SignatureTemplateID = strings.TrimSpace(req.SignatureTemplateID)
+	if req.DocFormatCode == "" || req.DocNo == "" {
 		writeError(w, http.StatusBadRequest, "document_required", "doc_format_code and doc_no are required.")
 		return
 	}
+	if req.FileID == "" {
+		writeError(w, http.StatusBadRequest, "document_pdf_required", "Uploaded PDF fileId is required.")
+		return
+	}
 
-	format, err := s.fetchSMLDocFormatByCode(r.Context(), docFormatCode)
+	format, err := s.fetchSMLDocFormatByCode(r.Context(), req.DocFormatCode)
 	if err != nil {
 		s.writeDocFormatValidationError(w, err)
 		return
 	}
-	candidate, err := s.fetchSMLDocumentCandidate(r.Context(), format.Code, docNo)
+	candidate, err := s.fetchSMLDocumentCandidate(r.Context(), format.Code, req.DocNo)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "sml_document_validation_failed", "Cannot verify selected SML document.")
 		return
 	}
-	if candidate.IsLockRecord == 1 && strings.TrimSpace(r.FormValue("confirmLocked")) != "1" {
+	if candidate.IsLockRecord == 1 && !req.ConfirmLocked {
 		writeError(w, http.StatusConflict, "sml_document_locked", "SML document is already locked. Confirm before creating a PaperLess document.")
+		return
+	}
+	uploaded, err := s.store.FindSigningDocumentUploadFile(r.Context(), req.FileID, actor.ID)
+	if errors.Is(err, store.ErrSigningDocumentUploadNotFound) {
+		writeError(w, http.StatusNotFound, "upload_not_found", "Uploaded PDF was not found or has expired. Upload the PDF again.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "upload_failed", "Cannot load uploaded PDF right now.")
 		return
 	}
 
@@ -104,42 +216,40 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "document_config_required", "Document config is required before sending for signature.")
 		return
 	}
-	if missing := s.missingActiveConfigUsers(r.Context(), configs); len(missing) > 0 {
-		writeError(w, http.StatusBadRequest, "signer_user_inactive", "Every configured signer must exist and be active: "+strings.Join(missing, ", "))
-		return
+	layoutBoxes, selectedConfigs, issues := validateSigningDocumentLayout(req.LayoutBoxes, configs, uploaded.PageCount)
+	if len(issues) == 0 {
+		issues = append(issues, s.inactiveSigningLayoutUserIssues(r.Context(), selectedConfigs, layoutBoxes)...)
 	}
-	_, active, err := s.store.GetSignatureTemplateState(r.Context(), screenCode, format.Code)
-	if err != nil || active == nil {
-		writeError(w, http.StatusBadRequest, "signature_template_required", "Signature template is required before sending for signature.")
-		return
-	}
-	if issues := validateSignatureTemplate(*active, configs, s.cfg.MaxTemplatePages); len(issues) > 0 {
-		writeValidationIssues(w, http.StatusBadRequest, "signature_template_invalid", issues)
+	if len(issues) > 0 {
+		writeValidationIssues(w, http.StatusBadRequest, "signature_layout_invalid", issues)
 		return
 	}
 
-	uploaded, err := s.readAndStorePDFUpload(w, r, "file", actor.ID, "document.pdf")
-	if err != nil {
-		return
+	layoutSnapshot := map[string]any{
+		"source":              "per_document_upload",
+		"signatureTemplateId": req.SignatureTemplateID,
+		"pageCount":           uploaded.PageCount,
+		"boxes":               layoutBoxes,
 	}
-	if active.SampleFile != nil && active.SampleFile.PageCount > 0 && uploaded.PageCount != active.SampleFile.PageCount {
-		writeError(w, http.StatusBadRequest, "pdf_page_count_mismatch", fmt.Sprintf("Uploaded PDF has %d pages but template has %d pages.", uploaded.PageCount, active.SampleFile.PageCount))
-		return
-	}
-
 	document, err := s.store.CreateSigningDocument(r.Context(), store.CreateSigningDocumentInput{
-		ScreenCode: screenCode,
-		Format:     format,
-		Candidate:  candidate,
-		Template:   *active,
-		Configs:    configs,
-		File:       uploaded,
-		ActorID:    actor.ID,
-		IPAddress:  clientIP(r),
-		UserAgent:  r.UserAgent(),
+		ScreenCode:          screenCode,
+		Format:              format,
+		Candidate:           candidate,
+		SignatureTemplateID: req.SignatureTemplateID,
+		TemplateSnapshot:    layoutSnapshot,
+		LayoutBoxes:         layoutBoxes,
+		Configs:             selectedConfigs,
+		File:                uploaded,
+		ActorID:             actor.ID,
+		IPAddress:           clientIP(r),
+		UserAgent:           r.UserAgent(),
 	})
 	if errors.Is(err, store.ErrSigningDocumentDuplicate) {
 		writeError(w, http.StatusConflict, "signing_document_duplicate", "This SML document is already in an active PaperLess workflow.")
+		return
+	}
+	if errors.Is(err, store.ErrSigningDocumentUploadNotFound) {
+		writeError(w, http.StatusConflict, "upload_already_used", "Uploaded PDF was already used or expired. Upload the PDF again.")
 		return
 	}
 	if err != nil {
@@ -147,7 +257,248 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "signing_document_create_failed", "Cannot create signing document right now.")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"document": s.withExternalURLs(r, document)})
+	payload := map[string]any{"document": s.withExternalURLs(r, document)}
+	s.completeIdempotency(idempotencyScope, actor.ID, r, http.StatusCreated, payload)
+	idempotencyCompleted = true
+	writeJSON(w, http.StatusCreated, payload)
+}
+
+func (s *Server) decodeCreateSigningDocumentRequest(w http.ResponseWriter, r *http.Request) (createSigningDocumentRequest, bool) {
+	var req createSigningDocumentRequest
+	contentType := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type")))
+	if strings.Contains(contentType, "multipart/form-data") {
+		if err := r.ParseMultipartForm(1024 * 1024); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_form", "Document form is invalid.")
+			return req, false
+		}
+		req.DocFormatCode = firstNonEmpty(r.FormValue("docFormatCode"), r.FormValue("doc_format_code"))
+		req.DocNo = firstNonEmpty(r.FormValue("docNo"), r.FormValue("doc_no"))
+		req.FileID = firstNonEmpty(r.FormValue("fileId"), r.FormValue("file_id"))
+		req.SignatureTemplateID = firstNonEmpty(r.FormValue("signatureTemplateId"), r.FormValue("signature_template_id"))
+		req.ConfirmLocked = strings.TrimSpace(r.FormValue("confirmLocked")) == "1" || strings.EqualFold(strings.TrimSpace(r.FormValue("confirmLocked")), "true")
+		rawBoxes := firstNonEmpty(r.FormValue("layoutBoxes"), r.FormValue("layout_boxes"))
+		if rawBoxes != "" {
+			if err := json.Unmarshal([]byte(rawBoxes), &req.LayoutBoxes); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_layout_boxes", "layout_boxes must be valid JSON.")
+				return req, false
+			}
+		}
+		return req, true
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
+		return req, false
+	}
+	return req, true
+}
+
+func decodeSigningCreateEventPayload(body io.Reader, maxBytes int64) (signingCreateEventRequest, error) {
+	var req signingCreateEventRequest
+	decoder := json.NewDecoder(io.LimitReader(body, maxBytes+1))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+func normalizeSigningCreateEventMetadata(req signingCreateEventRequest) (map[string]any, error) {
+	req.Event = strings.TrimSpace(req.Event)
+	if !signingCreateEventNames[req.Event] {
+		return nil, fmt.Errorf("invalid event")
+	}
+	metadata := map[string]any{
+		"event":                req.Event,
+		"sessionId":            truncateForMetadata(req.SessionID, 80),
+		"docFormatCode":        truncateForMetadata(req.DocFormatCode, 40),
+		"elapsedMs":            clampInt64(req.ElapsedMS, 0, 24*60*60*1000),
+		"boxCount":             clampInt(req.BoxCount, 0, 1000),
+		"validationIssueCount": clampInt(req.ValidationIssueCount, 0, 1000),
+		"viewport": map[string]any{
+			"width":  clampInt(req.Viewport.Width, 0, 10000),
+			"height": clampInt(req.Viewport.Height, 0, 10000),
+		},
+	}
+	return metadata, nil
+}
+
+func validateSigningDocumentLayout(boxes []models.SignatureTemplateBoxRequest, configs []models.DocumentConfigStep, pageCount int) ([]models.SignatureTemplateBoxRequest, []models.DocumentConfigStep, []models.SignatureValidationIssue) {
+	normalized, issues := normalizeAndValidateBoxRequests(boxes, pageCount)
+	if len(normalized) == 0 {
+		issues = append(issues, signatureIssue("layout_box_required", "", "Add at least one signature box before sending the document."))
+	}
+
+	stepsByPosition := map[string]models.DocumentConfigStep{}
+	for _, step := range configs {
+		stepsByPosition[strings.ToLower(strings.TrimSpace(step.PositionCode))] = step
+	}
+	boxesByPosition := map[string][]models.SignatureTemplateBoxRequest{}
+	for _, box := range normalized {
+		key := strings.ToLower(strings.TrimSpace(box.PositionCode))
+		boxesByPosition[key] = append(boxesByPosition[key], box)
+		if _, ok := stepsByPosition[key]; !ok && box.PositionCode != "" {
+			issues = append(issues, signatureIssue("box_position_unknown", box.PositionCode, "Signature box uses a position that is not in document config."))
+		}
+	}
+
+	outBoxes := []models.SignatureTemplateBoxRequest{}
+	selected := []models.DocumentConfigStep{}
+	for _, step := range configs {
+		key := strings.ToLower(strings.TrimSpace(step.PositionCode))
+		positionBoxes := boxesByPosition[key]
+		if len(positionBoxes) == 0 {
+			continue
+		}
+		selected = append(selected, step)
+		switch step.ConditionType {
+		case 1:
+			if len(stepUsers(step)) == 0 {
+				issues = append(issues, signatureIssue("condition_any_users_required", step.PositionCode, fmt.Sprintf("%s needs at least one configured user.", step.PositionName)))
+			}
+			if len(positionBoxes) != 1 {
+				issues = append(issues, signatureIssue("condition_any_box_count_invalid", step.PositionCode, fmt.Sprintf("%s needs exactly one signature box.", step.PositionName)))
+			}
+			for i := range positionBoxes {
+				positionBoxes[i].SignerType = "any"
+				positionBoxes[i].SignerUser = ""
+				positionBoxes[i].SignerSlot = 1
+			}
+		case 2:
+			required := map[string]string{}
+			for _, user := range stepUsers(step) {
+				username, _ := splitSignerUser(user)
+				if username != "" {
+					required[strings.ToLower(username)] = user
+				}
+			}
+			if len(required) == 0 {
+				issues = append(issues, signatureIssue("condition_all_users_required", step.PositionCode, fmt.Sprintf("%s needs at least one configured user.", step.PositionName)))
+			}
+			seen := map[string]bool{}
+			for i := range positionBoxes {
+				positionBoxes[i].SignerType = "internal"
+				username, _ := splitSignerUser(positionBoxes[i].SignerUser)
+				key := strings.ToLower(username)
+				if key == "" {
+					issues = append(issues, signatureIssue("condition_all_user_required", step.PositionCode, fmt.Sprintf("%s requires a signer user on every box.", step.PositionName)))
+					continue
+				}
+				fullUser, ok := required[key]
+				if !ok {
+					issues = append(issues, signatureIssue("condition_all_unknown_user_box", step.PositionCode, fmt.Sprintf("%s has a box for a user outside this position: %s.", step.PositionName, username)))
+					continue
+				}
+				if seen[key] {
+					issues = append(issues, signatureIssue("condition_all_duplicate_user_box", step.PositionCode, fmt.Sprintf("%s has duplicate boxes for %s.", step.PositionName, fullUser)))
+					continue
+				}
+				seen[key] = true
+				positionBoxes[i].SignerUser = fullUser
+				positionBoxes[i].SignerSlot = len(seen)
+			}
+		case 3:
+			if len(positionBoxes) != 1 {
+				issues = append(issues, signatureIssue("condition_external_box_count_invalid", step.PositionCode, fmt.Sprintf("%s needs exactly one external signer box.", step.PositionName)))
+			}
+			for i := range positionBoxes {
+				positionBoxes[i].SignerType = "external"
+				positionBoxes[i].SignerUser = ""
+				positionBoxes[i].SignerSlot = 1
+			}
+		default:
+			issues = append(issues, signatureIssue("condition_type_invalid", step.PositionCode, fmt.Sprintf("%s uses unsupported condition type.", step.PositionName)))
+		}
+		outBoxes = append(outBoxes, positionBoxes...)
+	}
+	sort.SliceStable(outBoxes, func(i, j int) bool {
+		if outBoxes[i].PositionCode == outBoxes[j].PositionCode {
+			return outBoxes[i].SignerSlot < outBoxes[j].SignerSlot
+		}
+		return outBoxes[i].PositionCode < outBoxes[j].PositionCode
+	})
+	sort.SliceStable(issues, func(i, j int) bool {
+		return issues[i].PositionCode < issues[j].PositionCode
+	})
+	return outBoxes, selected, issues
+}
+
+func (s *Server) inactiveSigningLayoutUserIssues(ctx context.Context, configs []models.DocumentConfigStep, boxes []models.SignatureTemplateBoxRequest) []models.SignatureValidationIssue {
+	issues := []models.SignatureValidationIssue{}
+	boxesByPosition := map[string][]models.SignatureTemplateBoxRequest{}
+	for _, box := range boxes {
+		boxesByPosition[strings.ToLower(strings.TrimSpace(box.PositionCode))] = append(boxesByPosition[strings.ToLower(strings.TrimSpace(box.PositionCode))], box)
+	}
+	seen := map[string]bool{}
+	for _, step := range configs {
+		if step.ConditionType == 3 {
+			continue
+		}
+		users := []string{}
+		if step.ConditionType == 1 {
+			users = stepUsers(step)
+		} else {
+			for _, box := range boxesByPosition[strings.ToLower(strings.TrimSpace(step.PositionCode))] {
+				if box.SignerUser != "" {
+					users = append(users, box.SignerUser)
+				}
+			}
+		}
+		for _, value := range users {
+			username, _ := splitSignerUser(value)
+			key := strings.ToLower(strings.TrimSpace(username))
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			user, err := s.store.FindUserByUsername(ctx, username)
+			if err != nil || user.Status != "active" {
+				issues = append(issues, signatureIssue("signer_user_inactive", step.PositionCode, fmt.Sprintf("Signer user %s must exist and be active.", username)))
+			}
+		}
+	}
+	return issues
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func splitSignerUser(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(value, ":", 2)
+	username := strings.TrimSpace(parts[0])
+	if len(parts) == 1 {
+		return username, username
+	}
+	display := strings.TrimSpace(parts[1])
+	if display == "" {
+		display = username
+	}
+	return username, display
+}
+
+func (s *Server) cleanupExpiredSigningUploads() {
+	paths, err := s.store.CleanupExpiredSigningDocumentUploads(context.Background(), time.Now().Add(-24*time.Hour))
+	if err != nil {
+		s.logger.Warn("cleanup expired signing uploads failed", "error", err)
+		return
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.logger.Warn("remove expired signing upload failed", "error", err, "path", path)
+		}
+	}
 }
 
 func (s *Server) getSigningDocument(w http.ResponseWriter, r *http.Request) {

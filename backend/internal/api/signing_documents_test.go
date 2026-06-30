@@ -62,6 +62,37 @@ func TestNormalizeSigningTaskEventMetadataRejectsInvalidEvent(t *testing.T) {
 	}
 }
 
+func TestNormalizeSigningCreateEventMetadata(t *testing.T) {
+	metadata, err := normalizeSigningCreateEventMetadata(signingCreateEventRequest{
+		Event:                "create_submit_success",
+		SessionID:            strings.Repeat("s", 120),
+		DocFormatCode:        "PO",
+		ElapsedMS:            15_000,
+		BoxCount:             3,
+		ValidationIssueCount: 0,
+		Viewport:             models.SignatureDesignerViewport{Width: 390, Height: 844},
+	})
+	if err != nil {
+		t.Fatalf("expected metadata, got %v", err)
+	}
+	if metadata["event"] != "create_submit_success" || metadata["docFormatCode"] != "PO" {
+		t.Fatalf("unexpected metadata: %#v", metadata)
+	}
+	if got := metadata["sessionId"].(string); len(got) != 80 {
+		t.Fatalf("expected truncated session id, got %d", len(got))
+	}
+	if _, ok := metadata["docNo"]; ok {
+		t.Fatal("metadata must not include document number")
+	}
+}
+
+func TestNormalizeSigningCreateEventMetadataRejectsInvalidEvent(t *testing.T) {
+	_, err := normalizeSigningCreateEventMetadata(signingCreateEventRequest{Event: "mousemove"})
+	if err == nil {
+		t.Fatal("expected invalid event error")
+	}
+}
+
 func TestDecodeSigningTaskEventPayloadRejectsUnknownField(t *testing.T) {
 	body := `{"event":"task_open","token":"secret"}`
 	if _, err := decodeSigningTaskEventPayload(strings.NewReader(body), maxSigningEventBytes); err == nil {
@@ -130,5 +161,55 @@ func TestNormalizePrintCopyRequestWebDefaultsPrinterName(t *testing.T) {
 	}
 	if len(req.DeviceID) != 160 {
 		t.Fatalf("expected bounded device id, got %d", len(req.DeviceID))
+	}
+}
+
+func TestValidateSigningDocumentLayoutAllowsPartialPositions(t *testing.T) {
+	configs := []models.DocumentConfigStep{
+		{PositionCode: "1", PositionName: "ผู้จัดทำ", User01: "001:น.ส X", ConditionType: 1, SequenceNo: 1},
+		{PositionCode: "2", PositionName: "ผู้ตรวจสอบ", User01: "201:นาย ก", ConditionType: 1, SequenceNo: 2},
+		{PositionCode: "3", PositionName: "ผู้อนุมัติ", User01: "901:นาย A", User02: "902:นาย B", ConditionType: 2, SequenceNo: 3},
+	}
+	boxes := []models.SignatureTemplateBoxRequest{
+		{PositionCode: "1", SignerType: "any", PageNo: 1, XRatio: 0.1, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+		{PositionCode: "3", SignerType: "internal", SignerUser: "901", PageNo: 1, XRatio: 0.55, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+	}
+
+	normalized, selected, issues := validateSigningDocumentLayout(boxes, configs, 1)
+	if len(issues) != 0 {
+		t.Fatalf("expected partial layout to be valid, got %#v", issues)
+	}
+	if len(selected) != 2 {
+		t.Fatalf("expected only boxed positions to be selected, got %d", len(selected))
+	}
+	if len(normalized) != 2 {
+		t.Fatalf("expected two normalized boxes, got %d", len(normalized))
+	}
+	if normalized[1].SignerUser != "901:นาย A" {
+		t.Fatalf("expected signer user to normalize to configured label, got %q", normalized[1].SignerUser)
+	}
+}
+
+func TestValidateSigningDocumentLayoutRejectsZeroBoxes(t *testing.T) {
+	_, _, issues := validateSigningDocumentLayout(nil, []models.DocumentConfigStep{
+		{PositionCode: "1", PositionName: "ผู้จัดทำ", User01: "001:น.ส X", ConditionType: 1},
+	}, 1)
+	if !hasSignatureIssue(issues, "layout_box_required") {
+		t.Fatalf("expected layout_box_required, got %#v", issues)
+	}
+}
+
+func TestValidateSigningDocumentLayoutRejectsDuplicateConditionTwoUser(t *testing.T) {
+	configs := []models.DocumentConfigStep{
+		{PositionCode: "3", PositionName: "ผู้อนุมัติ", User01: "901:นาย A", User02: "902:นาย B", ConditionType: 2},
+	}
+	boxes := []models.SignatureTemplateBoxRequest{
+		{PositionCode: "3", SignerType: "internal", SignerUser: "901", PageNo: 1, XRatio: 0.1, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+		{PositionCode: "3", SignerType: "internal", SignerUser: "901:นาย A", PageNo: 1, XRatio: 0.4, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+	}
+
+	_, _, issues := validateSigningDocumentLayout(boxes, configs, 1)
+	if !hasSignatureIssue(issues, "condition_all_duplicate_user_box") {
+		t.Fatalf("expected duplicate user issue, got %#v", issues)
 	}
 }

@@ -125,17 +125,17 @@ function resolveTemplateStatus(row) {
     if (!row.template) return { label: 'ยังไม่ได้เริ่ม', severity: 'secondary' };
     if (!row.template.sampleFileId) return { label: 'รออัปโหลด PDF', severity: 'warn' };
     if (row.issues.length > 0) return { label: 'ต้องแก้ไข', severity: 'warn' };
-    if (row.requiredBoxCount > 0 && row.boxCount === row.requiredBoxCount) return { label: 'พร้อมใช้งาน', severity: 'success' };
-    return { label: 'กำลังตั้งค่า', severity: 'info' };
+    if (row.boxCount > 0) return { label: 'มี preset', severity: 'success' };
+    return { label: 'มี PDF ยังไม่วางกรอบ', severity: 'info' };
 }
 
 function statusHelper(row) {
     if (row.state?.error) return row.state.error;
-    if (!row.template) return 'เปิดเข้าไปอัปโหลด PDF และวางกรอบลายเซ็น';
+    if (!row.template) return 'เปิดเข้าไปอัปโหลด PDF เพื่อสร้าง preset ใช้เป็นค่าเริ่มต้นตอนส่งเซ็น';
     if (!row.template.sampleFileId) return 'ยังไม่มี PDF ตัวอย่าง';
     if (row.firstIssue) return issueLabel(row.firstIssue);
-    if (row.boxCount !== row.requiredBoxCount) return `ต้องมี ${row.requiredBoxCount} กรอบตาม config`;
-    return 'กรอบครบตามเงื่อนไขปัจจุบัน';
+    if (row.boxCount === 0) return 'ยังไม่มีกรอบ preset แต่ไม่กระทบการส่งเซ็นจริง';
+    return 'ใช้เป็น preset ได้ และแก้กรอบอีกครั้งตอน upload เอกสารจริง';
 }
 
 function issueLabel(issue) {
@@ -221,8 +221,8 @@ function normalizeSearch(value) {
     <div class="card signature-template-page">
         <div class="page-header">
             <div>
-                <div class="font-semibold text-xl mb-1">ตั้งค่ากรอบลายเซ็น</div>
-                <p class="text-muted-color m-0">เลือกเอกสารที่ตั้งค่า Position แล้ว เพื่ออัปโหลด PDF และวางกรอบลายเซ็นของเอกสารนั้น</p>
+                <div class="font-semibold text-xl mb-1">Preset กรอบลายเซ็น</div>
+                <p class="text-muted-color m-0">กำหนดกรอบเริ่มต้นไว้ช่วยตอน upload เอกสารจริง ไม่ใช่เงื่อนไขบังคับของ workflow</p>
             </div>
             <div class="header-actions">
                 <InputText v-model="searchQuery" type="search" placeholder="ค้นหา doc, PDF, สถานะ" class="w-full sm:w-80" />
@@ -239,11 +239,11 @@ function normalizeSearch(value) {
                 <strong>{{ rows.length }}</strong>
             </div>
             <div class="summary-item">
-                <span class="summary-label">พร้อมใช้งาน</span>
+                <span class="summary-label">มี preset</span>
                 <strong>{{ readyCount }}</strong>
             </div>
             <div class="summary-item">
-                <span class="summary-label">ต้องตรวจสอบ</span>
+                <span class="summary-label">ต้องแก้ไข</span>
                 <strong>{{ needsWorkCount }}</strong>
             </div>
             <div class="summary-item">
@@ -256,8 +256,8 @@ function normalizeSearch(value) {
             <template #empty>
                 <div class="empty-state">
                     <i class="pi pi-file-edit"></i>
-                    <div class="font-semibold">{{ searchQuery ? 'ไม่พบ Template ที่ค้นหา' : 'ยังไม่มีเอกสารสำหรับตั้งค่ากรอบลายเซ็น' }}</div>
-                    <p class="text-muted-color m-0">{{ searchQuery ? 'ลองค้นหาด้วย doc code, ชื่อ PDF หรือสถานะอื่น' : 'เพิ่ม Position ใน Config เอกสารก่อน แล้วกลับมาวางกรอบลายเซ็นจากหน้านี้' }}</p>
+                    <div class="font-semibold">{{ searchQuery ? 'ไม่พบ preset ที่ค้นหา' : 'ยังไม่มีเอกสารสำหรับทำ preset กรอบลายเซ็น' }}</div>
+                    <p class="text-muted-color m-0">{{ searchQuery ? 'ลองค้นหาด้วย doc code, ชื่อ PDF หรือสถานะอื่น' : 'เพิ่ม Position ใน Config เอกสารก่อน แล้วค่อยสร้าง preset จากหน้านี้' }}</p>
                     <Button v-if="!searchQuery" label="ไปที่ Config เอกสาร" icon="pi pi-file-edit" class="mt-3" @click="openDocumentConfig" />
                 </div>
             </template>
@@ -277,9 +277,9 @@ function normalizeSearch(value) {
                     <div class="status-cell">
                         <div class="status-line">
                             <Tag :value="data.status.label" :severity="data.status.severity" />
-                            <span class="box-ratio">{{ data.boxCount }}/{{ data.requiredBoxCount }} กรอบ</span>
+                            <span class="box-ratio">{{ data.boxCount }} กรอบ preset</span>
                         </div>
-                        <div class="progress-track" :aria-label="`กรอบลายเซ็น ${data.boxCount} จาก ${data.requiredBoxCount}`">
+                        <div class="progress-track" :aria-label="`กรอบ preset ${data.boxCount} จาก ${data.requiredBoxCount}`">
                             <span class="progress-fill" :class="{ complete: data.status.severity === 'success', invalid: data.issues.length > 0 }" :style="{ width: `${data.progressPercent}%` }"></span>
                         </div>
                         <div class="helper-text">{{ statusHelper(data) }}</div>
@@ -313,7 +313,7 @@ function normalizeSearch(value) {
             <Column header="จัดการ" style="min-width: 12rem">
                 <template #body="{ data }">
                     <div class="row-actions">
-                        <Button label="แก้กรอบลายเซ็น" icon="pi pi-pencil" severity="info" @click="openDesigner(data.docFormatCode)" />
+                        <Button label="แก้ preset" icon="pi pi-pencil" severity="info" @click="openDesigner(data.docFormatCode)" />
                     </div>
                 </template>
             </Column>
