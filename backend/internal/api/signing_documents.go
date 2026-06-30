@@ -240,6 +240,10 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		legalNoticeSource = "preset"
 	}
 	legalNoticeSnapshot := legalNoticeSnapshotFromBox(*legalNoticeBox, legalNoticeSource)
+	currentFile, ok := s.createInitialLegalNoticePDF(w, r, uploaded, legalNoticeSnapshot, actor.ID)
+	if !ok {
+		return
+	}
 
 	layoutSnapshot := map[string]any{
 		"source":              "per_document_upload",
@@ -258,6 +262,7 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		LayoutBoxes:         layoutBoxes,
 		Configs:             selectedConfigs,
 		File:                uploaded,
+		CurrentFile:         &currentFile,
 		ActorID:             actor.ID,
 		IPAddress:           clientIP(r),
 		UserAgent:           r.UserAgent(),
@@ -318,6 +323,64 @@ func (s *Server) decodeCreateSigningDocumentRequest(w http.ResponseWriter, r *ht
 		return req, false
 	}
 	return req, true
+}
+
+func (s *Server) createInitialLegalNoticePDF(w http.ResponseWriter, r *http.Request, uploaded models.UploadedFile, legalNotice models.LegalNoticeSnapshot, actorID string) (models.UploadedFile, bool) {
+	if uploaded.StoragePath == "" || uploaded.PageCount <= 0 {
+		writeError(w, http.StatusBadRequest, "document_pdf_invalid", "Uploaded PDF is invalid.")
+		return models.UploadedFile{}, false
+	}
+	stamped, err := stampPDFWithSignaturesAndLegalNotice(uploaded.StoragePath, uploaded.PageCount, nil, nil, &legalNotice)
+	if err != nil {
+		s.logger.Error("create initial legal notice pdf failed", "error", err, "fileID", uploaded.ID)
+		writeError(w, http.StatusInternalServerError, "pdf_legal_notice_failed", "Cannot add legal notice to the PDF right now.")
+		return models.UploadedFile{}, false
+	}
+	pageCount := uploaded.PageCount
+	if count, err := readPDFPageCount(stamped); err == nil && count > 0 {
+		pageCount = count
+	}
+	name := fmt.Sprintf("%s-legal-notice.pdf", strings.TrimSuffix(filepath.Base(uploaded.OriginalName), filepath.Ext(uploaded.OriginalName)))
+	currentFile, err := s.storeUploadedBytes(r.Context(), stamped, name, "legal-notice-document.pdf", "application/pdf", ".pdf", pageCount, actorID)
+	if err != nil {
+		s.logger.Error("store initial legal notice pdf failed", "error", err, "fileID", uploaded.ID)
+		writeError(w, http.StatusInternalServerError, "pdf_legal_notice_store_failed", "Cannot store legal notice PDF right now.")
+		return models.UploadedFile{}, false
+	}
+	return currentFile, true
+}
+
+func currentPDFNeedsLegalNoticeRefresh(document models.SigningDocument) bool {
+	if document.LegalNoticeSnapshot == nil {
+		return false
+	}
+	for _, event := range document.Events {
+		if event.Action != "pdf_stamped" && event.Action != "final_pdf_ready" {
+			continue
+		}
+		if metadataBool(event.Metadata, "legalNoticeStamped") {
+			return false
+		}
+	}
+	return true
+}
+
+func metadataBool(metadata map[string]any, key string) bool {
+	if metadata == nil {
+		return false
+	}
+	value, ok := metadata[key]
+	if !ok {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return false
+	}
 }
 
 func decodeSigningCreateEventPayload(body io.Reader, maxBytes int64) (signingCreateEventRequest, error) {
@@ -554,8 +617,22 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden", "You cannot view this document.")
 		return
 	}
+	version := strings.TrimSpace(r.URL.Query().Get("version"))
+	if version == "" && document.Status == "in_progress" && currentPDFNeedsLegalNoticeRefresh(document) {
+		if err := s.refreshStampedPDF(r.Context(), document.ID, false); err != nil {
+			s.logger.Error("refresh legal notice pdf failed", "error", err, "documentID", document.ID)
+			writeError(w, http.StatusInternalServerError, "pdf_legal_notice_failed", "Cannot prepare PDF legal notice right now.")
+			return
+		}
+		updated, err := s.store.FindSigningDocumentByID(r.Context(), document.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+			return
+		}
+		document = updated
+	}
 	file := document.CurrentFile
-	switch strings.TrimSpace(r.URL.Query().Get("version")) {
+	switch version {
 	case "original":
 		file = document.OriginalFile
 	case "final":
@@ -962,6 +1039,18 @@ func (s *Server) getPublicSigningPDF(w http.ResponseWriter, r *http.Request) {
 	if err != nil || document.CurrentFile == nil {
 		writeError(w, http.StatusNotFound, "pdf_not_found", "PDF was not found.")
 		return
+	}
+	if document.Status == "in_progress" && currentPDFNeedsLegalNoticeRefresh(document) {
+		if err := s.refreshStampedPDF(r.Context(), document.ID, false); err != nil {
+			s.logger.Error("refresh public legal notice pdf failed", "error", err, "documentID", document.ID)
+			writeError(w, http.StatusInternalServerError, "pdf_legal_notice_failed", "Cannot prepare PDF legal notice right now.")
+			return
+		}
+		document, err = s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+		if err != nil || document.CurrentFile == nil {
+			writeError(w, http.StatusNotFound, "pdf_not_found", "PDF was not found.")
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/pdf")
 	http.ServeFile(w, r, document.CurrentFile.StoragePath)

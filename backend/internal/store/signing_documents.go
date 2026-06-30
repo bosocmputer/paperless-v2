@@ -25,6 +25,7 @@ type CreateSigningDocumentInput struct {
 	LayoutBoxes         []models.SignatureTemplateBoxRequest
 	Configs             []models.DocumentConfigStep
 	File                models.UploadedFile
+	CurrentFile         *models.UploadedFile
 	ActorID             string
 	IPAddress           string
 	UserAgent           string
@@ -72,6 +73,12 @@ func (s *Store) CreateSigningDocument(ctx context.Context, input CreateSigningDo
 	if err := consumeSigningDocumentUpload(ctx, tx, input.File.ID, input.ActorID); err != nil {
 		return models.SigningDocument{}, err
 	}
+	currentFileID := input.File.ID
+	currentHasLegalNotice := false
+	if input.CurrentFile != nil && strings.TrimSpace(input.CurrentFile.ID) != "" {
+		currentFileID = input.CurrentFile.ID
+		currentHasLegalNotice = currentFileID != input.File.ID
+	}
 
 	var documentID string
 	err = tx.QueryRow(ctx, `
@@ -80,11 +87,11 @@ INSERT INTO signing_documents (
     doc_date, total_amount, sml_is_lock_record, status, current_version,
     original_file_id, current_file_id, signature_template_id, config_snapshot, template_snapshot, legal_notice_snapshot, created_by
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::date,$10,$11,'in_progress',1,$12,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb,NULLIF($17,'')::uuid)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::date,$10,$11,'in_progress',1,$12,$13,$14,$15::jsonb,$16::jsonb,$17::jsonb,NULLIF($18,'')::uuid)
 RETURNING id::text
 `, input.ScreenCode, input.Format.Code, input.Candidate.DocNo, input.Candidate.Table, input.Candidate.TransFlag,
 		input.Candidate.PartyCode, input.Candidate.PartyName, input.Candidate.PartyType, input.Candidate.DocDate,
-		input.Candidate.TotalAmount, input.Candidate.IsLockRecord, input.File.ID, input.SignatureTemplateID,
+		input.Candidate.TotalAmount, input.Candidate.IsLockRecord, input.File.ID, currentFileID, input.SignatureTemplateID,
 		string(configSnapshot), string(templateSnapshot), string(legalNoticeSnapshot), input.ActorID).Scan(&documentID)
 	if err != nil {
 		if strings.Contains(err.Error(), "signing_documents_active_doc_unique_idx") {
@@ -95,9 +102,9 @@ RETURNING id::text
 
 	if _, err := tx.Exec(ctx, `
 INSERT INTO signing_document_versions (document_id, version_no, file_id, kind, created_by)
-VALUES ($1, 1, $2, 'original', NULLIF($3,'')::uuid),
-       ($1, 1, $2, 'current', NULLIF($3,'')::uuid)
-`, documentID, input.File.ID, input.ActorID); err != nil {
+VALUES ($1, 1, $2, 'original', NULLIF($4,'')::uuid),
+       ($1, 1, $3, 'current', NULLIF($4,'')::uuid)
+`, documentID, input.File.ID, currentFileID, input.ActorID); err != nil {
 		return models.SigningDocument{}, err
 	}
 
@@ -165,6 +172,16 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		"docNo": input.Candidate.DocNo,
 	}); err != nil {
 		return models.SigningDocument{}, err
+	}
+	if currentHasLegalNotice {
+		if err := insertSigningEvent(ctx, tx, documentID, input.ActorID, "", "pdf_stamped", "สร้าง PDF พร้อมข้อความกฎหมายแล้ว", input.IPAddress, input.UserAgent, map[string]any{
+			"fileId":             currentFileID,
+			"signatureCount":     0,
+			"final":              false,
+			"legalNoticeStamped": true,
+		}); err != nil {
+			return models.SigningDocument{}, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

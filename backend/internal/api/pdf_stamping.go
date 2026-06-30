@@ -50,7 +50,7 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		return fmt.Errorf("original pdf is missing")
 	}
 	signers := signedDocumentSigners(document.Signers)
-	if len(signers) == 0 {
+	if len(signers) == 0 && document.LegalNoticeSnapshot == nil {
 		return nil
 	}
 	signatureFiles := map[string]models.UploadedFile{}
@@ -65,7 +65,7 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		signatureFiles[signer.SignatureFileID] = file
 	}
 
-	stamped, err := stampPDFWithSignatures(document.OriginalFile.StoragePath, document.OriginalFile.PageCount, signers, signatureFiles)
+	stamped, err := stampPDFWithSignaturesAndLegalNotice(document.OriginalFile.StoragePath, document.OriginalFile.PageCount, signers, signatureFiles, document.LegalNoticeSnapshot)
 	if err != nil {
 		return err
 	}
@@ -75,12 +75,6 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 
 	if final {
 		signedContent := stamped
-		if document.LegalNoticeSnapshot != nil {
-			signedContent, err = stampPDFWithSignaturesAndLegalNotice(document.OriginalFile.StoragePath, document.OriginalFile.PageCount, signers, signatureFiles, document.LegalNoticeSnapshot)
-			if err != nil {
-				return err
-			}
-		}
 		legalText := signingLegalText
 		legalTextVersion := signingLegalTextVersion
 		if document.LegalNoticeSnapshot != nil {
@@ -121,7 +115,7 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		"fileSha256":         uploaded.SHA256,
 		"signatureCount":     len(signers),
 		"final":              final,
-		"legalNoticeStamped": final && document.LegalNoticeSnapshot != nil,
+		"legalNoticeStamped": document.LegalNoticeSnapshot != nil,
 	})
 }
 

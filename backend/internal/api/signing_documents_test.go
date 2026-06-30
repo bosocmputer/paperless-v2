@@ -231,6 +231,34 @@ func TestValidateLegalNoticeBoxRequiredAndBounds(t *testing.T) {
 	}
 }
 
+func TestCurrentPDFNeedsLegalNoticeRefresh(t *testing.T) {
+	doc := models.SigningDocument{
+		OriginalFileID:      "file-original",
+		CurrentFileID:       "file-original",
+		LegalNoticeSnapshot: &models.LegalNoticeSnapshot{Text: signingLegalText, PageNo: 1, WidthRatio: 0.6, HeightRatio: 0.08},
+	}
+	if !currentPDFNeedsLegalNoticeRefresh(doc) {
+		t.Fatalf("expected original current PDF to need legal notice refresh")
+	}
+
+	doc.CurrentFileID = "file-current"
+	doc.Events = []models.SigningDocumentEvent{{
+		Action:   "pdf_stamped",
+		Metadata: map[string]any{"legalNoticeStamped": true},
+	}}
+	if currentPDFNeedsLegalNoticeRefresh(doc) {
+		t.Fatalf("expected legal stamped current PDF to skip refresh")
+	}
+
+	doc.Events = []models.SigningDocumentEvent{{
+		Action:   "pdf_stamped",
+		Metadata: map[string]any{"legalNoticeStamped": false},
+	}}
+	if !currentPDFNeedsLegalNoticeRefresh(doc) {
+		t.Fatalf("expected old current PDF without legal notice marker to need refresh")
+	}
+}
+
 func TestValidateSigningDocumentLayoutRejectsDuplicateConditionTwoUser(t *testing.T) {
 	configs := []models.DocumentConfigStep{
 		{PositionCode: "3", PositionName: "ผู้อนุมัติ", User01: "901:นาย A", User02: "902:นาย B", ConditionType: 2},

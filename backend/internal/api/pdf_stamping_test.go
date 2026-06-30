@@ -202,6 +202,43 @@ func TestStampPDFWithLegalNoticeAndFinalEvidenceAddsPage(t *testing.T) {
 	}
 }
 
+func TestStampPDFWithLegalNoticeWorksBeforeAnySignature(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.pdf")
+	pdf := gofpdf.New("P", "pt", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Helvetica", "", 12)
+	pdf.Text(72, 72, "source")
+	if err := pdf.OutputFileAndClose(source); err != nil {
+		t.Fatalf("create source pdf: %v", err)
+	}
+
+	out, err := stampPDFWithSignaturesAndLegalNotice(source, 1, nil, nil, &models.LegalNoticeSnapshot{
+		Text:        signingLegalText,
+		TextVersion: signingLegalTextVersion,
+		Source:      "per_document",
+		PageNo:      1,
+		XRatio:      0.2,
+		YRatio:      0.62,
+		WidthRatio:  0.6,
+		HeightRatio: 0.08,
+		Label:       "ข้อความกฎหมาย",
+	})
+	if err != nil {
+		t.Fatalf("stamp legal notice pdf: %v", err)
+	}
+	if !strings.HasPrefix(string(out), "%PDF-") {
+		t.Fatalf("legal notice output is not a PDF")
+	}
+	pageCount, err := readPDFPageCount(out)
+	if err != nil {
+		t.Fatalf("read page count: %v", err)
+	}
+	if pageCount != 1 {
+		t.Fatalf("expected same page count, got %d pages", pageCount)
+	}
+}
+
 func TestCreatePrintCopyPDFAddsPage(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "source.pdf")
