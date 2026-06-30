@@ -42,6 +42,7 @@ const workflowOptions = computed(() =>
             value: workflow.docFormatCode
         }))
 );
+const canCopyWorkflow = computed(() => workflows.value.length > 1);
 const filteredWorkflows = computed(() => {
     const query = normalizeSearch(searchQuery.value);
     if (!query) return workflows.value;
@@ -102,6 +103,7 @@ function createWorkflow() {
 }
 
 function openCopy(workflow) {
+    if (!canCopyWorkflow.value) return;
     copyTarget.value = workflow;
     copySourceDocFormat.value = workflowOptions.value[0]?.value || '';
     copyPreview.value = null;
@@ -272,7 +274,16 @@ function sameCode(left, right) {
                 <template #body="{ data }">
                     <div class="flex gap-2">
                         <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ Workflow" @click="openWorkflow(data.docFormatCode)" />
-                        <Button icon="pi pi-copy" severity="secondary" rounded outlined aria-label="คัดลอก Workflow" :disabled="workflows.length < 2" @click="openCopy(data)" />
+                        <Button
+                            v-if="canCopyWorkflow"
+                            icon="pi pi-copy"
+                            severity="secondary"
+                            rounded
+                            outlined
+                            aria-label="คัดลอก Workflow"
+                            title="คัดลอกจาก Workflow อื่นมาแทนรายการนี้"
+                            @click="openCopy(data)"
+                        />
                         <Button icon="pi pi-map-marker" severity="secondary" rounded outlined aria-label="กรอบเริ่มต้น" @click="openPreset(data.docFormatCode)" />
                     </div>
                 </template>
