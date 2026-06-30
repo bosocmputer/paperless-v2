@@ -245,6 +245,7 @@ async function uploadSelectedPDF(file) {
         form.value.fileId = result.file?.id || '';
         form.value.fileUrl = result.fileUrl || api.signingDocumentUploadPDFUrl(form.value.fileId);
         activeStep.value = Math.max(activeStep.value, 1);
+        applyPresetAfterUpload();
         recordCreateEvent('pdf_upload_success');
         toast.add({ severity: 'success', summary: 'อัปโหลด PDF แล้ว', detail: `${result.file?.pageCount || 0} หน้า`, life: 2500 });
     } catch (err) {
@@ -262,6 +263,7 @@ async function loadLayoutContext() {
         const [configsResult, templateResult] = await Promise.all([api.listDocumentConfigs({ docFormatCode: form.value.docFormatCode }), api.getSignatureTemplateState(form.value.docFormatCode).catch(() => ({}))]);
         form.value.configs = configsResult.configs || [];
         form.value.presetTemplate = templateResult.active || templateResult.draft || null;
+        if (form.value.uploadedFile && form.value.layoutBoxes.length === 0) applyPresetAfterUpload();
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลด Workflow ไม่สำเร็จ', detail: err.message, life: 4500 });
     } finally {
@@ -273,6 +275,41 @@ function onApplyPreset(template) {
     form.value.selectedPresetId = template?.id || '';
     recordCreateEvent('preset_applied');
     toast.add({ severity: 'success', summary: 'ใช้กรอบเริ่มต้นแล้ว', detail: 'ตรวจตำแหน่งกับ PDF จริงก่อนส่งเซ็น', life: 3000 });
+}
+
+function applyPresetAfterUpload() {
+    const template = form.value.presetTemplate;
+    if (!template?.boxes?.length || !form.value.uploadedFile) return;
+    const presetPageCount = Number(template.sampleFile?.pageCount || 0);
+    const uploadedPageCount = Number(form.value.uploadedFile?.pageCount || 0);
+    if (presetPageCount && uploadedPageCount && presetPageCount !== uploadedPageCount) {
+        recordCreateEvent('validation_blocked');
+        toast.add({
+            severity: 'warn',
+            summary: 'ยังไม่ใช้กรอบเริ่มต้น',
+            detail: 'จำนวนหน้า PDF ไม่ตรงกับกรอบเริ่มต้น กรุณาวางกรอบเอง',
+            life: 4500
+        });
+        return;
+    }
+
+    form.value.layoutBoxes = template.boxes.map((box) => ({
+        ...box,
+        clientKey: makeLayoutBoxKey(),
+        pageNo: Number(box.pageNo || 1),
+        xRatio: Number(box.xRatio || 0.1),
+        yRatio: Number(box.yRatio || 0.1),
+        widthRatio: Number(box.widthRatio || 0.2),
+        heightRatio: Number(box.heightRatio || 0.08)
+    }));
+    form.value.selectedPresetId = template.id || '';
+    recordCreateEvent('preset_applied');
+    toast.add({
+        severity: 'success',
+        summary: 'ดึงกรอบเริ่มต้นมาให้แล้ว',
+        detail: 'ตรวจตำแหน่งกับ PDF จริงก่อนส่งเซ็น',
+        life: 3000
+    });
 }
 
 function onDesignerEvent(eventName) {
@@ -566,6 +603,10 @@ function recordCreateEvent(event) {
 
 function makeClientId() {
     return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+}
+
+function makeLayoutBoxKey() {
+    return `box_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 </script>
 
