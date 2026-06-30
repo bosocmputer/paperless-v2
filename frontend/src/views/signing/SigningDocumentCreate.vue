@@ -565,15 +565,17 @@ function makeClientId() {
 <template>
     <div class="card min-w-0 overflow-hidden signing-create-card" :class="{ 'signing-create-card-designer': designerMode }">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-            <div class="min-w-0">
-                <div class="font-semibold text-xl mb-1 truncate">
-                    {{ designerMode ? form.selectedCandidate?.doc_no || 'ส่งเอกสารใหม่' : 'ส่งเอกสารใหม่' }}
-                </div>
-                <p class="text-muted-color m-0 truncate">{{ designerMode ? selectedDocFormatLabel : headerSummary }}</p>
-            </div>
-            <div class="flex flex-wrap gap-2 md:justify-end">
-                <Tag v-if="designerMode" value="PDF และกรอบ" severity="success" />
+            <div class="flex min-w-0 items-center gap-3">
                 <Button icon="pi pi-arrow-left" severity="secondary" rounded outlined aria-label="กลับ" @click="router.push({ name: 'signing-documents' })" />
+                <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <div class="font-semibold text-xl whitespace-nowrap truncate">
+                        {{ designerMode ? form.selectedCandidate?.doc_no || 'ส่งเอกสารใหม่' : 'ส่งเอกสารใหม่' }}
+                    </div>
+                    <p class="text-muted-color m-0 min-w-0 truncate">{{ designerMode ? selectedDocFormatLabel : headerSummary }}</p>
+                </div>
+            </div>
+            <div v-if="designerMode" class="flex flex-wrap gap-2 md:justify-end">
+                <Tag value="PDF และกรอบ" severity="success" />
             </div>
         </div>
 

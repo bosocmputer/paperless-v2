@@ -452,22 +452,22 @@ function normalizeCode(value) {
 
 <template>
     <div class="card">
-        <Toolbar class="mb-6">
-            <template #start>
-                <div class="flex flex-wrap gap-2">
-                    <Button label="กลับ" icon="pi pi-arrow-left" severity="secondary" text @click="router.push({ name: 'document-config' })" />
-                    <Button label="เพิ่มขั้นตอน" icon="pi pi-plus" severity="secondary" @click="openCreateStep" />
-                    <Button label="กรอบเริ่มต้น" icon="pi pi-map-marker" severity="secondary" outlined @click="router.push({ name: 'signature-template', params: { docFormatCode } })" />
+        <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-6">
+            <div class="flex min-w-0 items-center gap-3">
+                <Button icon="pi pi-arrow-left" severity="secondary" rounded outlined aria-label="กลับ" @click="router.push({ name: 'document-config' })" />
+                <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <div class="font-semibold text-xl whitespace-nowrap truncate">{{ docFormatCode }} - {{ docFormatName }}</div>
+                    <p class="text-muted-color m-0 min-w-0 truncate">แก้ Workflow ทั้งชุด การเปลี่ยนแปลงมีผลกับเอกสารใหม่เท่านั้น</p>
                 </div>
-            </template>
-            <template #end>
-                <div class="flex flex-wrap gap-2 items-center justify-end">
-                    <Tag v-if="dirty" severity="warn" value="ยังไม่บันทึก" />
-                    <Tag v-else severity="success" value="บันทึกแล้ว" />
-                    <Button label="บันทึก Workflow" icon="pi pi-save" :loading="saving" :disabled="Boolean(saveDisabledReason)" @click="requestSave" />
-                </div>
-            </template>
-        </Toolbar>
+            </div>
+            <div class="flex flex-wrap gap-2 items-center xl:justify-end">
+                <Tag v-if="dirty" severity="warn" value="ยังไม่บันทึก" />
+                <Tag v-else severity="success" value="บันทึกแล้ว" />
+                <Button label="เพิ่มขั้นตอน" icon="pi pi-plus" severity="secondary" @click="openCreateStep" />
+                <Button label="กรอบเริ่มต้น" icon="pi pi-map-marker" severity="secondary" outlined @click="router.push({ name: 'signature-template', params: { docFormatCode } })" />
+                <Button label="บันทึก Workflow" icon="pi pi-save" :loading="saving" :disabled="Boolean(saveDisabledReason)" @click="requestSave" />
+            </div>
+        </div>
 
         <Message v-if="saveDisabledReason && dirty" severity="warn" class="mb-4" :closable="false">{{ saveDisabledReason }}</Message>
         <Message v-if="conflictMessage" severity="warn" class="mb-4" :closable="false">
@@ -481,16 +481,12 @@ function normalizeCode(value) {
 
         <DataTable :value="filteredSteps" :loading="loading" dataKey="key" responsiveLayout="scroll" stripedRows>
             <template #header>
-                <div class="flex flex-wrap gap-2 items-center justify-between">
-                    <div>
-                        <h4 class="m-0">{{ docFormatCode }} - {{ docFormatName }}</h4>
-                        <p class="text-muted-color m-0 mt-1">แก้ workflow ทั้งชุด การเปลี่ยนแปลงมีผลกับเอกสารใหม่เท่านั้น</p>
-                    </div>
-                    <IconField>
+                <div class="flex justify-end">
+                    <IconField class="w-full md:w-80">
                         <InputIcon>
                             <i class="pi pi-search" />
                         </InputIcon>
-                        <InputText v-model="searchQuery" placeholder="ค้นหา Position หรือผู้เซ็น" />
+                        <InputText v-model="searchQuery" placeholder="ค้นหา Position หรือผู้เซ็น" class="w-full" />
                     </IconField>
                 </div>
             </template>

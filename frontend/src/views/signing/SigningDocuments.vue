@@ -51,29 +51,22 @@ function normalize(value) {
 
 <template>
     <div class="card">
-        <Toolbar class="mb-6">
-            <template #start>
-                <Button label="ส่งเอกสารใหม่" icon="pi pi-send" @click="openCreate" />
-            </template>
-            <template #end>
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <div class="font-semibold text-xl whitespace-nowrap truncate">เอกสารเซ็น</div>
+                <p class="text-muted-color m-0 min-w-0 truncate">ส่งเอกสารใหม่และติดตามสถานะการเซ็น</p>
+            </div>
+            <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
+                <IconField class="w-full sm:w-80">
+                    <InputIcon><i class="pi pi-search" /></InputIcon>
+                    <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร คู่ค้า สถานะ" class="w-full" />
+                </IconField>
                 <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
-            </template>
-        </Toolbar>
+                <Button label="ส่งเอกสารใหม่" icon="pi pi-send" @click="openCreate" />
+            </div>
+        </div>
 
         <DataTable :value="filteredDocuments" :loading="loading" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows>
-            <template #header>
-                <div class="flex flex-wrap gap-2 items-center justify-between">
-                    <div>
-                        <h4 class="m-0">เอกสารเซ็น</h4>
-                        <small class="text-muted-color">ส่งเอกสารใหม่และติดตามสถานะการเซ็น</small>
-                    </div>
-                    <IconField>
-                        <InputIcon><i class="pi pi-search" /></InputIcon>
-                        <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร คู่ค้า สถานะ" />
-                    </IconField>
-                </div>
-            </template>
-
             <template #empty>
                 <div class="py-8 text-center text-muted-color">
                     {{ searchQuery ? 'ไม่พบเอกสารที่ค้นหา' : 'ยังไม่มีเอกสารเซ็น เริ่มจากปุ่มส่งเอกสารใหม่' }}

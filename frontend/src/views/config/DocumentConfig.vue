@@ -209,14 +209,22 @@ function sameCode(left, right) {
 
 <template>
     <div class="card">
-        <Toolbar class="mb-6">
-            <template #start>
-                <Button label="เพิ่ม Workflow" icon="pi pi-plus" severity="secondary" :disabled="loading || loadingFormats || availableDocFormatOptions.length === 0" @click="openCreate" />
-            </template>
-            <template #end>
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                <div class="font-semibold text-xl whitespace-nowrap truncate">ตั้งค่า Workflow</div>
+                <p class="text-muted-color m-0 min-w-0 truncate">1 รายการต่อชนิดเอกสาร ใช้กับเอกสารใหม่เท่านั้น</p>
+            </div>
+            <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
+                <IconField class="w-full sm:w-80">
+                    <InputIcon>
+                        <i class="pi pi-search" />
+                    </InputIcon>
+                    <InputText v-model="searchQuery" placeholder="ค้นหารหัสหรือชื่อเอกสาร" class="w-full" />
+                </IconField>
                 <Button label="โหลดใหม่" icon="pi pi-refresh" severity="secondary" outlined :loading="loading" @click="loadPage" />
-            </template>
-        </Toolbar>
+                <Button label="เพิ่ม Workflow" icon="pi pi-plus" severity="secondary" :disabled="loading || loadingFormats || availableDocFormatOptions.length === 0" @click="openCreate" />
+            </div>
+        </div>
 
         <Message v-if="error" severity="error" class="mb-4">{{ error }}</Message>
         <Message v-if="availableDocFormatOptions.length === 0 && !loading && docFormats.length > 0" severity="info" class="mb-4" :closable="false">
@@ -224,21 +232,6 @@ function sameCode(left, right) {
         </Message>
 
         <DataTable :value="filteredWorkflows" :loading="loading" dataKey="docFormatCode" paginator :rows="10" responsiveLayout="scroll" stripedRows>
-            <template #header>
-                <div class="flex flex-wrap gap-2 items-center justify-between">
-                    <div>
-                        <h4 class="m-0">ตั้งค่า Workflow เอกสาร</h4>
-                        <p class="text-muted-color m-0 mt-1">1 รายการต่อชนิดเอกสาร ใช้กับเอกสารใหม่เท่านั้น</p>
-                    </div>
-                    <IconField>
-                        <InputIcon>
-                            <i class="pi pi-search" />
-                        </InputIcon>
-                        <InputText v-model="searchQuery" placeholder="ค้นหารหัสหรือชื่อเอกสาร" />
-                    </IconField>
-                </div>
-            </template>
-
             <template #empty>
                 <div class="py-6 text-center text-muted-color">{{ searchQuery ? 'ไม่พบ Workflow ที่ค้นหา' : 'ยังไม่มี Workflow เอกสาร' }}</div>
             </template>
