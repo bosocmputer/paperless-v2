@@ -183,15 +183,26 @@ function pendingDocumentHelper(doc, step) {
 }
 
 function pendingPositionTitle(item) {
-    return `ขั้นตอน ${item.positionCode}: ${item.positionName}`;
+    return `${item.positionName}`;
 }
 
 function pendingPositionSummary(item) {
-    const documentText = `${item.documentCount} เอกสารกำลังรอลายเซ็น`;
-    if (Number(item.conditionType) === 1) return `${documentText} · มีผู้มีสิทธิ์เซ็น ${item.signerCount} คน`;
-    if (Number(item.conditionType) === 2) return `${documentText} · ต้องเซ็นครบ ${item.signerCount} คน`;
-    if (Number(item.conditionType) === 3) return `${documentText} · รอผู้เซ็นภายนอก`;
-    return `${documentText} · ${item.signerCount} คนต้องเซ็น`;
+    return `${item.documentCount} เอกสารอยู่ในขั้นตอนนี้`;
+}
+
+function pendingPositionRule(item) {
+    if (Number(item.conditionType) === 1) return `วิธีผ่าน: มีผู้มีสิทธิ์เซ็น ${item.signerCount} คน, ใครเซ็นก่อนก็ผ่าน`;
+    if (Number(item.conditionType) === 2) return `วิธีผ่าน: ต้องรอลายเซ็นครบ ${item.signerCount} คน`;
+    if (Number(item.conditionType) === 3) return 'วิธีผ่าน: รอลายเซ็นจากบุคคลภายนอก';
+    return `วิธีผ่าน: ${item.signerCount} คนต้องเซ็น`;
+}
+
+function pendingPositionExamples(item) {
+    return pendingDocuments.value
+        .filter((doc) => doc.currentPositionName === item.positionName)
+        .slice(0, 3)
+        .map((doc) => doc.docNo)
+        .filter(Boolean);
 }
 
 function movementEventView(event) {
@@ -344,10 +355,10 @@ function movementEventView(event) {
                 <div class="card">
                     <div class="flex items-start justify-between gap-3 mb-4">
                         <div>
-                            <div class="font-semibold text-lg">เอกสารค้างอยู่ที่ขั้นตอนไหน</div>
-                            <p class="text-muted-color m-0">สรุปตำแหน่งที่กำลังรอลายเซ็นและวิธีผ่านขั้นตอน</p>
+                            <div class="font-semibold text-lg">สรุปคิวรอลายเซ็น</div>
+                            <p class="text-muted-color m-0">ภาพรวมตามขั้นตอน ส่วนรายเอกสารดูจากตารางหลัก</p>
                         </div>
-                        <Tag :value="`${pendingByPosition.length} รายการค้าง`" severity="secondary" />
+                        <Tag :value="`${pendingByPosition.length} ขั้นตอนมีงานค้าง`" severity="secondary" />
                     </div>
                     <div v-if="pendingByPosition.length === 0" class="empty-panel">
                         <i class="pi pi-inbox"></i>
@@ -356,8 +367,10 @@ function movementEventView(event) {
                     <div v-else class="flex flex-col gap-2">
                         <div v-for="item in pendingByPosition" :key="`${item.positionCode}-${item.conditionType}`" class="surface-row">
                             <div class="min-w-0">
-                                <div class="font-medium truncate">{{ pendingPositionTitle(item) }}</div>
+                                <div class="font-medium truncate">ขั้นตอน {{ item.positionCode }}: {{ pendingPositionTitle(item) }}</div>
                                 <small class="text-muted-color">{{ pendingPositionSummary(item) }}</small>
+                                <small class="text-muted-color block">{{ pendingPositionRule(item) }}</small>
+                                <small v-if="pendingPositionExamples(item).length" class="text-muted-color block">ตัวอย่างเอกสาร: {{ pendingPositionExamples(item).join(', ') }}</small>
                             </div>
                             <Tag :value="conditionLabel(item.conditionType)" :severity="conditionSeverity(item.conditionType)" />
                         </div>
