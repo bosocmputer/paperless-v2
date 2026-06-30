@@ -2,7 +2,6 @@
 import { useLayout } from '@/layout/composables/layout';
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
-import AppFooter from './AppFooter.vue';
 import AppSidebar from './AppSidebar.vue';
 import AppTopbar from './AppTopbar.vue';
 
@@ -19,8 +18,7 @@ const containerClass = computed(() => {
     };
 });
 const mainContainerClass = computed(() => ({
-    'layout-main-container-dense': !!route.meta.denseContent,
-    'layout-main-container-no-footer': !!route.meta.hideFooter
+    'layout-main-container-dense': !!route.meta.denseContent
 }));
 </script>
 
@@ -32,7 +30,6 @@ const mainContainerClass = computed(() => ({
             <div class="layout-main">
                 <router-view />
             </div>
-            <AppFooter v-if="!route.meta.hideFooter" />
         </div>
         <div class="layout-mask animate-fadein" @click="hideMobileMenu" />
     </div>
@@ -41,10 +38,6 @@ const mainContainerClass = computed(() => ({
 <style scoped>
 .layout-main-container-dense {
     padding-top: 4.5rem;
-}
-
-.layout-main-container-no-footer .layout-main {
-    padding-bottom: 1rem;
 }
 
 @media (max-width: 991px) {
