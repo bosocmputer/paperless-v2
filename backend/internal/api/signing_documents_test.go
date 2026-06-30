@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -152,6 +153,18 @@ func TestNormalizeDocumentFlowEventMetadata(t *testing.T) {
 	}
 	if _, ok := metadata["docNo"]; ok {
 		t.Fatal("metadata must not include document number")
+	}
+}
+
+func TestSMLLookupErrorViewHidesRawErrors(t *testing.T) {
+	code, status, message := smlLookupErrorView(errors.New("Cannot load related documents from SML: no active document found for doc_no: BAD-NOT-FOUND"))
+	if code != "sml_document_not_found" || status != 404 || message != "ไม่พบเลขเอกสารนี้ใน SML" {
+		t.Fatalf("unexpected not found view: %s %d %s", code, status, message)
+	}
+
+	code, status, message = smlLookupErrorView(errors.New("dial tcp 192.168.2.109:8200: connection refused"))
+	if code != "sml_unavailable" || status != 502 || strings.Contains(message, "connection refused") {
+		t.Fatalf("raw SML error leaked: %s %d %s", code, status, message)
 	}
 }
 

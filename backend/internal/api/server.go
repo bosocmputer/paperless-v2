@@ -40,6 +40,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/sml/doc-formats", s.requireAdmin(http.HandlerFunc(s.listSMLDocFormats)))
 	mux.Handle("GET /api/sml/doc-format", s.requireAdmin(http.HandlerFunc(s.getSMLDocFormatByCode)))
 	mux.Handle("GET /api/sml/document-candidates", s.requireAdmin(http.HandlerFunc(s.listSMLDocumentCandidates)))
+	mux.Handle("GET /api/sml/document-candidates/{docNo}", s.requireAdmin(http.HandlerFunc(s.getSMLDocumentCandidate)))
 	mux.Handle("GET /api/document-configs", s.requireAdmin(http.HandlerFunc(s.listDocumentConfigSteps)))
 	mux.Handle("POST /api/document-configs", s.requireAdmin(http.HandlerFunc(s.createDocumentConfigStep)))
 	mux.Handle("PUT /api/document-configs/{id}", s.requireAdmin(http.HandlerFunc(s.updateDocumentConfigStep)))

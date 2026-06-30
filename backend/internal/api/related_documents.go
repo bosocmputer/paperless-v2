@@ -147,7 +147,8 @@ func (s *Server) writeRelatedDocuments(w http.ResponseWriter, r *http.Request, d
 	}
 	if err != nil {
 		s.logger.Warn("fetch sml related documents failed", "error", err, "docFormatCode", docFormatCode, "docNo", docNo)
-		writeError(w, http.StatusBadGateway, "sml_related_documents_failed", fmt.Sprintf("Cannot load related documents from SML: %s", err.Error()))
+		code, status, message := smlLookupErrorView(err)
+		writeError(w, status, code, message)
 		return models.SMLRelatedDocumentsGraph{}, false
 	}
 	graph, err = s.enrichRelatedDocuments(r.Context(), graph, admin)

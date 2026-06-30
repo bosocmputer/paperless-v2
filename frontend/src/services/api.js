@@ -92,6 +92,9 @@ export const api = {
             })
         );
     },
+    getSMLDocumentCandidate(docFormatCode, docNo) {
+        return request(withQuery(`/api/sml/document-candidates/${encodeURIComponent(docNo)}`, { doc_format_code: docFormatCode }));
+    },
     listDocumentConfigs(params) {
         return request(
             withQuery('/api/document-configs', {

@@ -385,6 +385,7 @@ function clamp(value, min, max) {
                 <strong>{{ documentHeaderLine }}</strong>
             </div>
             <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
+            <Button v-if="document" label="ตรวจสอบ Flow" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
             <Button v-if="document?.status === 'completed_evidence_failed'" label="สร้าง PDF อีกครั้ง" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
             <Button v-if="document?.status === 'completed_lock_failed'" label="Lock SML อีกครั้ง" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
             <Button v-if="document?.status === 'completed'" label="พิมพ์เอกสาร" icon="pi pi-print" severity="primary" :loading="printing" @click="printOfficialCopy" />

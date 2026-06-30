@@ -21,6 +21,18 @@ var (
 	errSMLConfigMissing           = errors.New("sml paperless api config is incomplete")
 )
 
+func smlLookupErrorView(err error) (string, int, string) {
+	text := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(text, "no active document found") || strings.Contains(text, "not found"):
+		return "sml_document_not_found", http.StatusNotFound, "ไม่พบเลขเอกสารนี้ใน SML"
+	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(text, "timeout") || strings.Contains(text, "deadline exceeded") || strings.Contains(text, "connection refused"):
+		return "sml_unavailable", http.StatusBadGateway, "เชื่อมต่อ SML ไม่สำเร็จ กรุณาลองใหม่"
+	default:
+		return "sml_unavailable", http.StatusBadGateway, "เชื่อมต่อ SML ไม่สำเร็จ กรุณาลองใหม่"
+	}
+}
+
 type smlDocFormatsResponse struct {
 	Success bool                  `json:"success"`
 	Data    []models.SMLDocFormat `json:"data"`
@@ -189,6 +201,31 @@ func (s *Server) listSMLDocumentCandidates(w http.ResponseWriter, r *http.Reques
 		"total":     payload.Total,
 		"hasMore":   payload.HasMore,
 	})
+}
+
+func (s *Server) getSMLDocumentCandidate(w http.ResponseWriter, r *http.Request) {
+	docFormatCode := strings.TrimSpace(r.URL.Query().Get("doc_format_code"))
+	docNo := strings.TrimSpace(r.PathValue("docNo"))
+	if docFormatCode == "" {
+		writeError(w, http.StatusBadRequest, "doc_format_code_required", "doc_format_code is required.")
+		return
+	}
+	if docNo == "" {
+		writeError(w, http.StatusBadRequest, "doc_no_required", "doc_no is required.")
+		return
+	}
+	candidate, err := s.fetchSMLDocumentCandidate(r.Context(), docFormatCode, docNo)
+	if errors.Is(err, errSMLConfigMissing) {
+		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML Paperless API is not configured.")
+		return
+	}
+	if err != nil {
+		s.logger.Warn("fetch sml document candidate failed", "error", err, "docFormatCode", docFormatCode, "docNo", docNo)
+		code, status, message := smlLookupErrorView(err)
+		writeError(w, status, code, message)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"document": candidate})
 }
 
 func (s *Server) fetchSMLDocFormats(ctx context.Context, screenCode string) ([]models.SMLDocFormat, error) {

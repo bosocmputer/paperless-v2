@@ -3,10 +3,11 @@ import { api } from '@/services/api';
 import { formatDocumentDate } from '@/utils/signingFormatters';
 import DocumentLayoutDesigner from './components/DocumentLayoutDesigner.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { onBeforeRouteLeave, useRouter } from 'vue-router';
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
+const route = useRoute();
 const router = useRouter();
 const confirm = useConfirm();
 const toast = useToast();
@@ -107,9 +108,12 @@ watch(maxAllowedStep, (value) => {
 onMounted(async () => {
     window.addEventListener('beforeunload', beforeUnload);
     openedAt = Date.now();
-    restoreDraft();
+    const hasRoutePrefill = hasInitialRoutePrefill();
+    if (hasRoutePrefill) applyInitialRoutePrefill();
+    else restoreDraft();
     await loadPage();
     if (form.value.docFormatCode) await loadLayoutContext();
+    if (hasRoutePrefill) await validateInitialRouteCandidate();
     recordCreateEvent('wizard_open');
 });
 
@@ -208,6 +212,57 @@ function selectCandidate(candidate) {
     suppressSearchWatch = true;
     form.value.search = candidate.doc_no;
     persistDraft();
+}
+
+function hasInitialRoutePrefill() {
+    return !!(routeDocFormatCode() || routeDocNo());
+}
+
+function routeDocFormatCode() {
+    return String(route.query.doc_format_code || route.query.docFormatCode || '').trim().toUpperCase();
+}
+
+function routeDocNo() {
+    return String(route.query.doc_no || route.query.docNo || '').trim().toUpperCase();
+}
+
+function applyInitialRoutePrefill() {
+    clearStoredDraft();
+    createFinished = false;
+    createSessionId.value = makeClientId();
+    createIdempotencyKey.value = makeClientId();
+    const next = emptyForm();
+    next.docFormatCode = routeDocFormatCode();
+    next.search = routeDocNo();
+    next.docNo = routeDocNo();
+    suppressSearchWatch = true;
+    form.value = next;
+    activeStep.value = 0;
+    persistDraft();
+}
+
+async function validateInitialRouteCandidate() {
+    if (!form.value.docFormatCode || !form.value.docNo) return;
+    searchingCandidates.value = true;
+    try {
+        const result = await api.getSMLDocumentCandidate(form.value.docFormatCode, form.value.docNo);
+        const candidate = result.document;
+        candidates.value = candidate?.doc_no ? [candidate] : [];
+        candidateTotal.value = candidates.value.length;
+        candidatePage.value = 1;
+        candidateHasMore.value = false;
+        if (candidate?.doc_no) {
+            selectCandidate(candidate);
+            toast.add({ severity: 'success', summary: 'เลือกเอกสารจาก SML แล้ว', detail: candidate.doc_no, life: 2500 });
+        }
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'ตรวจเลขเอกสารจาก SML ไม่สำเร็จ', detail: err.message || 'กรุณาค้นหาใหม่', life: 4500 });
+        form.value.selectedCandidate = null;
+        candidates.value = [];
+        candidateTotal.value = 0;
+    } finally {
+        searchingCandidates.value = false;
+    }
 }
 
 function triggerUpload() {
@@ -549,6 +604,10 @@ function toLegalNoticePayload(box) {
 
 function discardDraft() {
     createFinished = true;
+    clearStoredDraft();
+}
+
+function clearStoredDraft() {
     sessionStorage.removeItem(draftKey);
     sessionStorage.removeItem(legacyDraftKey);
 }
