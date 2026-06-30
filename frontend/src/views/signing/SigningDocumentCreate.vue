@@ -561,7 +561,7 @@ function makeClientId() {
 </script>
 
 <template>
-    <div class="card">
+    <div class="card min-w-0 overflow-hidden">
         <Toolbar class="mb-4">
             <template #start>
                 <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="router.push({ name: 'signing-documents' })" />
@@ -575,20 +575,20 @@ function makeClientId() {
             </template>
         </Toolbar>
 
-        <Stepper v-model:value="activeStepValue" linear>
-            <StepList>
+        <Stepper v-model:value="activeStepValue" linear class="min-w-0">
+            <StepList class="min-w-0">
                 <Step v-for="(step, index) in wizardSteps" :key="step.label" :value="index + 1" :disabled="!canOpenStep(index)">
                     <span class="hidden md:inline">{{ step.label }}</span>
                     <span class="md:hidden">{{ step.shortLabel }}</span>
                 </Step>
             </StepList>
 
-            <StepPanels>
+            <StepPanels class="min-w-0">
                 <StepPanel :value="1">
-                    <Panel header="เลือกเอกสาร">
-                        <div class="flex flex-col gap-4">
-                            <div class="grid grid-cols-12 gap-4">
-                                <div class="col-span-12 lg:col-span-4">
+                    <Panel header="เลือกเอกสาร" class="min-w-0">
+                        <div class="flex min-w-0 flex-col gap-4">
+                            <div class="grid min-w-0 grid-cols-12 gap-4">
+                                <div class="col-span-12 min-w-0 lg:col-span-4">
                                     <label class="block font-bold mb-3">ชนิดเอกสาร</label>
                                     <Select
                                         :modelValue="form.docFormatCode"
@@ -603,7 +603,7 @@ function makeClientId() {
                                     />
                                     <small class="text-muted-color">ระบบไม่เลือกให้อัตโนมัติ เพื่อป้องกันส่งเอกสารผิดชนิด</small>
                                 </div>
-                                <div class="col-span-12 lg:col-span-8">
+                                <div class="col-span-12 min-w-0 lg:col-span-8">
                                     <label class="block font-bold mb-3">ค้นหาเลขเอกสารจาก SML</label>
                                     <IconField>
                                         <InputIcon><i class="pi pi-search" /></InputIcon>
@@ -617,48 +617,50 @@ function makeClientId() {
                                 เลือกเอกสาร {{ form.selectedCandidate.doc_no }} · {{ form.selectedCandidate.party_name || form.selectedCandidate.party_code || '-' }}
                             </Message>
 
-                            <DataTable
-                                :value="candidates"
-                                :loading="searchingCandidates"
-                                dataKey="doc_no"
-                                responsiveLayout="scroll"
-                                stripedRows
-                                scrollable
-                                scrollHeight="18rem"
-                                @row-click="selectCandidate($event.data)"
-                            >
-                                <template #empty>
-                                    <div class="py-6 text-center text-muted-color">{{ form.search?.length >= 2 ? 'ไม่พบเอกสาร' : 'พิมพ์อย่างน้อย 2 ตัวอักษรเพื่อค้นหา' }}</div>
-                                </template>
-                                <Column field="doc_no" header="เลขที่เอกสาร" style="min-width: 12rem">
-                                    <template #body="{ data }">
-                                        <div class="font-bold">{{ data.doc_no }}</div>
-                                        <small class="text-muted-color">{{ data.party_name || data.party_code || '-' }}</small>
+                            <div class="min-w-0 max-w-full overflow-x-auto">
+                                <DataTable
+                                    :value="candidates"
+                                    :loading="searchingCandidates"
+                                    dataKey="doc_no"
+                                    responsiveLayout="scroll"
+                                    stripedRows
+                                    scrollable
+                                    scrollHeight="18rem"
+                                    @row-click="selectCandidate($event.data)"
+                                >
+                                    <template #empty>
+                                        <div class="py-6 text-center text-muted-color">{{ form.search?.length >= 2 ? 'ไม่พบเอกสาร' : 'พิมพ์อย่างน้อย 2 ตัวอักษรเพื่อค้นหา' }}</div>
                                     </template>
-                                </Column>
-                                <Column field="doc_date" header="วันที่เอกสาร" style="min-width: 10rem">
-                                    <template #body="{ data }">{{ formatDocumentDate(data.doc_date) }}</template>
-                                </Column>
-                                <Column field="total_amount" header="ยอดเงิน" style="min-width: 10rem">
-                                    <template #body="{ data }">{{ Number(data.total_amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}</template>
-                                </Column>
-                                <Column header="สถานะ SML" style="min-width: 10rem">
-                                    <template #body="{ data }">
-                                        <Tag :value="Number(data.is_lock_record || 0) === 1 ? 'lock แล้ว' : 'ใช้งานได้'" :severity="Number(data.is_lock_record || 0) === 1 ? 'warn' : 'success'" />
-                                    </template>
-                                </Column>
-                                <Column header="เลือก" style="width: 7rem">
-                                    <template #body="{ data }">
-                                        <Button
-                                            :label="form.selectedCandidate?.doc_no === data.doc_no ? 'เลือกแล้ว' : 'เลือก'"
-                                            :icon="form.selectedCandidate?.doc_no === data.doc_no ? 'pi pi-check' : 'pi pi-plus'"
-                                            size="small"
-                                            :severity="form.selectedCandidate?.doc_no === data.doc_no ? 'success' : 'secondary'"
-                                            @click.stop="selectCandidate(data)"
-                                        />
-                                    </template>
-                                </Column>
-                            </DataTable>
+                                    <Column field="doc_no" header="เลขที่เอกสาร" style="min-width: 12rem">
+                                        <template #body="{ data }">
+                                            <div class="font-bold">{{ data.doc_no }}</div>
+                                            <small class="text-muted-color">{{ data.party_name || data.party_code || '-' }}</small>
+                                        </template>
+                                    </Column>
+                                    <Column field="doc_date" header="วันที่เอกสาร" style="min-width: 10rem">
+                                        <template #body="{ data }">{{ formatDocumentDate(data.doc_date) }}</template>
+                                    </Column>
+                                    <Column field="total_amount" header="ยอดเงิน" style="min-width: 10rem">
+                                        <template #body="{ data }">{{ Number(data.total_amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}</template>
+                                    </Column>
+                                    <Column header="สถานะ SML" style="min-width: 10rem">
+                                        <template #body="{ data }">
+                                            <Tag :value="Number(data.is_lock_record || 0) === 1 ? 'lock แล้ว' : 'ใช้งานได้'" :severity="Number(data.is_lock_record || 0) === 1 ? 'warn' : 'success'" />
+                                        </template>
+                                    </Column>
+                                    <Column header="เลือก" style="width: 7rem">
+                                        <template #body="{ data }">
+                                            <Button
+                                                :label="form.selectedCandidate?.doc_no === data.doc_no ? 'เลือกแล้ว' : 'เลือก'"
+                                                :icon="form.selectedCandidate?.doc_no === data.doc_no ? 'pi pi-check' : 'pi pi-plus'"
+                                                size="small"
+                                                :severity="form.selectedCandidate?.doc_no === data.doc_no ? 'success' : 'secondary'"
+                                                @click.stop="selectCandidate(data)"
+                                            />
+                                        </template>
+                                    </Column>
+                                </DataTable>
+                            </div>
 
                             <div class="flex flex-wrap justify-between items-center gap-3">
                                 <small class="text-muted-color">พบ {{ candidateTotal }} รายการ</small>
@@ -670,8 +672,8 @@ function makeClientId() {
                 </StepPanel>
 
                 <StepPanel :value="2">
-                    <Panel header="PDF และกรอบลายเซ็น">
-                        <div class="flex flex-col gap-4">
+                    <Panel header="PDF และกรอบลายเซ็น" class="min-w-0">
+                        <div class="flex min-w-0 flex-col gap-4">
                             <div class="flex flex-wrap items-center justify-between gap-3">
                                 <div>
                                     <div class="font-bold">ไฟล์ PDF สำหรับ {{ form.selectedCandidate?.doc_no || '-' }}</div>
@@ -704,9 +706,9 @@ function makeClientId() {
                 </StepPanel>
 
                 <StepPanel :value="3">
-                    <Panel header="ตรวจสอบและส่งเซ็น">
-                        <div class="grid grid-cols-12 gap-4">
-                            <div class="col-span-12 md:col-span-6">
+                    <Panel header="ตรวจสอบและส่งเซ็น" class="min-w-0">
+                        <div class="grid min-w-0 grid-cols-12 gap-4">
+                            <div class="col-span-12 min-w-0 md:col-span-6">
                                 <dl class="grid grid-cols-12 gap-2 m-0">
                                     <dt class="col-span-5 text-muted-color">ชนิดเอกสาร</dt>
                                     <dd class="col-span-7 m-0">{{ selectedDocFormatLabel }}</dd>
@@ -720,7 +722,7 @@ function makeClientId() {
                                     <dd class="col-span-7 m-0">{{ form.layoutBoxes.length }} กรอบ</dd>
                                 </dl>
                             </div>
-                            <div class="col-span-12 md:col-span-6">
+                            <div class="col-span-12 min-w-0 md:col-span-6">
                                 <Message v-if="createDisabledReason" severity="warn">{{ createDisabledReason }}</Message>
                                 <Message v-else severity="success">ข้อมูลพร้อมส่งเซ็นแล้ว</Message>
                                 <Message v-if="lockedBySML" severity="warn" class="mt-3">เอกสาร SML lock แล้ว ต้องยืนยันก่อนสร้างเอกสาร</Message>
