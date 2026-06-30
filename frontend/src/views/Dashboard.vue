@@ -265,7 +265,7 @@ function movementEventView(event) {
 
 <template>
     <section class="flex flex-col gap-4">
-        <div class="card">
+        <div class="card dashboard-header-card">
             <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
                     <div class="font-semibold text-xl whitespace-nowrap truncate">ภาพรวมงานเซ็นเอกสาร</div>
@@ -437,6 +437,10 @@ function movementEventView(event) {
     display: flex;
     align-items: center;
     gap: 0.85rem;
+}
+
+.dashboard-header-card {
+    margin-bottom: 0;
 }
 
 .metric-icon {
