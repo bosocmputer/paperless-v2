@@ -1,6 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
-import { LEGAL_NOTICE_DISPLAY_TEXT, LEGAL_NOTICE_TEXT, legalNoticeOverflowMessage, legalNoticePreviewFontSize } from '@/utils/legalNoticePreview';
+import { LEGAL_NOTICE_DISPLAY_TEXT, LEGAL_NOTICE_TEXT, legalNoticePreviewFontSize } from '@/utils/legalNoticePreview';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
@@ -689,9 +689,6 @@ function validateBoxes() {
         if (box.widthRatio < 0.2 || box.heightRatio < 0.035) {
             issues.push({ code: 'legal_notice_box_too_small', message: 'กรอบข้อความกฎหมายเล็กเกินไป' });
         }
-        if (legalNoticeOverflow.value) {
-            issues.push({ code: 'legal_notice_text_overflow', message: legalNoticeOverflowMessage() });
-        }
     }
 
     configs.value.forEach((step) => {
@@ -1124,7 +1121,6 @@ function recordDesignerEvent(event, extra = {}) {
                         <Tag :value="legalNoticeBox ? 'มีกรอบแล้ว' : 'ยังไม่มีกรอบ'" :severity="legalNoticeBox ? 'success' : 'warn'" />
                     </div>
                     <Message v-if="!legalNoticeBox" severity="info" class="mb-3">กรอบนี้เป็นค่าเริ่มต้น ตอนส่งเอกสารจริง admin ยังปรับตำแหน่งได้อีกครั้ง</Message>
-                    <Message v-else-if="legalNoticeOverflow" severity="warn" class="mb-3">{{ legalNoticeOverflowMessage() }}</Message>
                     <div class="flex flex-wrap gap-2">
                         <Button v-if="!legalNoticeBox" label="เพิ่มกรอบข้อความ" icon="pi pi-plus" :disabled="!canAddBoxes" @click="addLegalNoticeBox" />
                         <Button v-else label="เลือกกรอบ" icon="pi pi-mouse-pointer" severity="secondary" outlined @click="selectLegalNoticeBox({ scrollIntoView: true })" />
