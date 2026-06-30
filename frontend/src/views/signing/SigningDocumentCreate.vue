@@ -57,6 +57,13 @@ const dirty = computed(() => {
 const stepBlockedReason = computed(() => wizardSteps.map((_step, index) => blockedReasonForStep(index)));
 const currentStepReason = computed(() => stepBlockedReason.value[activeStep.value] || '');
 const canGoNext = computed(() => activeStep.value < wizardSteps.length - 1 && !currentStepReason.value);
+const firstBlockedStepIndex = computed(() => stepBlockedReason.value.findIndex(Boolean));
+const maxAllowedStep = computed(() => (firstBlockedStepIndex.value === -1 ? wizardSteps.length - 1 : firstBlockedStepIndex.value));
+const activeStepValue = computed({
+    get: () => activeStep.value + 1,
+    set: (value) => setActiveStep(Number(value) - 1)
+});
+const currentStepLabel = computed(() => wizardSteps[activeStep.value]?.label || '');
 
 watch(
     () => form.value.docFormatCode,
@@ -94,6 +101,10 @@ watch(
     persistDraft,
     { deep: true }
 );
+
+watch(maxAllowedStep, (value) => {
+    if (activeStep.value > value) activeStep.value = value;
+});
 
 onMounted(async () => {
     window.addEventListener('beforeunload', beforeUnload);
@@ -255,6 +266,20 @@ function onDesignerEvent(eventName) {
     }
     if (eventName === 'layout_validation_error') recordCreateEvent('validation_blocked');
     else recordCreateEvent(eventName);
+}
+
+function canOpenStep(index) {
+    return index <= maxAllowedStep.value;
+}
+
+function setActiveStep(index) {
+    if (!Number.isFinite(index)) return;
+    if (canOpenStep(index)) {
+        activeStep.value = Math.max(0, Math.min(index, wizardSteps.length - 1));
+        return;
+    }
+    recordCreateEvent('validation_blocked');
+    toast.add({ severity: 'warn', summary: 'ยังไปขั้นนี้ไม่ได้', detail: blockedReasonForStep(maxAllowedStep.value) || 'ทำขั้นตอนก่อนหน้าให้ครบก่อน', life: 3000 });
 }
 
 function goToStep(index) {
@@ -504,159 +529,162 @@ function makeClientId() {
             </template>
         </Toolbar>
 
-        <div class="grid grid-cols-12 gap-4">
-            <div class="col-span-12 lg:col-span-3">
-                <Panel header="ขั้นตอน">
-                    <div class="flex flex-col gap-2">
-                        <Button
-                            v-for="(step, index) in wizardSteps"
-                            :key="step.label"
-                            :label="step.label"
-                            :icon="stepBlockedReason[index] ? 'pi pi-circle' : step.icon"
-                            :severity="activeStep === index ? 'primary' : 'secondary'"
-                            :outlined="activeStep !== index"
-                            class="justify-start"
-                            @click="goToStep(index)"
+        <Stepper v-model:value="activeStepValue">
+            <StepList>
+                <Step v-for="(step, index) in wizardSteps" :key="step.label" :value="index + 1" :disabled="!canOpenStep(index)">
+                    {{ step.label }}
+                </Step>
+            </StepList>
+
+            <Message v-if="currentStepReason" severity="warn" class="mt-4">
+                ขั้นตอนปัจจุบัน: {{ currentStepLabel }}, {{ currentStepReason }}
+            </Message>
+
+            <StepPanels>
+                <StepPanel :value="1">
+                    <Panel header="เลือกชนิดเอกสาร">
+                        <div class="grid grid-cols-12 gap-4">
+                            <div class="col-span-12 md:col-span-8">
+                                <label class="block font-bold mb-3">ชนิดเอกสาร</label>
+                                <Select v-model="form.docFormatCode" :options="docFormatOptions" optionLabel="label" optionValue="value" filter placeholder="เลือกชนิดเอกสาร" fluid :loading="loading" />
+                                <small class="text-muted-color">ระบบไม่เลือกให้อัตโนมัติ เพื่อป้องกันส่งเอกสารผิดชนิด</small>
+                            </div>
+                        </div>
+                    </Panel>
+                </StepPanel>
+
+                <StepPanel :value="2">
+                    <Panel header="เลือกเลขเอกสารจาก SML">
+                        <div class="flex flex-col gap-4">
+                            <Message severity="info">ต้องเลือกจากผลค้นหา SML เท่านั้น ระบบไม่รับเลขเอกสารที่พิมพ์เอง</Message>
+                            <div>
+                                <label class="block font-bold mb-3">ค้นหาเลขเอกสาร</label>
+                                <IconField>
+                                    <InputIcon><i class="pi pi-search" /></InputIcon>
+                                    <InputText v-model="form.search" placeholder="เช่น PO2606" fluid :disabled="!form.docFormatCode" />
+                                </IconField>
+                                <small class="text-muted-color">ชนิดเอกสาร: {{ selectedDocFormatLabel }}</small>
+                            </div>
+
+                            <DataTable
+                                :value="candidates"
+                                :loading="searchingCandidates"
+                                dataKey="doc_no"
+                                responsiveLayout="scroll"
+                                stripedRows
+                                scrollable
+                                scrollHeight="20rem"
+                                @row-click="selectCandidate($event.data)"
+                            >
+                                <template #empty>
+                                    <div class="py-6 text-center text-muted-color">{{ form.search?.length >= 2 ? 'ไม่พบเอกสาร' : 'พิมพ์อย่างน้อย 2 ตัวอักษรเพื่อค้นหา' }}</div>
+                                </template>
+                                <Column field="doc_no" header="เลขที่เอกสาร" style="min-width: 12rem">
+                                    <template #body="{ data }">
+                                        <div class="font-bold">{{ data.doc_no }}</div>
+                                        <small class="text-muted-color">{{ data.party_name || data.party_code || '-' }}</small>
+                                    </template>
+                                </Column>
+                                <Column field="doc_date" header="วันที่เอกสาร" style="min-width: 10rem">
+                                    <template #body="{ data }">{{ formatDocumentDate(data.doc_date) }}</template>
+                                </Column>
+                                <Column field="total_amount" header="ยอดเงิน" style="min-width: 10rem">
+                                    <template #body="{ data }">{{ Number(data.total_amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}</template>
+                                </Column>
+                                <Column header="สถานะ SML" style="min-width: 10rem">
+                                    <template #body="{ data }">
+                                        <Tag :value="Number(data.is_lock_record || 0) === 1 ? 'lock แล้ว' : 'ใช้งานได้'" :severity="Number(data.is_lock_record || 0) === 1 ? 'warn' : 'success'" />
+                                    </template>
+                                </Column>
+                                <Column header="เลือก" style="width: 7rem">
+                                    <template #body="{ data }">
+                                        <Button
+                                            :label="form.selectedCandidate?.doc_no === data.doc_no ? 'เลือกแล้ว' : 'เลือก'"
+                                            :icon="form.selectedCandidate?.doc_no === data.doc_no ? 'pi pi-check' : 'pi pi-plus'"
+                                            size="small"
+                                            :severity="form.selectedCandidate?.doc_no === data.doc_no ? 'success' : 'secondary'"
+                                            @click.stop="selectCandidate(data)"
+                                        />
+                                    </template>
+                                </Column>
+                            </DataTable>
+                            <div class="flex justify-between items-center gap-3">
+                                <small class="text-muted-color">พบ {{ candidateTotal }} รายการ</small>
+                                <Button v-if="candidateHasMore" label="โหลดเพิ่ม" severity="secondary" outlined :loading="searchingCandidates" @click="loadMoreCandidates" />
+                            </div>
+                            <Message v-if="lockedBySML" severity="warn">เอกสารนี้ lock ใน SML แล้ว ระบบจะถามยืนยันอีกครั้งก่อนส่งเซ็น</Message>
+                        </div>
+                    </Panel>
+                </StepPanel>
+
+                <StepPanel :value="3">
+                    <Panel header="อัปโหลด PDF">
+                        <div class="flex flex-col gap-4">
+                            <Message severity="info">อัปโหลดไฟล์ PDF จริงที่ user export จาก SML สำหรับเลขเอกสารที่เลือก</Message>
+                            <input ref="fileInput" type="file" accept="application/pdf" class="hidden" @change="onFileChange" />
+                            <div class="flex flex-wrap gap-2">
+                                <Button label="เลือกไฟล์ PDF" icon="pi pi-upload" :loading="uploading" @click="triggerUpload" />
+                                <Button v-if="form.fileId" label="เปลี่ยนไฟล์" icon="pi pi-refresh" severity="secondary" outlined :loading="uploading" @click="triggerUpload" />
+                            </div>
+                            <Message v-if="form.uploadedFile" severity="success">
+                                {{ form.uploadedFile.originalName }} · {{ form.uploadedFile.pageCount }} หน้า
+                            </Message>
+                        </div>
+                    </Panel>
+                </StepPanel>
+
+                <StepPanel :value="4">
+                    <Panel header="วางกรอบลายเซ็น">
+                        <Message v-if="loadingLayoutContext" severity="info" class="mb-4">กำลังโหลด Workflow และกรอบเริ่มต้น...</Message>
+                        <DocumentLayoutDesigner
+                            v-if="activeStep === 3"
+                            v-model="form.layoutBoxes"
+                            :pdfUrl="form.fileUrl"
+                            :pageCount="form.uploadedFile?.pageCount || 0"
+                            :configs="form.configs"
+                            :presetTemplate="form.presetTemplate"
+                            @apply-preset="onApplyPreset"
+                            @event="onDesignerEvent"
                         />
-                    </div>
-                    <Message v-if="currentStepReason" severity="warn" class="mt-4">{{ currentStepReason }}</Message>
-                </Panel>
-            </div>
+                    </Panel>
+                </StepPanel>
 
-            <div class="col-span-12 lg:col-span-9">
-                <Panel v-if="activeStep === 0" header="เลือกชนิดเอกสาร">
-                    <div class="grid grid-cols-12 gap-4">
-                        <div class="col-span-12 md:col-span-8">
-                            <label class="block font-bold mb-3">ชนิดเอกสาร</label>
-                            <Select v-model="form.docFormatCode" :options="docFormatOptions" optionLabel="label" optionValue="value" filter placeholder="เลือกชนิดเอกสาร" fluid :loading="loading" />
-                            <small class="text-muted-color">ระบบไม่เลือกให้อัตโนมัติ เพื่อป้องกันส่งเอกสารผิดชนิด</small>
+                <StepPanel :value="5">
+                    <Panel header="ตรวจสอบและส่งเซ็น">
+                        <div class="grid grid-cols-12 gap-4">
+                            <div class="col-span-12 md:col-span-6">
+                                <dl class="grid grid-cols-12 gap-2 m-0">
+                                    <dt class="col-span-5 text-muted-color">ชนิดเอกสาร</dt>
+                                    <dd class="col-span-7 m-0">{{ selectedDocFormatLabel }}</dd>
+                                    <dt class="col-span-5 text-muted-color">เลขที่เอกสาร</dt>
+                                    <dd class="col-span-7 m-0">{{ form.selectedCandidate?.doc_no || '-' }}</dd>
+                                    <dt class="col-span-5 text-muted-color">คู่ค้า</dt>
+                                    <dd class="col-span-7 m-0">{{ form.selectedCandidate?.party_name || form.selectedCandidate?.party_code || '-' }}</dd>
+                                    <dt class="col-span-5 text-muted-color">PDF</dt>
+                                    <dd class="col-span-7 m-0">{{ form.uploadedFile?.originalName || '-' }}</dd>
+                                    <dt class="col-span-5 text-muted-color">กรอบลายเซ็น</dt>
+                                    <dd class="col-span-7 m-0">{{ form.layoutBoxes.length }} กรอบ</dd>
+                                </dl>
+                            </div>
+                            <div class="col-span-12 md:col-span-6">
+                                <Message v-if="createDisabledReason" severity="warn">{{ createDisabledReason }}</Message>
+                                <Message v-else severity="success">ข้อมูลพร้อมส่งเซ็นแล้ว</Message>
+                                <Message v-if="lockedBySML" severity="warn" class="mt-3">เอกสาร SML lock แล้ว ต้องยืนยันก่อนสร้างเอกสาร</Message>
+                            </div>
                         </div>
-                    </div>
-                </Panel>
+                    </Panel>
+                </StepPanel>
+            </StepPanels>
+        </Stepper>
 
-                <Panel v-else-if="activeStep === 1" header="เลือกเลขเอกสารจาก SML">
-                    <div class="flex flex-col gap-4">
-                        <Message severity="info">ต้องเลือกจากผลค้นหา SML เท่านั้น ระบบไม่รับเลขเอกสารที่พิมพ์เอง</Message>
-                        <div>
-                            <label class="block font-bold mb-3">ค้นหาเลขเอกสาร</label>
-                            <IconField>
-                                <InputIcon><i class="pi pi-search" /></InputIcon>
-                                <InputText v-model="form.search" placeholder="เช่น PO2606" fluid :disabled="!form.docFormatCode" />
-                            </IconField>
-                            <small class="text-muted-color">ชนิดเอกสาร: {{ selectedDocFormatLabel }}</small>
-                        </div>
-
-                        <DataTable
-                            :value="candidates"
-                            :loading="searchingCandidates"
-                            dataKey="doc_no"
-                            responsiveLayout="scroll"
-                            stripedRows
-                            scrollable
-                            scrollHeight="20rem"
-                            @row-click="selectCandidate($event.data)"
-                        >
-                            <template #empty>
-                                <div class="py-6 text-center text-muted-color">{{ form.search?.length >= 2 ? 'ไม่พบเอกสาร' : 'พิมพ์อย่างน้อย 2 ตัวอักษรเพื่อค้นหา' }}</div>
-                            </template>
-                            <Column field="doc_no" header="เลขที่เอกสาร" style="min-width: 12rem">
-                                <template #body="{ data }">
-                                    <div class="font-bold">{{ data.doc_no }}</div>
-                                    <small class="text-muted-color">{{ data.party_name || data.party_code || '-' }}</small>
-                                </template>
-                            </Column>
-                            <Column field="doc_date" header="วันที่เอกสาร" style="min-width: 10rem">
-                                <template #body="{ data }">{{ formatDocumentDate(data.doc_date) }}</template>
-                            </Column>
-                            <Column field="total_amount" header="ยอดเงิน" style="min-width: 10rem">
-                                <template #body="{ data }">{{ Number(data.total_amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}</template>
-                            </Column>
-                            <Column header="สถานะ SML" style="min-width: 10rem">
-                                <template #body="{ data }">
-                                    <Tag :value="Number(data.is_lock_record || 0) === 1 ? 'lock แล้ว' : 'ใช้งานได้'" :severity="Number(data.is_lock_record || 0) === 1 ? 'warn' : 'success'" />
-                                </template>
-                            </Column>
-                            <Column header="เลือก" style="width: 7rem">
-                                <template #body="{ data }">
-                                    <Button
-                                        :label="form.selectedCandidate?.doc_no === data.doc_no ? 'เลือกแล้ว' : 'เลือก'"
-                                        :icon="form.selectedCandidate?.doc_no === data.doc_no ? 'pi pi-check' : 'pi pi-plus'"
-                                        size="small"
-                                        :severity="form.selectedCandidate?.doc_no === data.doc_no ? 'success' : 'secondary'"
-                                        @click.stop="selectCandidate(data)"
-                                    />
-                                </template>
-                            </Column>
-                        </DataTable>
-                        <div class="flex justify-between items-center gap-3">
-                            <small class="text-muted-color">พบ {{ candidateTotal }} รายการ</small>
-                            <Button v-if="candidateHasMore" label="โหลดเพิ่ม" severity="secondary" outlined :loading="searchingCandidates" @click="loadMoreCandidates" />
-                        </div>
-                        <Message v-if="lockedBySML" severity="warn">เอกสารนี้ lock ใน SML แล้ว ระบบจะถามยืนยันอีกครั้งก่อนส่งเซ็น</Message>
-                    </div>
-                </Panel>
-
-                <Panel v-else-if="activeStep === 2" header="อัปโหลด PDF">
-                    <div class="flex flex-col gap-4">
-                        <Message severity="info">อัปโหลดไฟล์ PDF จริงที่ user export จาก SML สำหรับเลขเอกสารที่เลือก</Message>
-                        <input ref="fileInput" type="file" accept="application/pdf" class="hidden" @change="onFileChange" />
-                        <div class="flex flex-wrap gap-2">
-                            <Button label="เลือกไฟล์ PDF" icon="pi pi-upload" :loading="uploading" @click="triggerUpload" />
-                            <Button v-if="form.fileId" label="เปลี่ยนไฟล์" icon="pi pi-refresh" severity="secondary" outlined :loading="uploading" @click="triggerUpload" />
-                        </div>
-                        <Message v-if="form.uploadedFile" severity="success">
-                            {{ form.uploadedFile.originalName }} · {{ form.uploadedFile.pageCount }} หน้า
-                        </Message>
-                    </div>
-                </Panel>
-
-                <Panel v-else-if="activeStep === 3" header="วางกรอบลายเซ็น">
-                    <Message v-if="loadingLayoutContext" severity="info" class="mb-4">กำลังโหลด Workflow และกรอบเริ่มต้น...</Message>
-                    <DocumentLayoutDesigner
-                        v-model="form.layoutBoxes"
-                        :pdfUrl="form.fileUrl"
-                        :pageCount="form.uploadedFile?.pageCount || 0"
-                        :configs="form.configs"
-                        :presetTemplate="form.presetTemplate"
-                        @apply-preset="onApplyPreset"
-                        @event="onDesignerEvent"
-                    />
-                </Panel>
-
-                <Panel v-else header="ตรวจสอบและส่งเซ็น">
-                    <div class="grid grid-cols-12 gap-4">
-                        <div class="col-span-12 md:col-span-6">
-                            <dl class="grid grid-cols-12 gap-2 m-0">
-                                <dt class="col-span-5 text-muted-color">ชนิดเอกสาร</dt>
-                                <dd class="col-span-7 m-0">{{ selectedDocFormatLabel }}</dd>
-                                <dt class="col-span-5 text-muted-color">เลขที่เอกสาร</dt>
-                                <dd class="col-span-7 m-0">{{ form.selectedCandidate?.doc_no || '-' }}</dd>
-                                <dt class="col-span-5 text-muted-color">คู่ค้า</dt>
-                                <dd class="col-span-7 m-0">{{ form.selectedCandidate?.party_name || form.selectedCandidate?.party_code || '-' }}</dd>
-                                <dt class="col-span-5 text-muted-color">PDF</dt>
-                                <dd class="col-span-7 m-0">{{ form.uploadedFile?.originalName || '-' }}</dd>
-                                <dt class="col-span-5 text-muted-color">กรอบลายเซ็น</dt>
-                                <dd class="col-span-7 m-0">{{ form.layoutBoxes.length }} กรอบ</dd>
-                            </dl>
-                        </div>
-                        <div class="col-span-12 md:col-span-6">
-                            <Message v-if="createDisabledReason" severity="warn">{{ createDisabledReason }}</Message>
-                            <Message v-else severity="success">ข้อมูลพร้อมส่งเซ็นแล้ว</Message>
-                            <Message v-if="lockedBySML" severity="warn" class="mt-3">เอกสาร SML lock แล้ว ต้องยืนยันก่อนสร้างเอกสาร</Message>
-                        </div>
-                    </div>
-                </Panel>
-
-                <Toolbar class="mt-4">
-                    <template #start>
-                        <Button label="ย้อนกลับ" icon="pi pi-arrow-left" severity="secondary" outlined :disabled="activeStep === 0" @click="backStep" />
-                    </template>
-                    <template #end>
-                        <Button v-if="activeStep < wizardSteps.length - 1" label="ถัดไป" icon="pi pi-arrow-right" iconPos="right" :disabled="!canGoNext" @click="nextStep" />
-                        <Button v-else label="ส่งเซ็น" icon="pi pi-send" :loading="creating" :disabled="!!createDisabledReason || uploading" @click="submitDocument" />
-                    </template>
-                </Toolbar>
-            </div>
-        </div>
+        <Toolbar class="mt-4">
+            <template #start>
+                <Button label="ย้อนกลับ" icon="pi pi-arrow-left" severity="secondary" outlined :disabled="activeStep === 0" @click="backStep" />
+            </template>
+            <template #end>
+                <Button v-if="activeStep < wizardSteps.length - 1" label="ถัดไป" icon="pi pi-arrow-right" iconPos="right" :disabled="!canGoNext" @click="nextStep" />
+                <Button v-else label="ส่งเซ็น" icon="pi pi-send" :loading="creating" :disabled="!!createDisabledReason || uploading" @click="submitDocument" />
+            </template>
+        </Toolbar>
     </div>
 </template>
