@@ -77,8 +77,13 @@ const router = createRouter({
                 {
                     path: '/document-flow',
                     name: 'document-flow',
-                    component: () => import('@/views/signing/DocumentFlow.vue'),
-                    meta: { role: 'admin' }
+                    redirect: (to) => ({
+                        name: 'signing-documents',
+                        query: {
+                            ...(to.query.doc_no ? { flow_doc_no: to.query.doc_no } : {}),
+                            ...(to.query.doc_format_code ? { flow_doc_format_code: to.query.doc_format_code } : {})
+                        }
+                    })
                 },
                 {
                     path: '/signing/documents/new',

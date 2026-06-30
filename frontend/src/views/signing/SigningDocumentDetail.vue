@@ -281,10 +281,10 @@ function openRelatedDocument(documentId) {
 function openDocumentFlow(doc = document.value) {
     if (!doc?.docNo) return;
     router.push({
-        name: 'document-flow',
+        name: 'signing-documents',
         query: {
-            doc_no: doc.docNo,
-            ...(doc.docFormatCode ? { doc_format_code: doc.docFormatCode } : {})
+            flow_doc_no: doc.docNo,
+            ...(doc.docFormatCode ? { flow_doc_format_code: doc.docFormatCode } : {})
         }
     });
 }
@@ -296,10 +296,10 @@ function openRelatedFlow(payload) {
         return;
     }
     router.push({
-        name: 'document-flow',
+        name: 'signing-documents',
         query: {
-            doc_no: node.doc_no,
-            ...(node.doc_format_code ? { doc_format_code: node.doc_format_code } : {})
+            flow_doc_no: node.doc_no,
+            ...(node.doc_format_code ? { flow_doc_format_code: node.doc_format_code } : {})
         }
     });
 }
@@ -449,7 +449,7 @@ function clamp(value, min, max) {
                         <TabPanel value="related">
                             <div class="info-block">
                                 <div class="flex justify-end mb-3">
-                                    <Button label="เปิดหน้า Flow เอกสารเต็ม" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
+                                    <Button label="เปิด Flow ในรายการเอกสาร" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
                                 </div>
                                 <RelatedDocumentsPanel
                                     v-if="activeTab === 'related' && document?.id"

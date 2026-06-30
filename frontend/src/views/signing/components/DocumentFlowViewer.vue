@@ -76,6 +76,15 @@ function previewPDF(node, version) {
     emit('node-click', node);
     emit('preview-pdf', { node, version, url: version === 'final' ? node.signedPdfUrl : node.currentPdfUrl });
 }
+
+function previewBestPDF(node) {
+    emit('node-click', node);
+    if (node.canViewSignedPdf || node.hasFinalPdf || node.signedPdfUrl) {
+        emit('preview-pdf', { node, version: 'final', url: node.signedPdfUrl });
+        return;
+    }
+    emit('preview-pdf', { node, version: 'current', url: node.currentPdfUrl });
+}
 </script>
 
 <template>
@@ -107,7 +116,7 @@ function previewPDF(node, version) {
                 <div class="flow-content" :class="{ root: item.isRoot }">
                     <div class="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
                         <div class="min-w-0">
-                            <div class="font-semibold text-lg truncate">{{ item.doc_no }}</div>
+                            <Button :label="item.doc_no" link class="p-0 font-semibold text-lg text-left max-w-full" @click="previewBestPDF(item)" />
                             <div class="text-muted-color">{{ item.doc_format_code || '-' }} · {{ item.party_name || item.party_code || '-' }}</div>
                             <div class="text-muted-color text-sm mt-1">{{ relationText(item) }}</div>
                         </div>
@@ -158,7 +167,7 @@ function previewPDF(node, version) {
         <DataTable v-if="showTable && !compact && nodes.length" :value="nodes" responsiveLayout="scroll" stripedRows class="mt-4">
             <Column field="doc_no" header="เลขที่เอกสาร" style="min-width: 11rem">
                 <template #body="{ data }">
-                    <Button :label="data.doc_no" link class="p-0" @click="openInfo(data)" />
+                    <Button :label="data.doc_no" link class="p-0" @click="previewBestPDF(data)" />
                 </template>
             </Column>
             <Column field="doc_format_code" header="ชนิด" style="min-width: 7rem" />
