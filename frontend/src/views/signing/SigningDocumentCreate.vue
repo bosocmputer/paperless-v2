@@ -564,20 +564,16 @@ function makeClientId() {
 
 <template>
     <div class="card min-w-0 overflow-hidden signing-create-card" :class="{ 'signing-create-card-designer': designerMode }">
-        <div class="mb-3 bg-surface-50 dark:bg-surface-950">
-            <div class="bg-surface-0 dark:bg-surface-900 p-4 shadow rounded-2xl flex flex-col gap-3">
-                <div class="flex items-center gap-4">
-                    <Button icon="pi pi-arrow-left" severity="secondary" text rounded aria-label="กลับ" @click="router.push({ name: 'signing-documents' })" />
-                    <div class="flex flex-col gap-1 flex-1 min-w-0">
-                        <div class="text-2xl leading-tight font-semibold text-surface-900 dark:text-surface-0 truncate">
-                            {{ designerMode ? form.selectedCandidate?.doc_no || 'ส่งเอกสารใหม่' : 'ส่งเอกสารใหม่' }}
-                        </div>
-                        <div class="text-base leading-tight text-surface-500 dark:text-surface-300 truncate">
-                            {{ designerMode ? selectedDocFormatLabel : headerSummary }}
-                        </div>
-                    </div>
-                    <Tag v-if="designerMode" value="PDF และกรอบ" severity="success" />
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <div class="min-w-0">
+                <div class="font-semibold text-xl mb-1 truncate">
+                    {{ designerMode ? form.selectedCandidate?.doc_no || 'ส่งเอกสารใหม่' : 'ส่งเอกสารใหม่' }}
                 </div>
+                <p class="text-muted-color m-0 truncate">{{ designerMode ? selectedDocFormatLabel : headerSummary }}</p>
+            </div>
+            <div class="flex flex-wrap gap-2 md:justify-end">
+                <Tag v-if="designerMode" value="PDF และกรอบ" severity="success" />
+                <Button icon="pi pi-arrow-left" severity="secondary" rounded outlined aria-label="กลับ" @click="router.push({ name: 'signing-documents' })" />
             </div>
         </div>
 
