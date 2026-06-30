@@ -289,9 +289,12 @@ type SigningDocument struct {
 }
 
 type AdminDashboard struct {
-	Totals          SigningDocumentTotals `json:"totals"`
-	RecentDocuments []SigningDocument     `json:"recentDocuments"`
-	NeedsAttention  []SigningDocument     `json:"needsAttention"`
+	Totals            SigningDocumentTotals             `json:"totals"`
+	RecentDocuments   []SigningDocument                 `json:"recentDocuments"`
+	NeedsAttention    []SigningDocument                 `json:"needsAttention"`
+	WorkflowSummary   AdminDashboardWorkflowSummary     `json:"workflowSummary"`
+	PendingByPosition []AdminDashboardPendingByPosition `json:"pendingByPosition"`
+	PendingDocuments  []AdminDashboardPendingDocument   `json:"pendingDocuments"`
 }
 
 type SigningDocumentTotals struct {
@@ -303,6 +306,34 @@ type SigningDocumentTotals struct {
 	CompletedEvidenceFailed int `json:"completedEvidenceFailed"`
 	CompletedLockFailed     int `json:"completedLockFailed"`
 	Cancelled               int `json:"cancelled"`
+}
+
+type AdminDashboardWorkflowSummary struct {
+	PendingDocuments   int `json:"pendingDocuments"`
+	PendingSigners     int `json:"pendingSigners"`
+	AttentionDocuments int `json:"attentionDocuments"`
+	CompletedDocuments int `json:"completedDocuments"`
+	EvidenceFailed     int `json:"evidenceFailed"`
+	LockFailed         int `json:"lockFailed"`
+}
+
+type AdminDashboardPendingByPosition struct {
+	PositionCode  string `json:"positionCode"`
+	PositionName  string `json:"positionName"`
+	ConditionType int    `json:"conditionType"`
+	DocumentCount int    `json:"documentCount"`
+	SignerCount   int    `json:"signerCount"`
+}
+
+type AdminDashboardPendingDocument struct {
+	ID                  string    `json:"id"`
+	DocNo               string    `json:"docNo"`
+	DocFormatCode       string    `json:"docFormatCode"`
+	PartyName           string    `json:"partyName"`
+	PartyCode           string    `json:"partyCode"`
+	CurrentPositionName string    `json:"currentPositionName"`
+	PendingSignerCount  int       `json:"pendingSignerCount"`
+	UpdatedAt           time.Time `json:"updatedAt"`
 }
 
 type SigningDocumentStep struct {

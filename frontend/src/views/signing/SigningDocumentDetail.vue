@@ -2,7 +2,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { api } from '@/services/api';
-import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
+import { formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -283,6 +283,10 @@ function printerLabel(value) {
     return value;
 }
 
+function formatTimelineDate(value) {
+    return formatThaiDateTime(value);
+}
+
 function movementEventView(event) {
     const action = String(event?.action || '');
     const metadata = event?.metadata || {};
@@ -404,27 +408,13 @@ function clamp(value, min, max) {
             </section>
 
             <aside class="side-panel">
-                <Tabs value="info">
+                <Tabs value="signers">
                     <TabList>
-                        <Tab value="info">ข้อมูล</Tab>
                         <Tab value="signers">ผู้เซ็น</Tab>
                         <Tab value="print">พิมพ์</Tab>
                         <Tab value="events">เหตุการณ์</Tab>
                     </TabList>
                     <TabPanels>
-                        <TabPanel value="info">
-                            <div class="info-block">
-                                <div class="block-title">ข้อมูลเอกสาร</div>
-                                <dl>
-                                    <dt>วันที่</dt>
-                                    <dd>{{ formatDocumentDate(document?.docDate) }}</dd>
-                                    <dt>ยอดเงิน</dt>
-                                    <dd>{{ Number(document?.totalAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }) }}</dd>
-                                    <dt>SML lock</dt>
-                                    <dd>{{ document?.smlIsLockRecord === 1 ? 'locked ก่อนส่ง' : document?.lockedAt ? 'locked แล้ว' : '-' }}</dd>
-                                </dl>
-                            </div>
-                        </TabPanel>
                         <TabPanel value="signers">
                             <div class="info-block">
                                 <div class="block-title">ขั้นตอนและผู้เซ็น</div>
@@ -480,17 +470,20 @@ function clamp(value, min, max) {
                                     <Tag :value="`${importantEvents.length} รายการ`" severity="secondary" />
                                 </div>
                                 <div v-if="importantEvents.length === 0" class="empty-log">ยังไม่มีเหตุการณ์สำคัญ</div>
-                                <Timeline v-else :value="importantEvents" align="left" class="compact-timeline">
+                                <Timeline v-else :value="importantEvents" align="left" class="opposite-timeline">
+                                    <template #opposite="{ item }">
+                                        <div class="event-time">{{ formatTimelineDate(item.createdAt) }}</div>
+                                    </template>
+                                    <template #marker="{ item }">
+                                        <span class="event-marker" :class="`event-${item.view.severity}`">
+                                            <i :class="item.view.icon"></i>
+                                        </span>
+                                    </template>
                                     <template #content="{ item }">
                                         <div class="event-line">
-                                            <div class="event-title">
-                                                <span class="event-icon" :class="`event-${item.view.severity}`">
-                                                    <i :class="item.view.icon"></i>
-                                                </span>
-                                                <strong>{{ item.view.title }}</strong>
-                                            </div>
+                                            <strong>{{ item.view.title }}</strong>
                                             <span>{{ item.view.detail }}</span>
-                                            <small>{{ formatThaiDateTime(item.createdAt) }}</small>
+                                            <small v-if="item.actorLabel">โดย {{ item.actorLabel }}</small>
                                         </div>
                                     </template>
                                 </Timeline>
@@ -552,7 +545,8 @@ function clamp(value, min, max) {
 }
 .signer-row small,
 .print-row small,
-.event-line small {
+.event-line small,
+.event-time {
     color: var(--text-color-secondary);
 }
 .detail-grid {
@@ -659,18 +653,6 @@ function clamp(value, min, max) {
 .empty-log {
     color: var(--text-color-secondary);
 }
-dl {
-    display: grid;
-    grid-template-columns: 7rem 1fr;
-    gap: 0.4rem 0.75rem;
-    margin: 0;
-}
-dt {
-    color: var(--text-color-secondary);
-}
-dd {
-    margin: 0;
-}
 .step-card {
     border: 1px solid var(--surface-border);
     border-radius: 8px;
@@ -716,21 +698,34 @@ dd {
 .event-line {
     display: grid;
     gap: 0.2rem;
-    padding-bottom: 0.2rem;
+    min-width: 0;
+    padding: 0 0 1.25rem 0.35rem;
 }
-.event-title {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
+.event-time {
+    min-width: 7.5rem;
+    padding-top: 0.15rem;
+    text-align: right;
+    font-size: 0.85rem;
 }
-.event-icon {
-    width: 1.75rem;
-    height: 1.75rem;
+.event-marker {
+    width: 1.65rem;
+    height: 1.65rem;
     border-radius: 999px;
     display: inline-grid;
     place-items: center;
-    font-size: 0.82rem;
+    border: 2px solid var(--surface-card);
+    font-size: 0.78rem;
     flex: 0 0 auto;
+}
+.opposite-timeline :deep(.p-timeline-event-opposite) {
+    flex: 0 0 8.25rem;
+    padding: 0 0.75rem 0 0;
+}
+.opposite-timeline :deep(.p-timeline-event-content) {
+    padding-left: 0.75rem;
+}
+.opposite-timeline :deep(.p-timeline-event-marker) {
+    border: 0;
 }
 .event-success {
     color: var(--green-700, #15803d);
@@ -743,6 +738,10 @@ dd {
 .event-danger {
     color: var(--red-700, #b91c1c);
     background: var(--red-100, #fee2e2);
+}
+.event-warn {
+    color: var(--yellow-800, #854d0e);
+    background: var(--yellow-100, #fef9c3);
 }
 .empty-log {
     min-height: 3.5rem;
@@ -780,6 +779,19 @@ dd {
     }
     .toolbar-group {
         width: 100%;
+    }
+    .opposite-timeline :deep(.p-timeline-event) {
+        align-items: flex-start;
+    }
+    .opposite-timeline :deep(.p-timeline-event-opposite) {
+        display: block;
+        flex: 0 0 5.5rem;
+        padding-right: 0.5rem;
+    }
+    .event-time {
+        min-width: 0;
+        overflow-wrap: anywhere;
+        font-size: 0.78rem;
     }
 }
 </style>

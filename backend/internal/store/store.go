@@ -326,6 +326,9 @@ ON signing_document_signers (lower(signer_user), status, sequence_no);
 CREATE INDEX IF NOT EXISTS signing_document_signers_doc_idx
 ON signing_document_signers (document_id, sequence_no, position_code, signer_slot);
 
+CREATE INDEX IF NOT EXISTS signing_document_signers_dashboard_pending_idx
+ON signing_document_signers (status, document_id, position_code, sequence_no);
+
 CREATE TABLE IF NOT EXISTS signing_document_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id UUID NOT NULL REFERENCES signing_documents(id) ON DELETE CASCADE,

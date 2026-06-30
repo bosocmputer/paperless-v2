@@ -258,6 +258,10 @@ GROUP BY status
 	if err := rows.Err(); err != nil {
 		return dashboard, err
 	}
+	dashboard.WorkflowSummary.CompletedDocuments = dashboard.Totals.Completed
+	dashboard.WorkflowSummary.EvidenceFailed = dashboard.Totals.CompletedEvidenceFailed
+	dashboard.WorkflowSummary.LockFailed = dashboard.Totals.CompletedLockFailed
+	dashboard.WorkflowSummary.AttentionDocuments = dashboard.Totals.CompletedEvidenceFailed + dashboard.Totals.CompletedLockFailed
 
 	needsAttention, err := s.listSigningDocumentsByQuery(ctx, `
 WHERE d.status IN ('completed_evidence_failed', 'completed_lock_failed')
@@ -274,9 +278,100 @@ LIMIT 6
 	if err != nil {
 		return dashboard, err
 	}
+	pendingSummary, err := s.getDashboardPendingSummary(ctx)
+	if err != nil {
+		return dashboard, err
+	}
+	pendingByPosition, err := s.listDashboardPendingByPosition(ctx)
+	if err != nil {
+		return dashboard, err
+	}
+	pendingDocuments, err := s.listDashboardPendingDocuments(ctx)
+	if err != nil {
+		return dashboard, err
+	}
+	dashboard.WorkflowSummary.PendingDocuments = pendingSummary.PendingDocuments
+	dashboard.WorkflowSummary.PendingSigners = pendingSummary.PendingSigners
 	dashboard.NeedsAttention = needsAttention
 	dashboard.RecentDocuments = recent
+	dashboard.PendingByPosition = pendingByPosition
+	dashboard.PendingDocuments = pendingDocuments
 	return dashboard, nil
+}
+
+func (s *Store) getDashboardPendingSummary(ctx context.Context) (models.AdminDashboardWorkflowSummary, error) {
+	var summary models.AdminDashboardWorkflowSummary
+	err := s.pool.QueryRow(ctx, `
+SELECT COUNT(DISTINCT d.id)::int, COUNT(sg.id)::int
+FROM signing_documents d
+JOIN signing_document_signers sg ON sg.document_id = d.id
+WHERE d.status = 'in_progress'
+  AND sg.status = 'pending'
+`).Scan(&summary.PendingDocuments, &summary.PendingSigners)
+	return summary, err
+}
+
+func (s *Store) listDashboardPendingByPosition(ctx context.Context) ([]models.AdminDashboardPendingByPosition, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT sg.position_code,
+       sg.position_name,
+       sg.condition_type,
+       COUNT(DISTINCT d.id)::int AS document_count,
+       COUNT(sg.id)::int AS signer_count
+FROM signing_documents d
+JOIN signing_document_signers sg ON sg.document_id = d.id
+WHERE d.status = 'in_progress'
+  AND sg.status = 'pending'
+GROUP BY sg.position_code, sg.position_name, sg.condition_type
+ORDER BY MIN(sg.sequence_no), signer_count DESC, sg.position_code
+LIMIT 8
+`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []models.AdminDashboardPendingByPosition{}
+	for rows.Next() {
+		var item models.AdminDashboardPendingByPosition
+		if err := rows.Scan(&item.PositionCode, &item.PositionName, &item.ConditionType, &item.DocumentCount, &item.SignerCount); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) listDashboardPendingDocuments(ctx context.Context) ([]models.AdminDashboardPendingDocument, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT d.id::text,
+       d.doc_no,
+       d.doc_format_code,
+       d.party_name,
+       d.party_code,
+       COALESCE((array_agg(sg.position_name ORDER BY sg.sequence_no, sg.position_code))[1], '') AS current_position_name,
+       COUNT(sg.id)::int AS pending_signer_count,
+       d.updated_at
+FROM signing_documents d
+JOIN signing_document_signers sg ON sg.document_id = d.id
+WHERE d.status = 'in_progress'
+  AND sg.status = 'pending'
+GROUP BY d.id, d.doc_no, d.doc_format_code, d.party_name, d.party_code, d.updated_at, d.created_at
+ORDER BY d.updated_at DESC, d.created_at DESC
+LIMIT 8
+`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []models.AdminDashboardPendingDocument{}
+	for rows.Next() {
+		var item models.AdminDashboardPendingDocument
+		if err := rows.Scan(&item.ID, &item.DocNo, &item.DocFormatCode, &item.PartyName, &item.PartyCode, &item.CurrentPositionName, &item.PendingSignerCount, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (s *Store) listSigningDocumentsByQuery(ctx context.Context, suffix string, args ...any) ([]models.SigningDocument, error) {
