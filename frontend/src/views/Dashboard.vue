@@ -65,6 +65,7 @@ const actionRows = computed(() => {
         });
     });
     pendingDocuments.value.forEach((doc) => {
+        const step = pendingByPosition.value.find((item) => item.positionName === doc.currentPositionName);
         rows.push({
             key: `pending-${doc.id}`,
             id: doc.id,
@@ -77,7 +78,7 @@ const actionRows = computed(() => {
             pendingSignerCount: doc.pendingSignerCount,
             statusLabel: 'รอลายเซ็น',
             statusSeverity: 'info',
-            helper: `${doc.pendingSignerCount || 0} คนต้องเซ็นในขั้นตอนนี้`,
+            helper: pendingDocumentHelper(doc, step),
             priority: 2
         });
     });
@@ -161,9 +162,9 @@ function problemReason(status) {
 }
 
 function conditionLabel(value) {
-    if (Number(value) === 1) return 'คนใดคนหนึ่ง';
-    if (Number(value) === 2) return 'ทุกคน';
-    if (Number(value) === 3) return 'บุคคลภายนอก';
+    if (Number(value) === 1) return 'ใครเซ็นก่อนก็ผ่าน';
+    if (Number(value) === 2) return 'ต้องเซ็นครบทุกคน';
+    if (Number(value) === 3) return 'ผู้เซ็นภายนอก';
     return `เงื่อนไข ${value}`;
 }
 
@@ -171,6 +172,26 @@ function conditionSeverity(value) {
     if (Number(value) === 1) return 'info';
     if (Number(value) === 2) return 'warn';
     return 'secondary';
+}
+
+function pendingDocumentHelper(doc, step) {
+    const signerCount = Number(doc.pendingSignerCount || step?.signerCount || 0);
+    if (Number(step?.conditionType) === 1) return `มีผู้มีสิทธิ์เซ็น ${signerCount} คน, ใครเซ็นก่อนก็ผ่าน`;
+    if (Number(step?.conditionType) === 2) return `ต้องรอลายเซ็นครบ ${signerCount} คน`;
+    if (Number(step?.conditionType) === 3) return 'รอลายเซ็นจากบุคคลภายนอก';
+    return `${signerCount} คนต้องเซ็นในขั้นตอนนี้`;
+}
+
+function pendingPositionTitle(item) {
+    return `ขั้นตอน ${item.positionCode}: ${item.positionName}`;
+}
+
+function pendingPositionSummary(item) {
+    const documentText = `${item.documentCount} เอกสารกำลังรอลายเซ็น`;
+    if (Number(item.conditionType) === 1) return `${documentText} · มีผู้มีสิทธิ์เซ็น ${item.signerCount} คน`;
+    if (Number(item.conditionType) === 2) return `${documentText} · ต้องเซ็นครบ ${item.signerCount} คน`;
+    if (Number(item.conditionType) === 3) return `${documentText} · รอผู้เซ็นภายนอก`;
+    return `${documentText} · ${item.signerCount} คนต้องเซ็น`;
 }
 
 function movementEventView(event) {
@@ -323,20 +344,20 @@ function movementEventView(event) {
                 <div class="card">
                     <div class="flex items-start justify-between gap-3 mb-4">
                         <div>
-                            <div class="font-semibold text-lg">รอตามขั้นตอน</div>
-                            <p class="text-muted-color m-0">ดูว่าขั้นตอนไหนมีงานรอลายเซ็น</p>
+                            <div class="font-semibold text-lg">เอกสารค้างอยู่ที่ขั้นตอนไหน</div>
+                            <p class="text-muted-color m-0">สรุปตำแหน่งที่กำลังรอลายเซ็นและวิธีผ่านขั้นตอน</p>
                         </div>
-                        <Tag :value="`${pendingByPosition.length} ขั้นตอน`" severity="secondary" />
+                        <Tag :value="`${pendingByPosition.length} รายการค้าง`" severity="secondary" />
                     </div>
                     <div v-if="pendingByPosition.length === 0" class="empty-panel">
                         <i class="pi pi-inbox"></i>
-                        <span>ไม่มีขั้นตอนที่รอลายเซ็น</span>
+                        <span>ไม่มีเอกสารค้างรอลายเซ็น</span>
                     </div>
                     <div v-else class="flex flex-col gap-2">
                         <div v-for="item in pendingByPosition" :key="`${item.positionCode}-${item.conditionType}`" class="surface-row">
                             <div class="min-w-0">
-                                <div class="font-medium truncate">{{ item.positionCode }} · {{ item.positionName }}</div>
-                                <small class="text-muted-color">{{ item.documentCount }} เอกสาร · {{ item.signerCount }} คนต้องเซ็น</small>
+                                <div class="font-medium truncate">{{ pendingPositionTitle(item) }}</div>
+                                <small class="text-muted-color">{{ pendingPositionSummary(item) }}</small>
                             </div>
                             <Tag :value="conditionLabel(item.conditionType)" :severity="conditionSeverity(item.conditionType)" />
                         </div>
