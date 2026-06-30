@@ -40,6 +40,17 @@ function openDetail(doc) {
     router.push({ name: 'signing-document-detail', params: { id: doc.id } });
 }
 
+function openDocumentFlow(doc) {
+    if (!doc?.docNo) return;
+    router.push({
+        name: 'document-flow',
+        query: {
+            doc_no: doc.docNo,
+            ...(doc.docFormatCode ? { doc_format_code: doc.docFormatCode } : {})
+        }
+    });
+}
+
 function documentLine(doc) {
     return `${doc.docNo || '-'} ~ ${doc.docFormatCode || '-'} · ${doc.partyName || doc.partyCode || '-'}`;
 }
@@ -98,9 +109,12 @@ function normalize(value) {
             <Column field="updatedAt" header="อัปเดตล่าสุด" sortable style="min-width: 14rem">
                 <template #body="{ data }">{{ formatThaiDateTime(data.updatedAt) }}</template>
             </Column>
-            <Column header="จัดการ" :exportable="false" style="width: 8rem">
+            <Column header="จัดการ" :exportable="false" style="width: 9rem">
                 <template #body="{ data }">
-                    <Button icon="pi pi-eye" rounded outlined severity="secondary" aria-label="ดูเอกสาร" @click="openDetail(data)" />
+                    <div class="flex gap-2">
+                        <Button icon="pi pi-sitemap" rounded outlined severity="secondary" aria-label="ดู Flow เอกสาร" @click="openDocumentFlow(data)" />
+                        <Button icon="pi pi-eye" rounded outlined severity="secondary" aria-label="ดูเอกสาร" @click="openDetail(data)" />
+                    </div>
                 </template>
             </Column>
         </DataTable>
