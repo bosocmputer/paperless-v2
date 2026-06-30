@@ -467,6 +467,274 @@ ORDER BY d.id::text
 	return out, nil
 }
 
+func (s *Store) ListMySigningTaskQueue(ctx context.Context, username string, readyPage, waitingPage, size int) (models.MySigningTaskQueue, error) {
+	username = strings.TrimSpace(username)
+	if readyPage < 1 {
+		readyPage = 1
+	}
+	if waitingPage < 1 {
+		waitingPage = 1
+	}
+	if size < 1 {
+		size = 20
+	}
+	if size > 50 {
+		size = 50
+	}
+
+	var queue models.MySigningTaskQueue
+	queue.Pagination.Ready = models.PageMeta{Page: readyPage, Size: size}
+	queue.Pagination.Waiting = models.PageMeta{Page: waitingPage, Size: size}
+
+	readyCount, err := s.countMySigningTasksByStatus(ctx, username, "pending")
+	if err != nil {
+		return queue, err
+	}
+	waitingCount, err := s.countMySigningTasksByStatus(ctx, username, "waiting")
+	if err != nil {
+		return queue, err
+	}
+	queue.Counts = models.MySigningTaskCounts{Ready: readyCount, Waiting: waitingCount}
+
+	ready, readyHasMore, err := s.listMySigningTaskDocumentsByStatus(ctx, username, "pending", readyPage, size)
+	if err != nil {
+		return queue, err
+	}
+	waiting, waitingHasMore, err := s.listMySigningTaskDocumentsByStatus(ctx, username, "waiting", waitingPage, size)
+	if err != nil {
+		return queue, err
+	}
+	if err := s.attachMySigningTaskBlockers(ctx, waiting); err != nil {
+		return queue, err
+	}
+
+	queue.Documents = ready
+	queue.WaitingDocuments = waiting
+	queue.Pagination.Ready.HasMore = readyHasMore
+	queue.Pagination.Waiting.HasMore = waitingHasMore
+	return queue, nil
+}
+
+func (s *Store) countMySigningTasksByStatus(ctx context.Context, username, status string) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, `
+SELECT COUNT(sg.id)::int
+FROM signing_documents d
+JOIN signing_document_signers sg ON sg.document_id = d.id
+WHERE d.status = 'in_progress'
+  AND sg.status = $2
+  AND lower(sg.signer_user) = lower($1)
+`, strings.TrimSpace(username), status).Scan(&count)
+	return count, err
+}
+
+func (s *Store) listMySigningTaskDocumentsByStatus(ctx context.Context, username, status string, page, size int) ([]models.MySigningTaskDocument, bool, error) {
+	offset := (page - 1) * size
+	rows, err := s.pool.Query(ctx, `
+SELECT d.id::text,
+       d.doc_no,
+       d.doc_format_code,
+       d.party_code,
+       d.party_name,
+       COALESCE(d.doc_date::text, ''),
+       d.total_amount,
+       d.status,
+       d.updated_at,
+       sg.id::text,
+       sg.step_id::text,
+       sg.position_code,
+       sg.position_name,
+       sg.sequence_no,
+       sg.condition_type,
+       sg.signer_slot,
+       sg.signer_type,
+       sg.signer_user,
+       sg.signer_name,
+       sg.status,
+       sg.signed_at,
+       sg.rejected_at
+FROM signing_documents d
+JOIN signing_document_signers sg ON sg.document_id = d.id
+WHERE d.status = 'in_progress'
+  AND sg.status = $2
+  AND lower(sg.signer_user) = lower($1)
+ORDER BY d.updated_at DESC, d.created_at DESC, sg.sequence_no, sg.position_code, sg.signer_slot
+LIMIT $3 OFFSET $4
+`, strings.TrimSpace(username), status, size+1, offset)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+
+	items := []models.MySigningTaskDocument{}
+	for rows.Next() {
+		item, err := scanMySigningTaskDocument(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	hasMore := len(items) > size
+	if hasMore {
+		items = items[:size]
+	}
+	return items, hasMore, nil
+}
+
+func scanMySigningTaskDocument(row rowScanner) (models.MySigningTaskDocument, error) {
+	var item models.MySigningTaskDocument
+	var task models.MySigningTaskSigner
+	err := row.Scan(
+		&item.ID, &item.DocNo, &item.DocFormatCode, &item.PartyCode, &item.PartyName, &item.DocDate,
+		&item.TotalAmount, &item.Status, &item.UpdatedAt,
+		&task.ID, &task.StepID, &task.PositionCode, &task.PositionName, &task.SequenceNo, &task.ConditionType,
+		&task.SignerSlot, &task.SignerType, &task.SignerUser, &task.SignerName, &task.Status,
+		&task.SignedAt, &task.RejectedAt,
+	)
+	if err != nil {
+		return item, err
+	}
+	task.DocumentID = item.ID
+	item.Task = task
+	item.Signers = []models.MySigningTaskSigner{task}
+	return item, nil
+}
+
+func (s *Store) attachMySigningTaskBlockers(ctx context.Context, documents []models.MySigningTaskDocument) error {
+	if len(documents) == 0 {
+		return nil
+	}
+	documentIDs := make([]string, 0, len(documents))
+	taskSequenceByDocument := map[string]float64{}
+	for _, doc := range documents {
+		documentIDs = append(documentIDs, doc.ID)
+		taskSequenceByDocument[doc.ID] = doc.Task.SequenceNo
+	}
+
+	rows, err := s.pool.Query(ctx, `
+SELECT sg.document_id::text,
+       sg.id::text,
+       sg.step_id::text,
+       sg.position_code,
+       sg.position_name,
+       sg.sequence_no,
+       sg.condition_type,
+       sg.signer_slot,
+       sg.signer_type,
+       sg.signer_user,
+       sg.signer_name,
+       sg.status,
+       sg.signed_at,
+       sg.rejected_at
+FROM signing_document_signers sg
+WHERE sg.document_id::text = ANY($1)
+  AND sg.status = 'pending'
+ORDER BY sg.document_id, sg.sequence_no, sg.position_code, sg.signer_slot, sg.signer_user
+`, documentIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	blockersByDocument := map[string][]models.MySigningTaskBlocker{}
+	blockerIndex := map[string]int{}
+	for rows.Next() {
+		var documentID string
+		var signer models.MySigningTaskSigner
+		if err := rows.Scan(
+			&documentID, &signer.ID, &signer.StepID, &signer.PositionCode, &signer.PositionName, &signer.SequenceNo,
+			&signer.ConditionType, &signer.SignerSlot, &signer.SignerType, &signer.SignerUser, &signer.SignerName,
+			&signer.Status, &signer.SignedAt, &signer.RejectedAt,
+		); err != nil {
+			return err
+		}
+		signer.DocumentID = documentID
+		if taskSequence, ok := taskSequenceByDocument[documentID]; ok && signer.SequenceNo >= taskSequence {
+			continue
+		}
+		key := documentID + ":" + signer.StepID
+		idx, ok := blockerIndex[key]
+		if !ok {
+			blockerIndex[key] = len(blockersByDocument[documentID])
+			blockersByDocument[documentID] = append(blockersByDocument[documentID], models.MySigningTaskBlocker{
+				PositionCode:  signer.PositionCode,
+				PositionName:  signer.PositionName,
+				SequenceNo:    signer.SequenceNo,
+				ConditionType: signer.ConditionType,
+				Status:        signer.Status,
+			})
+			idx = blockerIndex[key]
+		}
+		blockersByDocument[documentID][idx].Signers = append(blockersByDocument[documentID][idx].Signers, signer)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for i := range documents {
+		blockers := blockersByDocument[documents[i].ID]
+		for j := range blockers {
+			blockers[j].Summary = mySigningBlockerSummary(blockers[j])
+		}
+		documents[i].BlockedBy = blockers
+		documents[i].BlockSummary = mySigningDocumentBlockSummary(blockers)
+	}
+	return nil
+}
+
+func mySigningDocumentBlockSummary(blockers []models.MySigningTaskBlocker) string {
+	if len(blockers) == 0 {
+		return "รอขั้นตอนก่อนหน้าเสร็จก่อน"
+	}
+	return blockers[0].Summary
+}
+
+func mySigningBlockerSummary(blocker models.MySigningTaskBlocker) string {
+	positionName := strings.TrimSpace(blocker.PositionName)
+	if positionName == "" {
+		positionName = "ขั้นตอนก่อนหน้า"
+	}
+	names := []string{}
+	for _, signer := range blocker.Signers {
+		label := strings.TrimSpace(signer.SignerName)
+		if label == "" {
+			label = strings.TrimSpace(signer.SignerUser)
+		}
+		if label == "" && signer.SignerType == "external" {
+			label = "บุคคลภายนอก"
+		}
+		if label != "" {
+			names = append(names, label)
+		}
+	}
+	nameText := strings.Join(names, ", ")
+	switch blocker.ConditionType {
+	case 1:
+		if nameText == "" {
+			return "รอคนใดคนหนึ่งในขั้น " + positionName + " เซ็นก่อน"
+		}
+		return "รอคนใดคนหนึ่งในขั้น " + positionName + ": " + nameText
+	case 2:
+		if nameText == "" {
+			return "รอทุกคนในขั้น " + positionName + " เซ็นให้ครบ"
+		}
+		return "รอทุกคนในขั้น " + positionName + ": " + nameText
+	case 3:
+		if nameText == "" {
+			return "รอผู้เซ็นภายนอกในขั้น " + positionName
+		}
+		return "รอผู้เซ็นภายนอกในขั้น " + positionName + ": " + nameText
+	default:
+		if nameText == "" {
+			return "รอขั้น " + positionName + " เซ็นก่อน"
+		}
+		return "รอขั้น " + positionName + ": " + nameText
+	}
+}
+
 func (s *Store) FindSigningTaskByID(ctx context.Context, taskID string) (models.SigningDocumentSigner, error) {
 	signer, err := scanSigningDocumentSigner(s.pool.QueryRow(ctx, signingSignerSelect()+`WHERE sg.id = $1`, taskID))
 	if errors.Is(err, pgx.ErrNoRows) {

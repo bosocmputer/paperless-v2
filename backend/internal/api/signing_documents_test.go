@@ -62,6 +62,62 @@ func TestNormalizeSigningTaskEventMetadataRejectsInvalidEvent(t *testing.T) {
 	}
 }
 
+func TestNormalizeSigningTaskEventMetadataAcceptsQueueEvents(t *testing.T) {
+	for _, event := range []string{"ready_task_open", "waiting_queue_seen", "waiting_task_open"} {
+		t.Run(event, func(t *testing.T) {
+			metadata, err := normalizeSigningTaskEventMetadata(models.SigningTaskEventRequest{Event: event}, models.SigningDocument{DocFormatCode: "PO"}, models.SigningDocumentSigner{Status: "waiting"})
+			if err != nil {
+				t.Fatalf("expected queue event to be accepted, got %v", err)
+			}
+			if metadata["event"] != event {
+				t.Fatalf("unexpected event metadata %#v", metadata)
+			}
+		})
+	}
+}
+
+func TestSanitizeSigningDocumentForSignerRemovesSensitiveEvidence(t *testing.T) {
+	document := models.SigningDocument{
+		OriginalFile: &models.UploadedFile{ID: "original", SHA256: "hash"},
+		CurrentFile:  &models.UploadedFile{ID: "current", SHA256: "hash"},
+		FinalFile:    &models.UploadedFile{ID: "final", SHA256: "hash"},
+		Signers: []models.SigningDocumentSigner{{
+			ID:              "signer-1",
+			SignerUser:      "201",
+			Status:          "waiting",
+			SignatureFileID: "signature-file",
+			DeviceID:        "device-secret",
+			IPAddress:       "127.0.0.1",
+			UserAgent:       "browser",
+			ExternalTokenID: "token-id",
+			ExternalURL:     "https://secret.example",
+		}},
+		Events: []models.SigningDocumentEvent{{
+			ID:        "event-1",
+			IPAddress: "127.0.0.1",
+			UserAgent: "browser",
+			Metadata:  map[string]any{"token": "secret"},
+		}},
+		Attachments: []models.SigningDocumentAttachment{{ID: "attachment-1"}},
+		PrintEvents: []models.SigningDocumentPrintEvent{{ID: "print-1"}},
+	}
+
+	sanitized := sanitizeSigningDocumentForSigner(document)
+	if sanitized.OriginalFile != nil || sanitized.CurrentFile != nil || sanitized.FinalFile != nil {
+		t.Fatal("file metadata must be removed from signer document payload")
+	}
+	if len(sanitized.Attachments) != 0 || len(sanitized.PrintEvents) != 0 {
+		t.Fatal("attachments and print events must be removed from signer document payload")
+	}
+	signer := sanitized.Signers[0]
+	if signer.SignatureFileID != "" || signer.DeviceID != "" || signer.IPAddress != "" || signer.UserAgent != "" || signer.ExternalTokenID != "" || signer.ExternalURL != "" {
+		t.Fatalf("signer sensitive fields were not cleared: %#v", signer)
+	}
+	if sanitized.Events[0].IPAddress != "" || sanitized.Events[0].UserAgent != "" || sanitized.Events[0].Metadata != nil {
+		t.Fatalf("event sensitive fields were not cleared: %#v", sanitized.Events[0])
+	}
+}
+
 func TestNormalizeSigningCreateEventMetadata(t *testing.T) {
 	metadata, err := normalizeSigningCreateEventMetadata(signingCreateEventRequest{
 		Event:                "create_submit_success",

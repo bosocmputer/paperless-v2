@@ -1,6 +1,7 @@
 <script setup>
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
@@ -65,6 +66,11 @@ const canInteract = computed(() => taskStatus.value === 'pending');
 const canConfirm = computed(() => canInteract.value && pdfReady.value && hasSignature.value && legalAccepted.value && !isBusy.value);
 const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `${index + 1}/${pageCount.value}`, value: index + 1 })));
 const statusView = computed(() => statusMeta(taskStatus.value));
+const taskOpenEvent = computed(() => {
+    if (taskStatus.value === 'pending') return 'ready_task_open';
+    if (taskStatus.value === 'waiting') return 'waiting_task_open';
+    return 'task_open';
+});
 const primaryDisabledReason = computed(() => {
     if (!canInteract.value) return statusView.value.message;
     if (!pdfReady.value) return 'รอให้ PDF โหลดเสร็จก่อน';
@@ -122,7 +128,7 @@ watch(
     (taskId) => {
         if (taskId && !taskOpenRecorded) {
             taskOpenRecorded = true;
-            recordEvent('task_open');
+            recordEvent(taskOpenEvent.value);
         }
     },
     { immediate: true }
@@ -518,7 +524,7 @@ function clamp(value, min, max) {
                 </div>
             </section>
 
-            <aside class="sign-card">
+            <aside v-if="canInteract" class="sign-card">
                 <div class="signer-summary">
                     <div>
                         <span>ผู้เซ็น</span>
@@ -564,9 +570,27 @@ function clamp(value, min, max) {
 
                 <Message v-if="primaryDisabledReason && canInteract" severity="warn">{{ primaryDisabledReason }}</Message>
             </aside>
+
+            <aside v-else class="sign-card readonly-card">
+                <div class="signer-summary">
+                    <div>
+                        <span>ผู้เซ็น</span>
+                        <strong>{{ identityLabel || task?.signerName || task?.signerUser || '-' }}</strong>
+                    </div>
+                    <Message :severity="statusView.severity">
+                        {{ taskStatus === 'waiting' ? 'ยังไม่ถึงคิวของคุณ ต้องรอขั้นตอนก่อนหน้าเสร็จก่อน' : statusView.message }}
+                    </Message>
+                </div>
+
+                <div class="section-heading readonly-heading">
+                    <strong>ความคืบหน้าเอกสาร</strong>
+                    <Tag :value="statusView.label" :severity="statusView.severity" />
+                </div>
+                <DocumentWorkflowTimeline :document="document" compact />
+            </aside>
         </div>
 
-        <div v-if="!loading" class="sticky-actions">
+        <div v-if="!loading && canInteract" class="sticky-actions">
             <Button label="ปฏิเสธ" icon="pi pi-times" severity="danger" outlined :disabled="!canInteract || isBusy" @click="rejectVisible = true" />
             <Button label="ยืนยันเซ็น" icon="pi pi-check" :disabled="!canConfirm" :loading="isBusy" @click="confirmSign" />
         </div>
@@ -725,6 +749,11 @@ function clamp(value, min, max) {
     align-content: start;
 }
 
+.readonly-card {
+    max-height: 100%;
+    overflow: auto;
+}
+
 .signer-summary {
     display: grid;
     gap: 0.65rem;
@@ -747,6 +776,10 @@ function clamp(value, min, max) {
     justify-content: space-between;
     gap: 0.75rem;
     margin-bottom: 0.5rem;
+}
+
+.readonly-heading {
+    margin-bottom: 0;
 }
 
 .signature-canvas {

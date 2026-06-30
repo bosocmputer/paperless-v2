@@ -223,8 +223,14 @@ export const api = {
     regenerateExternalToken(signerId) {
         return request(`/api/signing-documents/external-token/${signerId}/regenerate`, { method: 'POST' });
     },
-    listMySigningTasks() {
-        return request('/api/my/signing-tasks');
+    listMySigningTasks(params = {}) {
+        return request(
+            withQuery('/api/my/signing-tasks', {
+                readyPage: params.readyPage,
+                waitingPage: params.waitingPage,
+                size: params.size
+            })
+        );
     },
     getMySigningTask(taskId) {
         return request(`/api/my/signing-tasks/${taskId}`);

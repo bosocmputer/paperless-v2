@@ -380,6 +380,72 @@ type SigningDocumentSigner struct {
 	ExternalURL     string     `json:"externalUrl,omitempty"`
 }
 
+type MySigningTaskQueue struct {
+	Documents        []MySigningTaskDocument `json:"documents"`
+	WaitingDocuments []MySigningTaskDocument `json:"waitingDocuments"`
+	Counts           MySigningTaskCounts     `json:"counts"`
+	Pagination       MySigningTaskPagination `json:"pagination"`
+}
+
+type MySigningTaskCounts struct {
+	Ready   int `json:"ready"`
+	Waiting int `json:"waiting"`
+}
+
+type MySigningTaskPagination struct {
+	Ready   PageMeta `json:"ready"`
+	Waiting PageMeta `json:"waiting"`
+}
+
+type PageMeta struct {
+	Page    int  `json:"page"`
+	Size    int  `json:"size"`
+	HasMore bool `json:"hasMore"`
+}
+
+type MySigningTaskDocument struct {
+	ID            string                 `json:"id"`
+	DocNo         string                 `json:"docNo"`
+	DocFormatCode string                 `json:"docFormatCode"`
+	PartyCode     string                 `json:"partyCode"`
+	PartyName     string                 `json:"partyName"`
+	DocDate       string                 `json:"docDate"`
+	TotalAmount   float64                `json:"totalAmount"`
+	Status        string                 `json:"status"`
+	UpdatedAt     time.Time              `json:"updatedAt"`
+	Task          MySigningTaskSigner    `json:"task"`
+	Signers       []MySigningTaskSigner  `json:"signers,omitempty"`
+	BlockedBy     []MySigningTaskBlocker `json:"blockedBy,omitempty"`
+	BlockSummary  string                 `json:"blockSummary,omitempty"`
+}
+
+type MySigningTaskSigner struct {
+	ID            string     `json:"id"`
+	DocumentID    string     `json:"documentId"`
+	StepID        string     `json:"stepId"`
+	PositionCode  string     `json:"positionCode"`
+	PositionName  string     `json:"positionName"`
+	SequenceNo    float64    `json:"sequenceNo"`
+	ConditionType int        `json:"conditionType"`
+	SignerSlot    int        `json:"signerSlot"`
+	SignerType    string     `json:"signerType"`
+	SignerUser    string     `json:"signerUser"`
+	SignerName    string     `json:"signerName"`
+	Status        string     `json:"status"`
+	SignedAt      *time.Time `json:"signedAt,omitempty"`
+	RejectedAt    *time.Time `json:"rejectedAt,omitempty"`
+}
+
+type MySigningTaskBlocker struct {
+	PositionCode  string                `json:"positionCode"`
+	PositionName  string                `json:"positionName"`
+	SequenceNo    float64               `json:"sequenceNo"`
+	ConditionType int                   `json:"conditionType"`
+	Status        string                `json:"status"`
+	Signers       []MySigningTaskSigner `json:"signers"`
+	Summary       string                `json:"summary"`
+}
+
 type SigningDocumentEvent struct {
 	ID          string         `json:"id"`
 	DocumentID  string         `json:"documentId"`

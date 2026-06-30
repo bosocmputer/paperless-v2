@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,19 +30,22 @@ const (
 )
 
 var signingUXEventNames = map[string]bool{
-	"task_open":         true,
-	"pdf_load_success":  true,
-	"pdf_load_error":    true,
-	"signature_started": true,
-	"signature_cleared": true,
-	"sign_attempt":      true,
-	"sign_success":      true,
-	"sign_error":        true,
-	"reject_success":    true,
-	"attachment_upload": true,
-	"blocked_not_turn":  true,
-	"blocked_signed":    true,
-	"blocked_rejected":  true,
+	"task_open":          true,
+	"pdf_load_success":   true,
+	"pdf_load_error":     true,
+	"signature_started":  true,
+	"signature_cleared":  true,
+	"sign_attempt":       true,
+	"sign_success":       true,
+	"sign_error":         true,
+	"reject_success":     true,
+	"attachment_upload":  true,
+	"ready_task_open":    true,
+	"waiting_queue_seen": true,
+	"waiting_task_open":  true,
+	"blocked_not_turn":   true,
+	"blocked_signed":     true,
+	"blocked_rejected":   true,
 }
 
 var signingCreateEventNames = map[string]bool{
@@ -857,12 +861,18 @@ func (s *Server) regenerateExternalToken(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) listMySigningTasks(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r)
-	documents, err := s.store.ListPendingSigningTasksForUser(r.Context(), user.Username)
+	readyPage := parsePositiveQueryInt(r, "readyPage", 1)
+	waitingPage := parsePositiveQueryInt(r, "waitingPage", 1)
+	size := parsePositiveQueryInt(r, "size", 20)
+	if size > 50 {
+		size = 50
+	}
+	queue, err := s.store.ListMySigningTaskQueue(r.Context(), user.Username, readyPage, waitingPage, size)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "signing_tasks_failed", "Cannot load signing tasks right now.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"documents": documents})
+	writeJSON(w, http.StatusOK, queue)
 }
 
 func (s *Server) getMySigningTask(w http.ResponseWriter, r *http.Request) {
@@ -886,7 +896,34 @@ func (s *Server) getMySigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"document": document, "task": signer, "legal": signingLegalPayload()})
+	writeJSON(w, http.StatusOK, map[string]any{"document": sanitizeSigningDocumentForSigner(document), "task": sanitizeSigningTaskForUser(signer), "legal": signingLegalPayload()})
+}
+
+func sanitizeSigningDocumentForSigner(document models.SigningDocument) models.SigningDocument {
+	document.OriginalFile = nil
+	document.CurrentFile = nil
+	document.FinalFile = nil
+	document.Attachments = nil
+	document.PrintEvents = nil
+	for i := range document.Signers {
+		document.Signers[i] = sanitizeSigningTaskForUser(document.Signers[i])
+	}
+	for i := range document.Events {
+		document.Events[i].IPAddress = ""
+		document.Events[i].UserAgent = ""
+		document.Events[i].Metadata = nil
+	}
+	return document
+}
+
+func sanitizeSigningTaskForUser(signer models.SigningDocumentSigner) models.SigningDocumentSigner {
+	signer.SignatureFileID = ""
+	signer.DeviceID = ""
+	signer.IPAddress = ""
+	signer.UserAgent = ""
+	signer.ExternalTokenID = ""
+	signer.ExternalURL = ""
+	return signer
 }
 
 func (s *Server) recordMySigningTaskEvent(w http.ResponseWriter, r *http.Request) {
@@ -1313,6 +1350,18 @@ func signingLegalPayload() map[string]string {
 		"text":    signingLegalText,
 		"version": signingLegalTextVersion,
 	}
+}
+
+func parsePositiveQueryInt(r *http.Request, key string, fallback int) int {
+	value := strings.TrimSpace(r.URL.Query().Get(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 1 {
+		return fallback
+	}
+	return parsed
 }
 
 func decodeSigningTaskEventPayload(reader io.Reader, maxBytes int64) (models.SigningTaskEventRequest, error) {
