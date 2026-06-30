@@ -282,23 +282,6 @@ function setActiveStep(index) {
     toast.add({ severity: 'warn', summary: 'ยังไปขั้นนี้ไม่ได้', detail: blockedReasonForStep(maxAllowedStep.value) || 'ทำขั้นตอนก่อนหน้าให้ครบก่อน', life: 3000 });
 }
 
-function goToStep(index) {
-    if (index <= activeStep.value) {
-        activeStep.value = index;
-        return;
-    }
-    for (let step = 0; step < index; step += 1) {
-        const reason = blockedReasonForStep(step);
-        if (reason) {
-            activeStep.value = step;
-            recordCreateEvent('validation_blocked');
-            toast.add({ severity: 'warn', summary: 'ยังไปขั้นถัดไปไม่ได้', detail: reason, life: 3000 });
-            return;
-        }
-    }
-    activeStep.value = index;
-}
-
 function nextStep() {
     if (currentStepReason.value) {
         recordCreateEvent('validation_blocked');
@@ -529,7 +512,7 @@ function makeClientId() {
             </template>
         </Toolbar>
 
-        <Stepper v-model:value="activeStepValue">
+        <Stepper v-model:value="activeStepValue" linear>
             <StepList>
                 <Step v-for="(step, index) in wizardSteps" :key="step.label" :value="index + 1" :disabled="!canOpenStep(index)">
                     {{ step.label }}
