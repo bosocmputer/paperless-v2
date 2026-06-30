@@ -248,7 +248,7 @@ func drawLegalNoticeBox(pdf *gofpdf.Fpdf, notice models.LegalNoticeSnapshot, siz
 	pdf.Rect(x, y, w, h, "FD")
 	pdf.SetTextColor(17, 24, 39)
 	pdf.SetFont("noto-thai", "", fontSize)
-	for _, line := range splitLineStrings(lines) {
+	for _, line := range lines {
 		pdf.SetXY(x+padding, textY)
 		pdf.CellFormat(textWidth, lineHeight, line, "", 0, "C", false, 0, "")
 		textY += lineHeight
@@ -268,19 +268,11 @@ func legalNoticeDisplayText(text string) string {
 	).Replace(text)
 }
 
-func splitLineStrings(lines [][]byte) []string {
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		out = append(out, string(line))
-	}
-	return out
-}
-
-func fitLegalNoticeText(pdf *gofpdf.Fpdf, text string, width, height float64) (float64, float64, [][]byte) {
+func fitLegalNoticeText(pdf *gofpdf.Fpdf, text string, width, height float64) (float64, float64, []string) {
 	for fontSize := 11.0; fontSize >= 7.0; fontSize -= 0.5 {
 		lineHeight := fontSize * 1.45
 		pdf.SetFont("noto-thai", "", fontSize)
-		lines := pdf.SplitLines([]byte(text), width)
+		lines := wrapLegalNoticeText(pdf, text, width)
 		if float64(len(lines))*lineHeight <= height {
 			return fontSize, lineHeight, lines
 		}
@@ -288,7 +280,32 @@ func fitLegalNoticeText(pdf *gofpdf.Fpdf, text string, width, height float64) (f
 	fontSize := 7.0
 	lineHeight := fontSize * 1.35
 	pdf.SetFont("noto-thai", "", fontSize)
-	return fontSize, lineHeight, pdf.SplitLines([]byte(text), width)
+	return fontSize, lineHeight, wrapLegalNoticeText(pdf, text, width)
+}
+
+func wrapLegalNoticeText(pdf *gofpdf.Fpdf, text string, width float64) []string {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) == 0 {
+		return []string{}
+	}
+	lines := []string{}
+	current := ""
+	for _, r := range runes {
+		next := current + string(r)
+		if strings.TrimSpace(current) != "" && pdf.GetStringWidth(next) > width {
+			lines = append(lines, strings.TrimSpace(current))
+			current = string(r)
+			continue
+		}
+		current = next
+	}
+	if strings.TrimSpace(current) != "" {
+		lines = append(lines, strings.TrimSpace(current))
+	}
+	if len(lines) == 0 {
+		return []string{text}
+	}
+	return lines
 }
 
 func outputPDF(pdf *gofpdf.Fpdf) ([]byte, error) {
