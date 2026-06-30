@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { api } from '@/services/api';
 import { formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
+import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -34,15 +35,6 @@ let renderSequence = 0;
 let renderTask = null;
 let resizeObserver = null;
 
-const signersByStep = computed(() => {
-    const groups = new Map();
-    (document.value?.steps || []).forEach((step) => groups.set(step.id, { step, signers: [] }));
-    (document.value?.signers || []).forEach((signer) => {
-        if (!groups.has(signer.stepId)) groups.set(signer.stepId, { step: signer, signers: [] });
-        groups.get(signer.stepId).signers.push(signer);
-    });
-    return [...groups.values()].sort((a, b) => Number(a.step.sequenceNo || 0) - Number(b.step.sequenceNo || 0));
-});
 const importantEvents = computed(() =>
     (document.value?.events || [])
         .map((event) => ({ ...event, view: movementEventView(event) }))
@@ -265,18 +257,6 @@ async function copy(value) {
     toast.add({ severity: 'success', summary: 'คัดลอกแล้ว', life: 1800 });
 }
 
-function conditionLabel(value) {
-    if (Number(value) === 1) return 'คนใดคนหนึ่ง';
-    if (Number(value) === 2) return 'ทุกคน';
-    return 'บุคคลภายนอก';
-}
-
-function signerTypeLabel(value) {
-    if (value === 'external') return 'บุคคลภายนอก';
-    if (value === 'any') return 'คนใดคนหนึ่ง';
-    return 'ผู้ใช้ภายใน';
-}
-
 function printerLabel(value) {
     if (!value) return '-';
     if (value === 'not_available_web_browser') return 'ไม่สามารถอ่านชื่อเครื่องพิมพ์จาก Web';
@@ -408,35 +388,23 @@ function clamp(value, min, max) {
             </section>
 
             <aside class="side-panel">
-                <Tabs value="signers">
+                <Tabs value="progress">
                     <TabList>
-                        <Tab value="signers">ผู้เซ็น</Tab>
+                        <Tab value="progress">ความคืบหน้า</Tab>
                         <Tab value="print">พิมพ์</Tab>
                         <Tab value="events">เหตุการณ์</Tab>
                     </TabList>
                     <TabPanels>
-                        <TabPanel value="signers">
+                        <TabPanel value="progress">
                             <div class="info-block">
-                                <div class="block-title">ขั้นตอนและผู้เซ็น</div>
-                                <div v-for="group in signersByStep" :key="group.step.id" class="step-card">
-                                    <div class="step-head">
-                                        <strong>{{ group.step.positionCode }} · {{ group.step.positionName }}</strong>
-                                        <Tag :value="signingStatusLabel(group.step.status)" :severity="signingStatusSeverity(group.step.status)" />
+                                <div class="block-head">
+                                    <div>
+                                        <div class="block-title">ความคืบหน้าเอกสาร</div>
+                                        <small>แสดงทุกขั้นตอน รวมขั้นตอนที่ยังไม่ถึงคิว</small>
                                     </div>
-                                    <small>{{ conditionLabel(group.step.conditionType) }}</small>
-                                    <div class="signer-list">
-                                        <div v-for="signer in group.signers" :key="signer.id" class="signer-row">
-                                            <span>
-                                                <strong>{{ signer.signerName || signer.signerUser || 'บุคคลภายนอก' }}</strong>
-                                                <small>{{ signerTypeLabel(signer.signerType) }} · หน้า {{ signer.pageNo }}</small>
-                                            </span>
-                                            <div class="signer-actions">
-                                                <Tag :value="signingStatusLabel(signer.status)" :severity="signingStatusSeverity(signer.status)" />
-                                                <Button v-if="signer.signerType === 'external' && signer.status !== 'signed'" icon="pi pi-key" rounded outlined aria-label="สร้าง OTP" @click="generateExternal(signer)" />
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
                                 </div>
+                                <DocumentWorkflowTimeline :document="document" show-external-actions @generate-external="generateExternal" />
                             </div>
                         </TabPanel>
                         <TabPanel value="print">
@@ -543,7 +511,6 @@ function clamp(value, min, max) {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.signer-row small,
 .print-row small,
 .event-line small,
 .event-time {
@@ -653,23 +620,10 @@ function clamp(value, min, max) {
 .empty-log {
     color: var(--text-color-secondary);
 }
-.step-card {
-    border: 1px solid var(--surface-border);
-    border-radius: 8px;
-    padding: 0.75rem;
-    display: grid;
-    gap: 0.5rem;
-}
-.step-head,
-.signer-row,
 .copy-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.5rem;
-}
-.signer-list {
-    display: grid;
     gap: 0.5rem;
 }
 .print-list {
@@ -689,11 +643,6 @@ function clamp(value, min, max) {
     display: grid;
     gap: 0.15rem;
     min-width: 0;
-}
-.signer-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
 }
 .event-line {
     display: grid;

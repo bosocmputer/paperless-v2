@@ -1,6 +1,7 @@
 <script setup>
 import { api } from '@/services/api';
 import { formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
+import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -12,6 +13,7 @@ const timelineDialog = ref(false);
 const timelineLoading = ref(false);
 const timelineDocument = ref(null);
 const timelineEvents = ref([]);
+const timelineError = ref('');
 
 const emptyTotals = {
     total: 0,
@@ -46,6 +48,7 @@ const needsAttention = computed(() => dashboard.value.needsAttention || []);
 const pendingByPosition = computed(() => dashboard.value.pendingByPosition || []);
 const pendingDocuments = computed(() => dashboard.value.pendingDocuments || []);
 const recentDocuments = computed(() => dashboard.value.recentDocuments || []);
+const timelineRecentEvents = computed(() => timelineEvents.value.slice(0, 5));
 const actionRows = computed(() => {
     const rows = [];
     needsAttention.value.forEach((doc) => {
@@ -138,6 +141,7 @@ async function openTimeline(doc) {
     timelineLoading.value = true;
     timelineDocument.value = doc;
     timelineEvents.value = [];
+    timelineError.value = '';
     try {
         const result = await api.getSigningDocument(doc.id);
         timelineDocument.value = result.document || doc;
@@ -145,7 +149,8 @@ async function openTimeline(doc) {
             .map((event) => ({ ...event, view: movementEventView(event) }))
             .filter((event) => event.view);
     } catch (err) {
-        toast.add({ severity: 'error', summary: 'โหลดเหตุการณ์ไม่สำเร็จ', detail: err.message, life: 3500 });
+        timelineError.value = err?.message || 'โหลดความคืบหน้าไม่สำเร็จ';
+        toast.add({ severity: 'error', summary: 'โหลดความคืบหน้าไม่สำเร็จ', detail: timelineError.value, life: 3500 });
     } finally {
         timelineLoading.value = false;
     }
@@ -342,7 +347,7 @@ function movementEventView(event) {
                         <Column header="จัดการ" style="width: 13rem">
                             <template #body="{ data }">
                                 <div class="flex gap-2">
-                                    <Button label="เหตุการณ์" icon="pi pi-history" size="small" severity="secondary" outlined @click="openTimeline(data)" />
+                                    <Button label="ความคืบหน้า" icon="pi pi-sitemap" size="small" severity="secondary" outlined @click="openTimeline(data)" />
                                     <Button label="เปิด" icon="pi pi-arrow-right" iconPos="right" size="small" outlined @click="openDocument(data)" />
                                 </div>
                             </template>
@@ -402,38 +407,57 @@ function movementEventView(event) {
             </div>
         </div>
 
-        <Dialog v-model:visible="timelineDialog" modal :header="timelineDocument ? `เหตุการณ์: ${timelineDocument.docNo || '-'}` : 'เหตุการณ์'" :style="{ width: 'min(46rem, 94vw)' }">
+        <Dialog v-model:visible="timelineDialog" modal :header="timelineDocument ? `ความคืบหน้า: ${timelineDocument.docNo || '-'}` : 'ความคืบหน้า'" :style="{ width: 'min(52rem, 94vw)' }">
             <div class="flex flex-col gap-4">
                 <div v-if="timelineDocument" class="flex flex-col gap-1">
                     <div class="font-semibold">{{ documentLine(timelineDocument) }}</div>
-                    <small class="text-muted-color">ดูความเคลื่อนไหวล่าสุดโดยไม่ต้องออกจากหน้า dashboard</small>
+                    <small class="text-muted-color">ดูว่าเอกสารผ่านขั้นตอนไหนแล้ว และตอนนี้ค้างที่ใคร</small>
                 </div>
 
                 <div v-if="timelineLoading" class="empty-panel">
                     <i class="pi pi-spin pi-spinner"></i>
-                    <span>กำลังโหลดเหตุการณ์</span>
+                    <span>กำลังโหลดความคืบหน้า</span>
                 </div>
-                <div v-else-if="timelineEvents.length === 0" class="empty-panel">
-                    <i class="pi pi-inbox"></i>
-                    <span>ยังไม่มีเหตุการณ์สำคัญ</span>
-                </div>
-                <Timeline v-else :value="timelineEvents" align="left" class="dashboard-timeline">
-                    <template #opposite="{ item }">
-                        <div class="timeline-time">{{ formatThaiDateTime(item.createdAt) }}</div>
-                    </template>
-                    <template #marker="{ item }">
-                        <span class="timeline-marker" :class="`timeline-${item.view.severity}`">
-                            <i :class="item.view.icon"></i>
-                        </span>
-                    </template>
-                    <template #content="{ item }">
-                        <div class="timeline-content">
-                            <strong>{{ item.view.title }}</strong>
-                            <span>{{ item.view.detail }}</span>
-                            <small v-if="item.actorLabel" class="text-muted-color">โดย {{ item.actorLabel }}</small>
+                <Message v-else-if="timelineError" severity="error">
+                    {{ timelineError }}
+                    <div class="mt-3">
+                        <Button v-if="timelineDocument?.id" label="เปิดเอกสาร" icon="pi pi-arrow-right" iconPos="right" severity="secondary" outlined @click="openDocument(timelineDocument)" />
+                    </div>
+                </Message>
+                <template v-else>
+                    <DocumentWorkflowTimeline :document="timelineDocument" />
+
+                    <Divider />
+
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <div class="font-semibold">เหตุการณ์ล่าสุด</div>
+                            <small class="text-muted-color">แสดงเฉพาะ audit log สำคัญล่าสุด</small>
                         </div>
-                    </template>
-                </Timeline>
+                        <Tag :value="`${timelineEvents.length} รายการ`" severity="secondary" />
+                    </div>
+                    <div v-if="timelineRecentEvents.length === 0" class="empty-panel">
+                        <i class="pi pi-inbox"></i>
+                        <span>ยังไม่มีเหตุการณ์สำคัญ</span>
+                    </div>
+                    <Timeline v-else :value="timelineRecentEvents" align="left" class="dashboard-timeline">
+                        <template #opposite="{ item }">
+                            <div class="timeline-time">{{ formatThaiDateTime(item.createdAt) }}</div>
+                        </template>
+                        <template #marker="{ item }">
+                            <span class="timeline-marker" :class="`timeline-${item.view.severity}`">
+                                <i :class="item.view.icon"></i>
+                            </span>
+                        </template>
+                        <template #content="{ item }">
+                            <div class="timeline-content">
+                                <strong>{{ item.view.title }}</strong>
+                                <span>{{ item.view.detail }}</span>
+                                <small v-if="item.actorLabel" class="text-muted-color">โดย {{ item.actorLabel }}</small>
+                            </div>
+                        </template>
+                    </Timeline>
+                </template>
 
                 <div class="flex justify-end gap-2">
                     <Button label="ปิด" severity="secondary" outlined @click="timelineDialog = false" />
