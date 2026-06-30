@@ -42,32 +42,62 @@ const needsAttention = computed(() => dashboard.value.needsAttention || []);
 const pendingByPosition = computed(() => dashboard.value.pendingByPosition || []);
 const pendingDocuments = computed(() => dashboard.value.pendingDocuments || []);
 const recentDocuments = computed(() => dashboard.value.recentDocuments || []);
+const actionRows = computed(() => {
+    const rows = [];
+    needsAttention.value.forEach((doc) => {
+        rows.push({
+            key: `attention-${doc.id}`,
+            id: doc.id,
+            docNo: doc.docNo,
+            docFormatCode: doc.docFormatCode,
+            partyName: doc.partyName,
+            partyCode: doc.partyCode,
+            updatedAt: doc.updatedAt,
+            currentPositionName: problemReason(doc.status),
+            statusLabel: signingStatusLabel(doc.status),
+            statusSeverity: signingStatusSeverity(doc.status),
+            helper: 'เปิดเอกสารเพื่อลองสร้างหลักฐานหรือส่งสถานะกลับ SML อีกครั้ง',
+            priority: 1
+        });
+    });
+    pendingDocuments.value.forEach((doc) => {
+        rows.push({
+            key: `pending-${doc.id}`,
+            id: doc.id,
+            docNo: doc.docNo,
+            docFormatCode: doc.docFormatCode,
+            partyName: doc.partyName,
+            partyCode: doc.partyCode,
+            updatedAt: doc.updatedAt,
+            currentPositionName: doc.currentPositionName || 'รอลายเซ็น',
+            pendingSignerCount: doc.pendingSignerCount,
+            statusLabel: 'รอลายเซ็น',
+            statusSeverity: 'info',
+            helper: `${doc.pendingSignerCount || 0} คนต้องเซ็นในขั้นตอนนี้`,
+            priority: 2
+        });
+    });
+    return rows.sort((a, b) => a.priority - b.priority || new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+});
 const metricCards = computed(() => [
     {
-        label: 'รอเซ็น',
+        label: 'รอลายเซ็น',
         value: workflowSummary.value.pendingDocuments || totals.value.inProgress,
-        helper: `${workflowSummary.value.pendingSigners || 0} ผู้เซ็นที่ต้องดำเนินการ`,
+        helper: `${workflowSummary.value.pendingSigners || 0} คนต้องเซ็น`,
         icon: 'pi pi-clock',
         severity: 'info'
     },
     {
-        label: 'ผู้เซ็นที่ต้องดำเนินการ',
-        value: workflowSummary.value.pendingSigners,
-        helper: 'นับเฉพาะ task ที่ถึงลำดับเซ็น',
-        icon: 'pi pi-users',
-        severity: 'info'
-    },
-    {
-        label: 'ต้องตรวจสอบ',
+        label: 'มีปัญหาต้องแก้',
         value: workflowSummary.value.attentionDocuments || workflowSummary.value.evidenceFailed + workflowSummary.value.lockFailed,
-        helper: `${workflowSummary.value.evidenceFailed} PDF, ${workflowSummary.value.lockFailed} SML`,
+        helper: `${workflowSummary.value.evidenceFailed} ไฟล์หลักฐาน, ${workflowSummary.value.lockFailed} ส่งกลับ SML`,
         icon: 'pi pi-exclamation-triangle',
         severity: workflowSummary.value.attentionDocuments ? 'warn' : 'success'
     },
     {
         label: 'เสร็จสมบูรณ์',
         value: workflowSummary.value.completedDocuments || totals.value.completed,
-        helper: 'สร้างหลักฐานและ lock SML สำเร็จ',
+        helper: 'พร้อมตรวจย้อนหลังหรือพิมพ์เอกสาร',
         icon: 'pi pi-check-circle',
         severity: 'success'
     }
@@ -102,6 +132,12 @@ function documentLine(doc) {
     return `${doc.docNo || '-'} ~ ${doc.docFormatCode || '-'} · ${doc.partyName || doc.partyCode || '-'}`;
 }
 
+function problemReason(status) {
+    if (status === 'completed_evidence_failed') return 'สร้างไฟล์หลักฐานไม่สำเร็จ';
+    if (status === 'completed_lock_failed') return 'ส่งสถานะกลับ SML ไม่สำเร็จ';
+    return 'ต้องตรวจสอบ';
+}
+
 function conditionLabel(value) {
     if (Number(value) === 1) return 'คนใดคนหนึ่ง';
     if (Number(value) === 2) return 'ทุกคน';
@@ -117,147 +153,146 @@ function conditionSeverity(value) {
 </script>
 
 <template>
-    <section class="admin-dashboard">
+    <section class="flex flex-col gap-4">
         <div class="card">
             <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                    <div class="font-semibold text-xl whitespace-nowrap truncate">ภาพรวม</div>
-                    <p class="text-muted-color m-0 min-w-0 truncate">ติดตามเอกสารรอเซ็น งานติดปัญหา และเอกสารล่าสุด</p>
+                    <div class="font-semibold text-xl whitespace-nowrap truncate">ภาพรวมงานเซ็นเอกสาร</div>
+                    <p class="text-muted-color m-0 min-w-0 truncate">เริ่มงานใหม่ และติดตามเอกสารที่ต้องดำเนินการ</p>
                 </div>
                 <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
                     <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadDashboard" />
+                    <Button label="เอกสารทั้งหมด" icon="pi pi-list" severity="secondary" outlined @click="router.push({ name: 'signing-documents' })" />
                     <Button label="ส่งเอกสารใหม่" icon="pi pi-send" @click="router.push({ name: 'signing-document-new' })" />
                 </div>
             </div>
         </div>
 
-        <div class="metric-grid">
-            <div v-for="item in metricCards" :key="item.label" class="card metric-card">
-                <span class="metric-icon" :class="`metric-${item.severity}`"><i :class="item.icon"></i></span>
-                <div class="min-w-0">
-                    <div class="metric-value">{{ item.value }}</div>
-                    <div class="font-medium truncate">{{ item.label }}</div>
-                    <small class="text-muted-color">{{ item.helper }}</small>
+        <div class="grid grid-cols-12 gap-4">
+            <div v-for="item in metricCards" :key="item.label" class="col-span-12 md:col-span-4">
+                <div class="card metric-card">
+                    <span class="metric-icon" :class="`metric-${item.severity}`"><i :class="item.icon"></i></span>
+                    <div class="min-w-0">
+                        <div class="metric-value">{{ item.value }}</div>
+                        <div class="font-semibold truncate">{{ item.label }}</div>
+                        <small class="text-muted-color">{{ item.helper }}</small>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div class="dashboard-grid">
-            <section class="card dashboard-panel attention-panel">
-                <div class="panel-head">
-                    <div>
-                        <div class="font-semibold text-lg">งานที่ต้องตรวจสอบ</div>
-                        <p class="text-muted-color m-0">PDF หลักฐานหรือ SML lock ที่ต้องแก้</p>
-                    </div>
-                    <Tag :value="`${needsAttention.length} รายการ`" :severity="needsAttention.length ? 'warn' : 'success'" />
-                </div>
-                <div v-if="loading" class="empty-panel">
-                    <i class="pi pi-spin pi-spinner"></i>
-                    <span>กำลังโหลด</span>
-                </div>
-                <div v-else-if="needsAttention.length === 0" class="empty-panel">
-                    <i class="pi pi-check-circle"></i>
-                    <span>ไม่มีงานค้างที่ต้องแก้ตอนนี้</span>
-                </div>
-                <button v-for="doc in needsAttention" v-else :key="doc.id" type="button" class="doc-row" @click="openDocument(doc)">
-                    <span>
-                        <strong>{{ documentLine(doc) }}</strong>
-                        <small>{{ formatThaiDateTime(doc.updatedAt) }}</small>
-                    </span>
-                    <Tag :value="signingStatusLabel(doc.status)" :severity="signingStatusSeverity(doc.status)" />
-                </button>
-            </section>
+        <div class="grid grid-cols-12 gap-4 items-start">
+            <div class="col-span-12 xl:col-span-8">
+                <div class="card">
+                    <Toolbar class="mb-4">
+                        <template #start>
+                            <div>
+                                <div class="font-semibold text-lg">เอกสารที่ต้องติดตาม</div>
+                                <p class="text-muted-color m-0">รายการที่กำลังรอลายเซ็น หรือมีปัญหาที่ต้องแก้</p>
+                            </div>
+                        </template>
+                        <template #end>
+                            <Tag :value="`${actionRows.length} รายการ`" :severity="actionRows.length ? 'info' : 'success'" />
+                        </template>
+                    </Toolbar>
 
-            <section class="card dashboard-panel">
-                <div class="panel-head">
-                    <div>
-                        <div class="font-semibold text-lg">รอเซ็นตามขั้นตอน</div>
-                        <p class="text-muted-color m-0">ตำแหน่งที่มี task ถึงลำดับเซ็น</p>
-                    </div>
-                    <Tag :value="`${pendingByPosition.length} ขั้นตอน`" severity="secondary" />
+                    <DataTable :value="actionRows" :loading="loading" dataKey="key" responsiveLayout="scroll" stripedRows>
+                        <template #empty>
+                            <div class="py-8 text-center text-muted-color">
+                                <i class="pi pi-check-circle block mb-3 text-2xl text-primary"></i>
+                                ไม่มีเอกสารที่ต้องติดตามตอนนี้
+                            </div>
+                        </template>
+                        <Column header="เอกสาร" sortable sortField="docNo">
+                            <template #body="{ data }">
+                                <div class="font-medium text-surface-900 dark:text-surface-0 truncate">{{ documentLine(data) }}</div>
+                            </template>
+                        </Column>
+                        <Column header="สถานะ" style="width: 10rem">
+                            <template #body="{ data }">
+                                <Tag :value="data.statusLabel" :severity="data.statusSeverity" />
+                            </template>
+                        </Column>
+                        <Column header="ตอนนี้อยู่ที่" style="min-width: 14rem">
+                            <template #body="{ data }">
+                                <div class="font-medium">{{ data.currentPositionName }}</div>
+                                <small class="text-muted-color">{{ data.helper }}</small>
+                            </template>
+                        </Column>
+                        <Column header="อัปเดตล่าสุด" style="width: 10rem">
+                            <template #body="{ data }">{{ formatThaiDateTime(data.updatedAt) }}</template>
+                        </Column>
+                        <Column header="จัดการ" style="width: 7rem">
+                            <template #body="{ data }">
+                                <Button label="เปิด" icon="pi pi-arrow-right" iconPos="right" size="small" outlined @click="openDocument(data)" />
+                            </template>
+                        </Column>
+                    </DataTable>
                 </div>
-                <div v-if="pendingByPosition.length === 0" class="empty-panel">
-                    <i class="pi pi-inbox"></i>
-                    <span>ไม่มีขั้นตอนที่รอเซ็น</span>
-                </div>
-                <div v-else class="position-list">
-                    <div v-for="item in pendingByPosition" :key="`${item.positionCode}-${item.conditionType}`" class="position-row">
-                        <span>
-                            <strong>{{ item.positionCode }} · {{ item.positionName }}</strong>
-                            <small>{{ item.documentCount }} เอกสาร · {{ item.signerCount }} ผู้เซ็น</small>
-                        </span>
-                        <Tag :value="conditionLabel(item.conditionType)" :severity="conditionSeverity(item.conditionType)" />
-                    </div>
-                </div>
-            </section>
+            </div>
 
-            <section class="card dashboard-panel">
-                <div class="panel-head">
-                    <div>
-                        <div class="font-semibold text-lg">เอกสารรอเซ็นล่าสุด</div>
-                        <p class="text-muted-color m-0">เอกสารที่มีผู้เซ็น pending อยู่ตอนนี้</p>
+            <div class="col-span-12 xl:col-span-4 flex flex-col gap-4">
+                <div class="card">
+                    <div class="flex items-start justify-between gap-3 mb-4">
+                        <div>
+                            <div class="font-semibold text-lg">รอตามขั้นตอน</div>
+                            <p class="text-muted-color m-0">ดูว่าขั้นตอนไหนมีงานรอลายเซ็น</p>
+                        </div>
+                        <Tag :value="`${pendingByPosition.length} ขั้นตอน`" severity="secondary" />
                     </div>
-                    <Button label="ดูทั้งหมด" text icon="pi pi-arrow-right" iconPos="right" @click="router.push({ name: 'signing-documents' })" />
+                    <div v-if="pendingByPosition.length === 0" class="empty-panel">
+                        <i class="pi pi-inbox"></i>
+                        <span>ไม่มีขั้นตอนที่รอลายเซ็น</span>
+                    </div>
+                    <div v-else class="flex flex-col gap-2">
+                        <div v-for="item in pendingByPosition" :key="`${item.positionCode}-${item.conditionType}`" class="surface-row">
+                            <div class="min-w-0">
+                                <div class="font-medium truncate">{{ item.positionCode }} · {{ item.positionName }}</div>
+                                <small class="text-muted-color">{{ item.documentCount }} เอกสาร · {{ item.signerCount }} คนต้องเซ็น</small>
+                            </div>
+                            <Tag :value="conditionLabel(item.conditionType)" :severity="conditionSeverity(item.conditionType)" />
+                        </div>
+                    </div>
                 </div>
-                <div v-if="pendingDocuments.length === 0" class="empty-panel">
-                    <i class="pi pi-check"></i>
-                    <span>ไม่มีเอกสารรอเซ็น</span>
-                </div>
-                <button v-for="doc in pendingDocuments" v-else :key="doc.id" type="button" class="doc-row" @click="openDocument(doc)">
-                    <span>
-                        <strong>{{ documentLine(doc) }}</strong>
-                        <small>{{ doc.currentPositionName || '-' }} · {{ doc.pendingSignerCount }} ผู้เซ็น</small>
-                    </span>
-                    <small class="text-muted-color">{{ formatThaiDateTime(doc.updatedAt) }}</small>
-                </button>
-            </section>
 
-            <section class="card dashboard-panel">
-                <div class="panel-head">
-                    <div>
-                        <div class="font-semibold text-lg">เอกสารอัปเดตล่าสุด</div>
-                        <p class="text-muted-color m-0">รายการที่มีความเคลื่อนไหวล่าสุด</p>
+                <div class="card">
+                    <div class="flex items-start justify-between gap-3 mb-4">
+                        <div>
+                            <div class="font-semibold text-lg">ความเคลื่อนไหวล่าสุด</div>
+                            <p class="text-muted-color m-0">รายการที่มีการเปลี่ยนแปลงล่าสุด</p>
+                        </div>
+                        <Tag :value="`${recentDocuments.length} รายการ`" severity="secondary" />
                     </div>
-                    <Tag :value="`${recentDocuments.length} รายการ`" severity="secondary" />
+                    <div v-if="recentDocuments.length === 0" class="empty-panel">
+                        <i class="pi pi-inbox"></i>
+                        <span>ยังไม่มีเอกสารเซ็น</span>
+                    </div>
+                    <div v-else class="flex flex-col gap-2">
+                        <button v-for="doc in recentDocuments" :key="doc.id" type="button" class="surface-row surface-button" @click="openDocument(doc)">
+                            <div class="min-w-0 text-left">
+                                <div class="font-medium truncate">{{ documentLine(doc) }}</div>
+                                <small class="text-muted-color">{{ formatThaiDateTime(doc.updatedAt) }}</small>
+                            </div>
+                            <Tag :value="signingStatusLabel(doc.status)" :severity="signingStatusSeverity(doc.status)" />
+                        </button>
+                    </div>
                 </div>
-                <div v-if="recentDocuments.length === 0" class="empty-panel">
-                    <i class="pi pi-inbox"></i>
-                    <span>ยังไม่มีเอกสารเซ็น</span>
-                </div>
-                <button v-for="doc in recentDocuments" v-else :key="doc.id" type="button" class="doc-row" @click="openDocument(doc)">
-                    <span>
-                        <strong>{{ documentLine(doc) }}</strong>
-                        <small>{{ formatThaiDateTime(doc.updatedAt) }}</small>
-                    </span>
-                    <Tag :value="signingStatusLabel(doc.status)" :severity="signingStatusSeverity(doc.status)" />
-                </button>
-            </section>
+            </div>
         </div>
     </section>
 </template>
 
 <style scoped>
-.admin-dashboard {
-    display: grid;
-    gap: 1rem;
-}
-
-.metric-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    gap: 0.75rem;
-}
-
 .metric-card {
+    min-height: 5.25rem;
     display: flex;
     align-items: center;
     gap: 0.85rem;
-    min-height: 6.25rem;
 }
 
 .metric-icon {
-    width: 2.75rem;
-    height: 2.75rem;
+    width: 2.5rem;
+    height: 2.5rem;
     border-radius: 8px;
     display: inline-grid;
     place-items: center;
@@ -280,77 +315,34 @@ function conditionSeverity(value) {
 }
 
 .metric-value {
-    font-size: 1.8rem;
+    font-size: 1.65rem;
     font-weight: 700;
     line-height: 1;
 }
 
-.dashboard-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem;
-    align-items: start;
-}
-
-.dashboard-panel {
-    display: grid;
-    gap: 0.75rem;
-}
-
-.panel-head,
-.doc-row,
-.position-row {
+.surface-row {
+    width: 100%;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 0.75rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
-}
-
-.doc-row,
-.position-row {
-    width: 100%;
-    border: 1px solid var(--surface-border);
+    gap: 0.75rem;
     background: transparent;
-    border-radius: 8px;
-    padding: 0.75rem;
-    text-align: left;
 }
 
-.doc-row {
+.surface-button {
     cursor: pointer;
+    text-align: inherit;
 }
 
-.doc-row:hover {
+.surface-button:hover {
     background: var(--surface-hover);
 }
 
-.doc-row span,
-.position-row span {
-    display: grid;
-    gap: 0.15rem;
-    min-width: 0;
-}
-
-.doc-row strong,
-.doc-row small,
-.position-row strong,
-.position-row small {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.position-list {
-    display: grid;
-    gap: 0.5rem;
-}
-
-.attention-panel {
-    border-color: color-mix(in srgb, var(--yellow-500, #eab308) 45%, var(--surface-border));
-}
-
 .empty-panel {
-    min-height: 8rem;
+    min-height: 7rem;
     border: 1px dashed var(--surface-border);
     border-radius: 8px;
     display: grid;
@@ -367,16 +359,8 @@ function conditionSeverity(value) {
     color: var(--primary-color);
 }
 
-@media (max-width: 960px) {
-    .dashboard-grid {
-        grid-template-columns: 1fr;
-    }
-}
-
 @media (max-width: 640px) {
-    .panel-head,
-    .doc-row,
-    .position-row {
+    .surface-row {
         align-items: flex-start;
         flex-direction: column;
     }
