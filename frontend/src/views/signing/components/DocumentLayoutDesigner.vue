@@ -1,5 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
+import { LEGAL_NOTICE_DISPLAY_TEXT, LEGAL_NOTICE_TEXT, legalNoticeOverflowMessage, legalNoticePreviewFontSize } from '@/utils/legalNoticePreview';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
@@ -16,10 +17,11 @@ const props = defineProps({
     fullHeight: { type: Boolean, default: false }
 });
 
-const emit = defineEmits(['update:modelValue', 'update:legalNoticeBox', 'apply-preset', 'event']);
+const emit = defineEmits(['update:modelValue', 'update:legalNoticeBox', 'apply-preset', 'event', 'validation-change']);
 
 const canvasRef = ref(null);
 const viewportRef = ref(null);
+const legalNoticePreviewRef = ref(null);
 const pdfDoc = shallowRef(null);
 const renderTask = shallowRef(null);
 const renderSequence = ref(0);
@@ -33,7 +35,9 @@ let resizeObserver;
 let dragState = null;
 let fitTimer;
 const legalNoticeKey = 'legal_notice_box';
-const legalNoticeText = 'เอกสารนี้จัดทำและลงนามในรูปแบบอิเล็กทรอนิกส์ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ผู้ลงนามยืนยันความถูกต้องของเนื้อหาและยอมรับผลผูกพันทางกฎหมายทุกประการ';
+const legalNoticeText = LEGAL_NOTICE_TEXT;
+const legalNoticePreviewText = LEGAL_NOTICE_DISPLAY_TEXT;
+const legalNoticeOverflow = ref(false);
 
 const boxes = computed(() => props.modelValue || []);
 const currentPageBoxes = computed(() => boxes.value.filter((box) => Number(box.pageNo || 1) === currentPage.value));
@@ -64,6 +68,7 @@ const validationIssues = computed(() => {
             issues.push('กรอบข้อความกฎหมายอยู่นอกหน้า PDF');
         }
         if (box.widthRatio < 0.2 || box.heightRatio < 0.035) issues.push('กรอบข้อความกฎหมายเล็กเกินไป');
+        if (legalNoticeOverflow.value) issues.push(legalNoticeOverflowMessage());
     }
     for (const step of props.configs) {
         const stepBoxes = boxes.value.filter((box) => box.positionCode === step.positionCode);
@@ -124,6 +129,8 @@ watch(
 
 watch(currentPage, renderPage);
 watch(zoom, renderPage);
+watch(validationIssues, (issues) => emit('validation-change', issues), { immediate: true });
+watch([currentPageLegalNotice, renderedSize, zoom], () => checkLegalNoticeOverflow(), { deep: true, immediate: true });
 
 onBeforeUnmount(async () => {
     clearTimeout(fitTimer);
@@ -362,6 +369,23 @@ function boxStyle(box) {
     };
 }
 
+function legalNoticeStyle(box) {
+    return {
+        ...boxStyle(box),
+        '--legal-preview-font-size': `${legalNoticePreviewFontSize(zoom.value)}px`
+    };
+}
+
+async function checkLegalNoticeOverflow() {
+    await nextTick();
+    const element = legalNoticePreviewRef.value;
+    if (!element || !currentPageLegalNotice.value) {
+        legalNoticeOverflow.value = false;
+        return;
+    }
+    legalNoticeOverflow.value = element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
+}
+
 function startPointer(event, box, mode) {
     if (!renderedSize.value.width || !renderedSize.value.height) return;
     selectBox(box);
@@ -470,12 +494,12 @@ defineExpose({ validationIssues, totalBoxes });
                         v-if="currentPageLegalNotice"
                         type="button"
                         class="signature-layout-box legal-notice-layout-box"
-                        :class="{ selected: currentPageLegalNotice.clientKey === selectedBoxKey }"
-                        :style="boxStyle(currentPageLegalNotice)"
+                        :class="{ selected: currentPageLegalNotice.clientKey === selectedBoxKey, overflow: legalNoticeOverflow }"
+                        :style="legalNoticeStyle(currentPageLegalNotice)"
                         @click.stop="selectLegalNoticeBox"
                         @pointerdown.stop="startPointer($event, currentPageLegalNotice, 'move')"
                     >
-                        <span>ข้อความกฎหมาย</span>
+                        <span ref="legalNoticePreviewRef" class="legal-notice-preview-text">{{ legalNoticePreviewText }}</span>
                         <i class="pi pi-trash" @pointerdown.stop @click.stop="deleteLegalNoticeBox"></i>
                         <b @pointerdown.stop="startPointer($event, currentPageLegalNotice, 'resize')"></b>
                     </button>
@@ -489,7 +513,7 @@ defineExpose({ validationIssues, totalBoxes });
                         @click.stop="selectBox(box)"
                         @pointerdown.stop="startPointer($event, box, 'move')"
                     >
-                        <span>{{ box.label || box.signerUser || box.positionCode }}</span>
+                        <span class="signature-layout-label">{{ box.label || box.signerUser || box.positionCode }}</span>
                         <i class="pi pi-trash" @pointerdown.stop @click.stop="deleteBox(box)"></i>
                         <b @pointerdown.stop="startPointer($event, box, 'resize')"></b>
                     </button>
@@ -529,7 +553,8 @@ defineExpose({ validationIssues, totalBoxes });
                     <Button v-else label="เลือก" icon="pi pi-mouse-pointer" size="small" severity="secondary" outlined @click="selectLegalNoticeBox" />
                 </div>
                 <Message v-if="!legalNotice" severity="warn" class="mb-3">ต้องวางกรอบข้อความกฎหมายบน PDF ก่อนส่งเซ็น</Message>
-                <Button v-else label="ลบกรอบข้อความกฎหมาย" icon="pi pi-trash" severity="danger" outlined size="small" @click="deleteLegalNoticeBox" />
+                <Message v-else-if="legalNoticeOverflow" severity="warn" class="mb-3">{{ legalNoticeOverflowMessage() }}</Message>
+                <Button v-if="legalNotice" label="ลบกรอบข้อความกฎหมาย" icon="pi pi-trash" severity="danger" outlined size="small" @click="deleteLegalNoticeBox" />
             </div>
 
             <div class="inspector-section">
@@ -659,20 +684,41 @@ defineExpose({ validationIssues, totalBoxes });
     box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.22);
 }
 .legal-notice-layout-box {
-    border-color: var(--primary-color);
-    background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--surface-400, #9ca3af);
+    background: rgba(255, 255, 255, 0.96);
+    padding: 0.25rem;
+    text-align: center;
 }
 .legal-notice-layout-box.selected {
     border-color: var(--primary-color);
-    background: color-mix(in srgb, var(--primary-color) 22%, transparent);
+    background: rgba(255, 255, 255, 0.98);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 22%, transparent);
 }
-.signature-layout-box span {
+.legal-notice-layout-box.overflow {
+    border-color: var(--p-orange-500, #f59e0b);
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.24);
+}
+.signature-layout-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 0.78rem;
     font-weight: 700;
+}
+.legal-notice-preview-text {
+    display: block;
+    width: 100%;
+    max-height: 100%;
+    overflow: hidden;
+    color: #111827;
+    font-size: var(--legal-preview-font-size, 9px);
+    font-weight: 600;
+    line-height: 1.45;
+    text-align: center;
+    white-space: normal;
+    overflow-wrap: break-word;
 }
 .signature-layout-box i {
     cursor: pointer;
@@ -680,6 +726,11 @@ defineExpose({ validationIssues, totalBoxes });
     background: rgba(255, 255, 255, 0.85);
     border-radius: 999px;
     padding: 0.2rem;
+}
+.legal-notice-layout-box i {
+    position: absolute;
+    top: -0.65rem;
+    right: -0.65rem;
 }
 .signature-layout-box b {
     position: absolute;

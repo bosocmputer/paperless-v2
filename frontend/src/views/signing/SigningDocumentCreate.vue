@@ -23,6 +23,7 @@ const creating = ref(false);
 const uploading = ref(false);
 const searchingCandidates = ref(false);
 const loadingLayoutContext = ref(false);
+const designerValidationIssues = ref([]);
 const activeStep = ref(0);
 const fileInput = ref(null);
 const form = ref(emptyForm());
@@ -53,7 +54,7 @@ const headerSummary = computed(() => {
     return 'เลือกเอกสารจาก SML แล้วอัปโหลด PDF เพื่อวางกรอบลายเซ็น';
 });
 const lockedBySML = computed(() => Number(form.value.selectedCandidate?.is_lock_record || 0) === 1);
-const layoutValidationIssues = computed(() => validateLayout());
+const layoutValidationIssues = computed(() => [...new Set([...validateLayout(), ...designerValidationIssues.value])]);
 const createDisabledReason = computed(() => finalDisabledReason());
 const dirty = computed(() => {
     if (createFinished) return false;
@@ -336,6 +337,10 @@ function onDesignerEvent(eventName) {
     else recordCreateEvent(eventName);
 }
 
+function onDesignerValidationChange(issues) {
+    designerValidationIssues.value = Array.isArray(issues) ? issues : [];
+}
+
 async function onDocFormatChange(nextCode) {
     if (nextCode === form.value.docFormatCode) return;
     const hasWorkToClear = !!form.value.selectedCandidate || !!form.value.fileId || form.value.layoutBoxes.length > 0 || !!form.value.legalNoticeBox;
@@ -526,6 +531,7 @@ function resetUploadedLayout() {
     form.value.layoutBoxes = [];
     form.value.legalNoticeBox = null;
     form.value.selectedPresetId = '';
+    designerValidationIssues.value = [];
 }
 
 function toLegalNoticePayload(box) {
@@ -804,6 +810,7 @@ function makeLayoutBoxKey() {
                             :fullHeight="designerMode"
                             @apply-preset="onApplyPreset"
                             @event="onDesignerEvent"
+                            @validation-change="onDesignerValidationChange"
                         />
                     </div>
                 </StepPanel>

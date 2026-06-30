@@ -1,5 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
+import { LEGAL_NOTICE_DISPLAY_TEXT, LEGAL_NOTICE_TEXT, legalNoticeOverflowMessage, legalNoticePreviewFontSize } from '@/utils/legalNoticePreview';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
@@ -33,6 +34,7 @@ const fileInput = ref(null);
 const canvasRef = ref(null);
 const overlayRef = ref(null);
 const viewerRef = ref(null);
+const legalNoticePreviewRef = ref(null);
 const pdfDoc = shallowRef(null);
 const currentPage = ref(1);
 const pageCount = ref(0);
@@ -58,7 +60,9 @@ const currentPageLabel = computed(() => (pageCount.value ? `หน้า ${curre
 const selectedStep = computed(() => configs.value.find((item) => item.positionCode === selectedPositionCode.value));
 const selectedBox = computed(() => boxes.value.find((box) => box.clientKey === selectedBoxKey.value) || null);
 const legalNoticeKey = 'legal_notice_box';
-const legalNoticeText = 'เอกสารนี้จัดทำและลงนามในรูปแบบอิเล็กทรอนิกส์ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ผู้ลงนามยืนยันความถูกต้องของเนื้อหาและยอมรับผลผูกพันทางกฎหมายทุกประการ';
+const legalNoticeText = LEGAL_NOTICE_TEXT;
+const legalNoticePreviewText = LEGAL_NOTICE_DISPLAY_TEXT;
+const legalNoticeOverflow = ref(false);
 const selectedLegalNotice = computed(() => (selectedBoxKey.value === legalNoticeKey && legalNoticeBox.value ? legalOverlayBox(legalNoticeBox.value) : null));
 const selectedItem = computed(() => selectedLegalNotice.value || selectedBox.value);
 const selectedIsLegalNotice = computed(() => !!selectedLegalNotice.value);
@@ -168,6 +172,7 @@ onBeforeRouteLeave((_to, _from, next) => {
 watch([currentPage, zoom], async () => {
     if (pdfDoc.value) await renderPage();
 });
+watch([currentPageLegalNotice, pageSize, zoom], () => checkLegalNoticeOverflow(), { deep: true, immediate: true });
 
 async function loadState() {
     loading.value = true;
@@ -530,6 +535,23 @@ function boxStyle(box) {
     };
 }
 
+function legalNoticeStyle(box) {
+    return {
+        ...boxStyle(box),
+        '--legal-preview-font-size': `${legalNoticePreviewFontSize(zoom.value)}px`
+    };
+}
+
+async function checkLegalNoticeOverflow() {
+    await nextTick();
+    const element = legalNoticePreviewRef.value;
+    if (!element || !currentPageLegalNotice.value) {
+        legalNoticeOverflow.value = false;
+        return;
+    }
+    legalNoticeOverflow.value = element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
+}
+
 function startBoxPointer(event, box, mode) {
     if (box.clientKey === legalNoticeKey) selectLegalNoticeBox();
     else selectBox(box);
@@ -666,6 +688,9 @@ function validateBoxes() {
         }
         if (box.widthRatio < 0.2 || box.heightRatio < 0.035) {
             issues.push({ code: 'legal_notice_box_too_small', message: 'กรอบข้อความกฎหมายเล็กเกินไป' });
+        }
+        if (legalNoticeOverflow.value) {
+            issues.push({ code: 'legal_notice_text_overflow', message: legalNoticeOverflowMessage() });
         }
     }
 
@@ -997,11 +1022,11 @@ function recordDesignerEvent(event, extra = {}) {
                             <div
                                 v-if="currentPageLegalNotice"
                                 class="signature-box legal-notice-box"
-                                :class="{ selected: selectedBoxKey === legalNoticeKey, readonly: !canEdit }"
-                                :style="boxStyle(currentPageLegalNotice)"
+                                :class="{ selected: selectedBoxKey === legalNoticeKey, readonly: !canEdit, overflow: legalNoticeOverflow }"
+                                :style="legalNoticeStyle(currentPageLegalNotice)"
                                 @pointerdown="startBoxPointer($event, currentPageLegalNotice, 'move')"
                             >
-                                <div class="signature-box-label">ข้อความกฎหมาย</div>
+                                <div ref="legalNoticePreviewRef" class="legal-notice-preview-text">{{ legalNoticePreviewText }}</div>
                                 <button v-if="canEdit" class="signature-box-delete" type="button" aria-label="ลบกรอบข้อความกฎหมาย" @pointerdown.stop @click.stop="deleteLegalNoticeBox">
                                     <i class="pi pi-times"></i>
                                 </button>
@@ -1099,6 +1124,7 @@ function recordDesignerEvent(event, extra = {}) {
                         <Tag :value="legalNoticeBox ? 'มีกรอบแล้ว' : 'ยังไม่มีกรอบ'" :severity="legalNoticeBox ? 'success' : 'warn'" />
                     </div>
                     <Message v-if="!legalNoticeBox" severity="info" class="mb-3">กรอบนี้เป็นค่าเริ่มต้น ตอนส่งเอกสารจริง admin ยังปรับตำแหน่งได้อีกครั้ง</Message>
+                    <Message v-else-if="legalNoticeOverflow" severity="warn" class="mb-3">{{ legalNoticeOverflowMessage() }}</Message>
                     <div class="flex flex-wrap gap-2">
                         <Button v-if="!legalNoticeBox" label="เพิ่มกรอบข้อความ" icon="pi pi-plus" :disabled="!canAddBoxes" @click="addLegalNoticeBox" />
                         <Button v-else label="เลือกกรอบ" icon="pi pi-mouse-pointer" severity="secondary" outlined @click="selectLegalNoticeBox({ scrollIntoView: true })" />
@@ -1295,12 +1321,38 @@ function recordDesignerEvent(event, extra = {}) {
 }
 
 .legal-notice-box {
-    border-style: dashed;
-    background: color-mix(in srgb, var(--green-500, #22c55e) 16%, transparent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--surface-400, #9ca3af);
+    background: rgba(255, 255, 255, 0.96);
+    padding: 0.25rem;
+    text-align: center;
 }
 
-.legal-notice-box .signature-box-label {
-    color: var(--green-700, #15803d);
+.legal-notice-box.selected {
+    border-color: var(--primary-color);
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary-color) 22%, transparent);
+}
+
+.legal-notice-box.overflow {
+    border-color: var(--p-orange-500, #f59e0b);
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.24);
+}
+
+.legal-notice-preview-text {
+    display: block;
+    width: 100%;
+    max-height: 100%;
+    overflow: hidden;
+    color: #111827;
+    font-size: var(--legal-preview-font-size, 9px);
+    font-weight: 600;
+    line-height: 1.45;
+    text-align: center;
+    white-space: normal;
+    overflow-wrap: break-word;
 }
 
 .signature-box.readonly {
