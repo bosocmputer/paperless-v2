@@ -12,9 +12,11 @@ const toast = useToast();
 const docNo = ref(String(route.query.doc_no || '').toUpperCase());
 const docFormatCode = ref(String(route.query.doc_format_code || '').toUpperCase());
 const loading = ref(false);
+const loadingDocuments = ref(false);
 const searched = ref(false);
 const error = ref('');
 const graph = ref(null);
+const documents = ref([]);
 const selectedNode = ref(null);
 const detailVisible = ref(false);
 const pdfDialog = ref(false);
@@ -51,6 +53,7 @@ const warnings = computed(() => graph.value?.warnings || []);
 
 onMounted(() => {
     recordEvent('document_flow_open');
+    void loadDocuments();
     if (docNo.value) void search();
 });
 
@@ -90,6 +93,18 @@ async function search() {
         toast.add({ severity: 'error', summary: 'โหลด Flow เอกสารไม่สำเร็จ', detail: error.value, life: 4000 });
     } finally {
         loading.value = false;
+    }
+}
+
+async function loadDocuments() {
+    loadingDocuments.value = true;
+    try {
+        const result = await api.listSigningDocuments();
+        documents.value = result.documents || [];
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'โหลดเอกสารใน PaperLess ไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        loadingDocuments.value = false;
     }
 }
 
@@ -160,6 +175,22 @@ function formatAmount(value) {
     return Number(value || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function documentLine(doc) {
+    return `${doc.docNo || '-'} ~ ${doc.docFormatCode || '-'} · ${doc.partyName || doc.partyCode || '-'}`;
+}
+
+function documentPdfLabel(doc) {
+    if (doc.finalFileId) return 'มี PDF ที่เซ็นครบ';
+    if (doc.currentFileId) return 'มี PDF ล่าสุด';
+    return 'ยังไม่มี PDF';
+}
+
+function documentPdfSeverity(doc) {
+    if (doc.finalFileId) return 'success';
+    if (doc.currentFileId) return 'info';
+    return 'secondary';
+}
+
 function openInfo(node) {
     recordEvent('document_flow_node_click', { nodeCount: nodes.value.length });
     selectedNode.value = node;
@@ -170,6 +201,17 @@ function openDocument(documentId) {
     if (!documentId) return;
     recordEvent('document_flow_node_click', { nodeCount: nodes.value.length });
     router.push({ name: 'signing-document-detail', params: { id: documentId } });
+}
+
+function openSigningDocument(doc) {
+    if (!doc?.id) return;
+    router.push({ name: 'signing-document-detail', params: { id: doc.id } });
+}
+
+function openFlowFromDocument(doc) {
+    docNo.value = String(doc?.docNo || '').toUpperCase();
+    docFormatCode.value = String(doc?.docFormatCode || '').toUpperCase();
+    void search();
 }
 
 function openPaperless(node) {
@@ -262,11 +304,54 @@ function recordEvent(event, extra = {}) {
         </Message>
 
         <div v-if="!searched" class="card">
-            <div class="empty-state">
-                <i class="pi pi-sitemap"></i>
-                <strong>กรอกเลขเอกสารเพื่อดู Flow จาก SML</strong>
-                <span>ระบบจะแสดงเอกสารเชื่อมโยง และบอกว่าเอกสารไหนยังไม่ได้อัปโหลดเข้า PaperLess</span>
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+                <div class="min-w-0">
+                    <div class="font-semibold text-lg">เอกสารที่มีใน PaperLess</div>
+                    <div class="text-muted-color">เปิดหน้านี้มาเห็นรายการที่อัปโหลดแล้วทันที กดดู Flow เพื่อเช็คเอกสารเชื่อมโยง</div>
+                </div>
+                <Tag :value="`${documents.length} เอกสาร`" severity="secondary" />
             </div>
+
+            <DataTable :value="documents" :loading="loadingDocuments" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows>
+                <template #empty>
+                    <div class="py-8 text-center text-muted-color">ยังไม่มีเอกสารใน PaperLess</div>
+                </template>
+
+                <Column field="docNo" header="เลขที่เอกสาร" sortable style="min-width: 18rem">
+                    <template #body="{ data }">
+                        <Button link class="p-0 font-bold text-left" @click="openSigningDocument(data)">
+                            <span class="whitespace-nowrap">{{ documentLine(data) }}</span>
+                        </Button>
+                    </template>
+                </Column>
+                <Column field="docDate" header="วันที่" sortable style="min-width: 9rem">
+                    <template #body="{ data }">{{ formatDocumentDate(data.docDate) }}</template>
+                </Column>
+                <Column field="totalAmount" header="ยอดเงิน" sortable style="min-width: 10rem">
+                    <template #body="{ data }">{{ formatAmount(data.totalAmount) }}</template>
+                </Column>
+                <Column field="status" header="สถานะ" sortable style="min-width: 11rem">
+                    <template #body="{ data }">
+                        <Tag :value="signingStatusLabel(data.status)" :severity="signingStatusSeverity(data.status)" />
+                    </template>
+                </Column>
+                <Column header="PDF" style="min-width: 12rem">
+                    <template #body="{ data }">
+                        <Tag :value="documentPdfLabel(data)" :severity="documentPdfSeverity(data)" />
+                    </template>
+                </Column>
+                <Column field="updatedAt" header="อัปเดตล่าสุด" sortable style="min-width: 13rem">
+                    <template #body="{ data }">{{ formatThaiDateTime(data.updatedAt) }}</template>
+                </Column>
+                <Column header="จัดการ" :exportable="false" style="min-width: 13rem">
+                    <template #body="{ data }">
+                        <div class="flex gap-2 flex-wrap">
+                            <Button icon="pi pi-sitemap" label="ดู Flow" size="small" @click="openFlowFromDocument(data)" />
+                            <Button icon="pi pi-eye" rounded outlined severity="secondary" aria-label="ดูเอกสาร" @click="openSigningDocument(data)" />
+                        </div>
+                    </template>
+                </Column>
+            </DataTable>
         </div>
 
         <div v-else class="card">
