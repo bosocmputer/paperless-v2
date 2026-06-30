@@ -26,15 +26,17 @@ var (
 	errSignatureDesignerEventTooLarge = errors.New("signature designer event payload too large")
 	errSignatureDesignerEventInvalid  = errors.New("signature designer event payload invalid")
 	signatureDesignerEventNames       = map[string]bool{
-		"designer_open":     true,
-		"box_add":           true,
-		"box_delete":        true,
-		"save_attempt":      true,
-		"save_success":      true,
-		"save_error":        true,
-		"upload_confirm":    true,
-		"pdf_render_error":  true,
-		"revision_conflict": true,
+		"designer_open":           true,
+		"box_add":                 true,
+		"box_delete":              true,
+		"legal_notice_box_add":    true,
+		"legal_notice_box_delete": true,
+		"save_attempt":            true,
+		"save_success":            true,
+		"save_error":              true,
+		"upload_confirm":          true,
+		"pdf_render_error":        true,
+		"revision_conflict":       true,
 	}
 )
 
@@ -221,6 +223,8 @@ func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	boxes, issues := normalizeAndValidateBoxRequests(req.Boxes, s.cfg.MaxTemplatePages)
+	legalNoticeBox, legalNoticeIssues := normalizeAndValidateLegalNoticeBox(req.LegalNoticeBox, s.cfg.MaxTemplatePages, false)
+	issues = append(issues, legalNoticeIssues...)
 	if len(issues) > 0 {
 		writeValidationIssues(w, http.StatusBadRequest, "invalid_signature_boxes", issues)
 		return
@@ -247,7 +251,7 @@ func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	template, err := s.store.ReplaceSignatureTemplateBoxes(r.Context(), id, req.Revision, boxes)
+	template, err := s.store.ReplaceSignatureTemplateBoxes(r.Context(), id, req.Revision, boxes, legalNoticeBox)
 	if errors.Is(err, store.ErrSignatureTemplateNotFound) {
 		writeError(w, http.StatusNotFound, "signature_template_not_found", "Signature template was not found.")
 		return
@@ -517,6 +521,57 @@ func normalizeAndValidateBoxRequests(boxes []models.SignatureTemplateBoxRequest,
 	return normalized, issues
 }
 
+const (
+	minLegalNoticeWidthRatio  = 0.20
+	minLegalNoticeHeightRatio = 0.035
+)
+
+func normalizeAndValidateLegalNoticeBox(box *models.LegalNoticeBoxRequest, maxPages int, required bool) (*models.LegalNoticeBoxRequest, []models.SignatureValidationIssue) {
+	if box == nil {
+		if required {
+			return nil, []models.SignatureValidationIssue{signatureIssue("legal_notice_box_required", "", "Place the legal notice box on the PDF before sending the document.")}
+		}
+		return nil, nil
+	}
+	normalized := *box
+	normalized.Label = strings.TrimSpace(normalized.Label)
+	normalized.Source = strings.ToLower(strings.TrimSpace(normalized.Source))
+	if normalized.Label == "" {
+		normalized.Label = "ข้อความกฎหมาย"
+	}
+	if normalized.Source != "" && normalized.Source != "preset" && normalized.Source != "per_document" {
+		normalized.Source = "per_document"
+	}
+	issues := []models.SignatureValidationIssue{}
+	if normalized.PageNo <= 0 || normalized.PageNo > maxPages {
+		issues = append(issues, signatureIssue("legal_notice_page_invalid", "", fmt.Sprintf("Legal notice page must be between 1 and %d.", maxPages)))
+	}
+	if normalized.XRatio < 0 || normalized.YRatio < 0 || normalized.WidthRatio <= 0 || normalized.HeightRatio <= 0 || normalized.XRatio+normalized.WidthRatio > 1 || normalized.YRatio+normalized.HeightRatio > 1 {
+		issues = append(issues, signatureIssue("legal_notice_bounds_invalid", "", "Legal notice box must stay inside the PDF page."))
+	}
+	if normalized.WidthRatio < minLegalNoticeWidthRatio || normalized.HeightRatio < minLegalNoticeHeightRatio {
+		issues = append(issues, signatureIssue("legal_notice_box_too_small", "", "Legal notice box is too small to read."))
+	}
+	return &normalized, issues
+}
+
+func legalNoticeSnapshotFromBox(box models.LegalNoticeBoxRequest, source string) models.LegalNoticeSnapshot {
+	if source != "preset" {
+		source = "per_document"
+	}
+	return models.LegalNoticeSnapshot{
+		Text:        signingLegalText,
+		TextVersion: signingLegalTextVersion,
+		Source:      source,
+		PageNo:      box.PageNo,
+		XRatio:      box.XRatio,
+		YRatio:      box.YRatio,
+		WidthRatio:  box.WidthRatio,
+		HeightRatio: box.HeightRatio,
+		Label:       firstNonEmpty(strings.TrimSpace(box.Label), "ข้อความกฎหมาย"),
+	}
+}
+
 func validationIssuesForTemplate(template *models.SignatureTemplate, configs []models.DocumentConfigStep, maxPages int) []models.SignatureValidationIssue {
 	if template == nil {
 		return []models.SignatureValidationIssue{}
@@ -531,6 +586,9 @@ func validateSignaturePreset(template models.SignatureTemplate, configs []models
 	}
 	normalizedBoxes, boxIssues := normalizeAndValidateBoxRequests(boxRequestsFromTemplate(template.Boxes), maxPages)
 	issues = append(issues, boxIssues...)
+	legalBoxRequest := legalNoticeBoxRequestFromTemplate(template.LegalNoticeBox)
+	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, false)
+	issues = append(issues, legalIssues...)
 	issues = append(issues, validateSignatureBoxSaveLimits(normalizedBoxes, configs)...)
 	sort.SliceStable(issues, func(i, j int) bool {
 		return issues[i].PositionCode < issues[j].PositionCode
@@ -580,6 +638,9 @@ func validateSignatureTemplate(template models.SignatureTemplate, configs []mode
 
 	normalizedBoxes, boxIssues := normalizeAndValidateBoxRequests(boxRequestsFromTemplate(template.Boxes), maxPages)
 	issues = append(issues, boxIssues...)
+	legalBoxRequest := legalNoticeBoxRequestFromTemplate(template.LegalNoticeBox)
+	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, false)
+	issues = append(issues, legalIssues...)
 
 	stepsByPosition := map[string]models.DocumentConfigStep{}
 	for _, step := range configs {
@@ -686,6 +747,21 @@ func boxRequestsFromTemplate(boxes []models.SignatureTemplateBox) []models.Signa
 		})
 	}
 	return out
+}
+
+func legalNoticeBoxRequestFromTemplate(box *models.LegalNoticeBox) *models.LegalNoticeBoxRequest {
+	if box == nil {
+		return nil
+	}
+	return &models.LegalNoticeBoxRequest{
+		PageNo:      box.PageNo,
+		XRatio:      box.XRatio,
+		YRatio:      box.YRatio,
+		WidthRatio:  box.WidthRatio,
+		HeightRatio: box.HeightRatio,
+		Label:       box.Label,
+		Source:      box.Source,
+	}
 }
 
 func stepUsers(step models.DocumentConfigStep) []string {

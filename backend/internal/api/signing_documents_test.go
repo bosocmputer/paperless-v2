@@ -199,6 +199,38 @@ func TestValidateSigningDocumentLayoutRejectsZeroBoxes(t *testing.T) {
 	}
 }
 
+func TestValidateLegalNoticeBoxRequiredAndBounds(t *testing.T) {
+	_, issues := normalizeAndValidateLegalNoticeBox(nil, 1, true)
+	if !hasSignatureIssue(issues, "legal_notice_box_required") {
+		t.Fatalf("expected legal_notice_box_required, got %#v", issues)
+	}
+
+	box, issues := normalizeAndValidateLegalNoticeBox(&models.LegalNoticeBoxRequest{
+		PageNo:      1,
+		XRatio:      0.2,
+		YRatio:      0.62,
+		WidthRatio:  0.6,
+		HeightRatio: 0.08,
+	}, 1, true)
+	if len(issues) != 0 {
+		t.Fatalf("expected valid legal notice box, got %#v", issues)
+	}
+	if box == nil || box.Label != "ข้อความกฎหมาย" {
+		t.Fatalf("expected default legal notice label, got %#v", box)
+	}
+
+	_, issues = normalizeAndValidateLegalNoticeBox(&models.LegalNoticeBoxRequest{
+		PageNo:      2,
+		XRatio:      0.9,
+		YRatio:      0.9,
+		WidthRatio:  0.2,
+		HeightRatio: 0.2,
+	}, 1, true)
+	if !hasSignatureIssue(issues, "legal_notice_page_invalid") || !hasSignatureIssue(issues, "legal_notice_bounds_invalid") {
+		t.Fatalf("expected page and bounds issues, got %#v", issues)
+	}
+}
+
 func TestValidateSigningDocumentLayoutRejectsDuplicateConditionTwoUser(t *testing.T) {
 	configs := []models.DocumentConfigStep{
 		{PositionCode: "3", PositionName: "ผู้อนุมัติ", User01: "901:นาย A", User02: "902:นาย B", ConditionType: 2},

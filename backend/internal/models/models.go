@@ -133,20 +133,21 @@ type UploadedFile struct {
 }
 
 type SignatureTemplate struct {
-	ID            string                 `json:"id"`
-	ScreenCode    string                 `json:"screenCode"`
-	DocFormatCode string                 `json:"docFormatCode"`
-	Version       int                    `json:"version"`
-	Status        string                 `json:"status"`
-	SampleFileID  string                 `json:"sampleFileId"`
-	SampleFile    *UploadedFile          `json:"sampleFile,omitempty"`
-	Revision      int                    `json:"revision"`
-	CreatedBy     string                 `json:"createdBy"`
-	PublishedBy   string                 `json:"publishedBy"`
-	CreatedAt     time.Time              `json:"createdAt"`
-	UpdatedAt     time.Time              `json:"updatedAt"`
-	PublishedAt   *time.Time             `json:"publishedAt,omitempty"`
-	Boxes         []SignatureTemplateBox `json:"boxes"`
+	ID             string                 `json:"id"`
+	ScreenCode     string                 `json:"screenCode"`
+	DocFormatCode  string                 `json:"docFormatCode"`
+	Version        int                    `json:"version"`
+	Status         string                 `json:"status"`
+	SampleFileID   string                 `json:"sampleFileId"`
+	SampleFile     *UploadedFile          `json:"sampleFile,omitempty"`
+	Revision       int                    `json:"revision"`
+	CreatedBy      string                 `json:"createdBy"`
+	PublishedBy    string                 `json:"publishedBy"`
+	CreatedAt      time.Time              `json:"createdAt"`
+	UpdatedAt      time.Time              `json:"updatedAt"`
+	PublishedAt    *time.Time             `json:"publishedAt,omitempty"`
+	Boxes          []SignatureTemplateBox `json:"boxes"`
+	LegalNoticeBox *LegalNoticeBox        `json:"legalNoticeBox,omitempty"`
 }
 
 type SignatureTemplateBox struct {
@@ -178,9 +179,42 @@ type SignatureTemplateBoxRequest struct {
 	Label        string  `json:"label"`
 }
 
+type LegalNoticeBox struct {
+	PageNo      int     `json:"pageNo"`
+	XRatio      float64 `json:"xRatio"`
+	YRatio      float64 `json:"yRatio"`
+	WidthRatio  float64 `json:"widthRatio"`
+	HeightRatio float64 `json:"heightRatio"`
+	Label       string  `json:"label"`
+	Source      string  `json:"source,omitempty"`
+}
+
+type LegalNoticeBoxRequest struct {
+	PageNo      int     `json:"pageNo"`
+	XRatio      float64 `json:"xRatio"`
+	YRatio      float64 `json:"yRatio"`
+	WidthRatio  float64 `json:"widthRatio"`
+	HeightRatio float64 `json:"heightRatio"`
+	Label       string  `json:"label"`
+	Source      string  `json:"source"`
+}
+
+type LegalNoticeSnapshot struct {
+	Text        string  `json:"text"`
+	TextVersion string  `json:"textVersion"`
+	Source      string  `json:"source"`
+	PageNo      int     `json:"pageNo"`
+	XRatio      float64 `json:"xRatio"`
+	YRatio      float64 `json:"yRatio"`
+	WidthRatio  float64 `json:"widthRatio"`
+	HeightRatio float64 `json:"heightRatio"`
+	Label       string  `json:"label"`
+}
+
 type SaveSignatureBoxesRequest struct {
-	Revision int                           `json:"revision"`
-	Boxes    []SignatureTemplateBoxRequest `json:"boxes"`
+	Revision       int                           `json:"revision"`
+	Boxes          []SignatureTemplateBoxRequest `json:"boxes"`
+	LegalNoticeBox *LegalNoticeBoxRequest        `json:"legalNoticeBox"`
 }
 
 type SignatureDesignerViewport struct {
@@ -243,6 +277,7 @@ type SigningDocument struct {
 	UpdatedAt           time.Time                   `json:"updatedAt"`
 	CompletedAt         *time.Time                  `json:"completedAt,omitempty"`
 	LockedAt            *time.Time                  `json:"lockedAt,omitempty"`
+	LegalNoticeSnapshot *LegalNoticeSnapshot        `json:"legalNoticeSnapshot,omitempty"`
 	OriginalFile        *UploadedFile               `json:"originalFile,omitempty"`
 	CurrentFile         *UploadedFile               `json:"currentFile,omitempty"`
 	FinalFile           *UploadedFile               `json:"finalFile,omitempty"`

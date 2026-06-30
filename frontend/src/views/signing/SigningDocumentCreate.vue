@@ -57,7 +57,7 @@ const layoutValidationIssues = computed(() => validateLayout());
 const createDisabledReason = computed(() => finalDisabledReason());
 const dirty = computed(() => {
     if (createFinished) return false;
-    return !!form.value.docFormatCode || !!form.value.search || !!form.value.selectedCandidate || !!form.value.fileId || form.value.layoutBoxes.length > 0;
+    return !!form.value.docFormatCode || !!form.value.search || !!form.value.selectedCandidate || !!form.value.fileId || form.value.layoutBoxes.length > 0 || !!form.value.legalNoticeBox;
 });
 const stepBlockedReason = computed(() => wizardSteps.map((_step, index) => blockedReasonForStep(index)));
 const currentStepReason = computed(() => stepBlockedReason.value[activeStep.value] || '');
@@ -94,7 +94,7 @@ watch(
 );
 
 watch(
-    () => [form.value.selectedCandidate, form.value.fileId, form.value.layoutBoxes, form.value.selectedPresetId, activeStep.value],
+    () => [form.value.selectedCandidate, form.value.fileId, form.value.layoutBoxes, form.value.legalNoticeBox, form.value.selectedPresetId, activeStep.value],
     persistDraft,
     { deep: true }
 );
@@ -156,7 +156,8 @@ function emptyForm() {
         configs: [],
         presetTemplate: null,
         selectedPresetId: '',
-        layoutBoxes: []
+        layoutBoxes: [],
+        legalNoticeBox: null
     };
 }
 
@@ -216,9 +217,9 @@ async function onFileChange(event) {
     const file = event.target.files?.[0] || null;
     event.target.value = '';
     if (!file) return;
-    if (form.value.layoutBoxes.length > 0) {
+    if (form.value.layoutBoxes.length > 0 || form.value.legalNoticeBox) {
         confirm.require({
-            message: 'การเปลี่ยน PDF จะล้างกรอบลายเซ็นเดิมทั้งหมด ต้องการดำเนินการต่อหรือไม่?',
+            message: 'การเปลี่ยน PDF จะล้างกรอบลายเซ็นและกรอบข้อความกฎหมายเดิมทั้งหมด ต้องการดำเนินการต่อหรือไม่?',
             header: 'เปลี่ยน PDF',
             icon: 'pi pi-exclamation-triangle',
             rejectProps: { label: 'ยกเลิก', severity: 'secondary', outlined: true },
@@ -237,6 +238,7 @@ async function uploadSelectedPDF(file) {
     form.value.fileUrl = '';
     form.value.uploadedFile = null;
     form.value.layoutBoxes = [];
+    form.value.legalNoticeBox = null;
     form.value.selectedPresetId = '';
     uploading.value = true;
     try {
@@ -263,7 +265,7 @@ async function loadLayoutContext() {
         const [configsResult, templateResult] = await Promise.all([api.listDocumentConfigs({ docFormatCode: form.value.docFormatCode }), api.getSignatureTemplateState(form.value.docFormatCode).catch(() => ({}))]);
         form.value.configs = configsResult.configs || [];
         form.value.presetTemplate = templateResult.active || templateResult.draft || null;
-        if (form.value.uploadedFile && form.value.layoutBoxes.length === 0) applyPresetAfterUpload();
+        if (form.value.uploadedFile && form.value.layoutBoxes.length === 0 && !form.value.legalNoticeBox) applyPresetAfterUpload();
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลด Workflow ไม่สำเร็จ', detail: err.message, life: 4500 });
     } finally {
@@ -279,7 +281,7 @@ function onApplyPreset(template) {
 
 function applyPresetAfterUpload() {
     const template = form.value.presetTemplate;
-    if (!template?.boxes?.length || !form.value.uploadedFile) return;
+    if ((!template?.boxes?.length && !template?.legalNoticeBox) || !form.value.uploadedFile) return;
     const presetPageCount = Number(template.sampleFile?.pageCount || 0);
     const uploadedPageCount = Number(form.value.uploadedFile?.pageCount || 0);
     if (presetPageCount && uploadedPageCount && presetPageCount !== uploadedPageCount) {
@@ -293,7 +295,7 @@ function applyPresetAfterUpload() {
         return;
     }
 
-    form.value.layoutBoxes = template.boxes.map((box) => ({
+    form.value.layoutBoxes = (template.boxes || []).map((box) => ({
         ...box,
         clientKey: makeLayoutBoxKey(),
         pageNo: Number(box.pageNo || 1),
@@ -302,6 +304,18 @@ function applyPresetAfterUpload() {
         widthRatio: Number(box.widthRatio || 0.2),
         heightRatio: Number(box.heightRatio || 0.08)
     }));
+    form.value.legalNoticeBox = template.legalNoticeBox
+        ? {
+              ...template.legalNoticeBox,
+              pageNo: Number(template.legalNoticeBox.pageNo || 1),
+              xRatio: Number(template.legalNoticeBox.xRatio || 0.2),
+              yRatio: Number(template.legalNoticeBox.yRatio || 0.62),
+              widthRatio: Number(template.legalNoticeBox.widthRatio || 0.6),
+              heightRatio: Number(template.legalNoticeBox.heightRatio || 0.065),
+              label: template.legalNoticeBox.label || 'ข้อความกฎหมาย',
+              source: 'preset'
+          }
+        : null;
     form.value.selectedPresetId = template.id || '';
     recordCreateEvent('preset_applied');
     toast.add({
@@ -324,7 +338,7 @@ function onDesignerEvent(eventName) {
 
 async function onDocFormatChange(nextCode) {
     if (nextCode === form.value.docFormatCode) return;
-    const hasWorkToClear = !!form.value.selectedCandidate || !!form.value.fileId || form.value.layoutBoxes.length > 0;
+    const hasWorkToClear = !!form.value.selectedCandidate || !!form.value.fileId || form.value.layoutBoxes.length > 0 || !!form.value.legalNoticeBox;
     if (hasWorkToClear) {
         confirm.require({
             message: 'การเปลี่ยนชนิดเอกสารจะล้างเลขเอกสาร PDF และกรอบลายเซ็นเดิม ต้องการดำเนินการต่อหรือไม่?',
@@ -410,6 +424,7 @@ async function submitDocument() {
             signatureTemplateId: form.value.selectedPresetId,
             confirmLocked: form.value.confirmLocked,
             layoutBoxes: form.value.layoutBoxes.map(toLayoutPayload),
+            legalNoticeBox: toLegalNoticePayload(form.value.legalNoticeBox),
             idempotencyKey: createIdempotencyKey.value
         });
         discardDraft();
@@ -432,6 +447,7 @@ function blockedReasonForStep(index) {
     if (index === 1) {
         if (!form.value.fileId) return 'อัปโหลด PDF จริงก่อน';
         if (form.value.layoutBoxes.length === 0) return 'วางกรอบลายเซ็นอย่างน้อย 1 กรอบ';
+        if (!form.value.legalNoticeBox) return 'วางกรอบข้อความกฎหมายบน PDF ก่อน';
         if (layoutValidationIssues.value.length > 0) return layoutValidationIssues.value[0];
     }
     return '';
@@ -449,6 +465,7 @@ function validateLayout() {
     const issues = [];
     const pageCount = Number(form.value.uploadedFile?.pageCount || 0);
     const boxes = form.value.layoutBoxes || [];
+    const legalNoticeBox = form.value.legalNoticeBox;
     const configsByPosition = new Map((form.value.configs || []).map((step) => [String(step.positionCode), step]));
     boxes.forEach((box) => {
         if (!configsByPosition.has(String(box.positionCode))) issues.push(`ตำแหน่ง ${box.positionCode} ไม่อยู่ใน Workflow`);
@@ -457,6 +474,22 @@ function validateLayout() {
             issues.push(`กรอบ ${box.label || box.positionCode} อยู่นอกหน้า PDF`);
         }
     });
+    if (!legalNoticeBox) {
+        issues.push('ต้องวางกรอบข้อความกฎหมาย');
+    } else {
+        if (legalNoticeBox.pageNo < 1 || (pageCount && legalNoticeBox.pageNo > pageCount)) issues.push('กรอบข้อความกฎหมายอยู่หน้าที่ไม่ถูกต้อง');
+        if (
+            legalNoticeBox.xRatio < 0 ||
+            legalNoticeBox.yRatio < 0 ||
+            legalNoticeBox.widthRatio <= 0 ||
+            legalNoticeBox.heightRatio <= 0 ||
+            legalNoticeBox.xRatio + legalNoticeBox.widthRatio > 1 ||
+            legalNoticeBox.yRatio + legalNoticeBox.heightRatio > 1
+        ) {
+            issues.push('กรอบข้อความกฎหมายอยู่นอกหน้า PDF');
+        }
+        if (legalNoticeBox.widthRatio < 0.2 || legalNoticeBox.heightRatio < 0.035) issues.push('กรอบข้อความกฎหมายเล็กเกินไป');
+    }
     (form.value.configs || []).forEach((step) => {
         const stepBoxes = boxes.filter((box) => String(box.positionCode) === String(step.positionCode));
         if (stepBoxes.length === 0) return;
@@ -491,7 +524,21 @@ function resetUploadedLayout() {
     form.value.fileUrl = '';
     form.value.uploadedFile = null;
     form.value.layoutBoxes = [];
+    form.value.legalNoticeBox = null;
     form.value.selectedPresetId = '';
+}
+
+function toLegalNoticePayload(box) {
+    if (!box) return null;
+    return {
+        pageNo: Number(box.pageNo || 1),
+        xRatio: Number(box.xRatio || 0),
+        yRatio: Number(box.yRatio || 0),
+        widthRatio: Number(box.widthRatio || 0),
+        heightRatio: Number(box.heightRatio || 0),
+        label: box.label || 'ข้อความกฎหมาย',
+        source: box.source || (form.value.selectedPresetId ? 'preset' : 'per_document')
+    };
 }
 
 function discardDraft() {
@@ -582,6 +629,9 @@ function recordCreateEvent(event) {
         'preset_applied',
         'box_add',
         'box_delete',
+        'legal_notice_box_add',
+        'legal_notice_box_delete',
+        'legal_notice_missing_blocked',
         'pdf_render_error'
     ]);
     if (!allowed.has(event)) return;
@@ -746,6 +796,7 @@ function makeLayoutBoxKey() {
                         <DocumentLayoutDesigner
                             v-if="activeStep === 1 && form.fileUrl"
                             v-model="form.layoutBoxes"
+                            v-model:legalNoticeBox="form.legalNoticeBox"
                             :pdfUrl="form.fileUrl"
                             :pageCount="form.uploadedFile?.pageCount || 0"
                             :configs="form.configs"
@@ -772,6 +823,8 @@ function makeLayoutBoxKey() {
                                     <dd class="col-span-7 m-0">{{ form.uploadedFile?.originalName || '-' }}</dd>
                                     <dt class="col-span-5 text-muted-color">กรอบลายเซ็น</dt>
                                     <dd class="col-span-7 m-0">{{ form.layoutBoxes.length }} กรอบ</dd>
+                                    <dt class="col-span-5 text-muted-color">ข้อความกฎหมาย</dt>
+                                    <dd class="col-span-7 m-0">{{ form.legalNoticeBox ? `หน้า ${form.legalNoticeBox.pageNo}` : '-' }}</dd>
                                 </dl>
                             </div>
                             <div class="col-span-12 min-w-0 md:col-span-6">

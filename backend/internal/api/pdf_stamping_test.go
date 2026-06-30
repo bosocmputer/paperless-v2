@@ -112,11 +112,83 @@ func TestStampPDFWithFinalEvidenceAddsPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stamp pdf: %v", err)
 	}
-	out, err := stampPDFWithSignaturesAndEvidence(source, 1, signers, files, finalEvidencePage{
+	out, err := stampPDFWithSignaturesAndEvidence(source, 1, signers, files, nil, finalEvidencePage{
 		Document:            models.SigningDocument{ID: "doc-1", DocNo: "PO26060001", DocFormatCode: "PO", CompletedAt: &now},
 		Signers:             signers,
 		SignedContentSHA256: sha256Hex(signed),
 		GeneratedAt:         now,
+	})
+	if err != nil {
+		t.Fatalf("stamp evidence pdf: %v", err)
+	}
+	pageCount, err := readPDFPageCount(out)
+	if err != nil {
+		t.Fatalf("read page count: %v", err)
+	}
+	if pageCount != 2 {
+		t.Fatalf("expected evidence page, got %d pages", pageCount)
+	}
+}
+
+func TestStampPDFWithLegalNoticeAndFinalEvidenceAddsPage(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.pdf")
+	pdf := gofpdf.New("P", "pt", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Helvetica", "", 12)
+	pdf.Text(72, 72, "source")
+	if err := pdf.OutputFileAndClose(source); err != nil {
+		t.Fatalf("create source pdf: %v", err)
+	}
+
+	signaturePath := filepath.Join(dir, "signature.png")
+	signatureFile, err := os.Create(signaturePath)
+	if err != nil {
+		t.Fatalf("create png: %v", err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 24, 8))
+	if err := png.Encode(signatureFile, img); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	if err := signatureFile.Close(); err != nil {
+		t.Fatalf("close png: %v", err)
+	}
+
+	now := time.Now()
+	signers := []models.SigningDocumentSigner{{
+		PageNo:          1,
+		XRatio:          0.1,
+		YRatio:          0.78,
+		WidthRatio:      0.2,
+		HeightRatio:     0.08,
+		Status:          "signed",
+		SignatureFileID: "sig-1",
+		SignedAt:        &now,
+	}}
+	files := map[string]models.UploadedFile{"sig-1": {StoragePath: signaturePath, ContentType: "image/png"}}
+	notice := &models.LegalNoticeSnapshot{
+		Text:        signingLegalText,
+		TextVersion: signingLegalTextVersion,
+		Source:      "per_document",
+		PageNo:      1,
+		XRatio:      0.2,
+		YRatio:      0.62,
+		WidthRatio:  0.6,
+		HeightRatio: 0.08,
+		Label:       "ข้อความกฎหมาย",
+	}
+
+	signed, err := stampPDFWithSignaturesAndLegalNotice(source, 1, signers, files, notice)
+	if err != nil {
+		t.Fatalf("stamp legal notice pdf: %v", err)
+	}
+	out, err := stampPDFWithSignaturesAndEvidence(source, 1, signers, files, notice, finalEvidencePage{
+		Document:            models.SigningDocument{ID: "doc-1", DocNo: "PO26060001", DocFormatCode: "PO", CompletedAt: &now},
+		Signers:             signers,
+		SignedContentSHA256: sha256Hex(signed),
+		GeneratedAt:         now,
+		LegalText:           signingLegalText,
+		LegalTextVersion:    signingLegalTextVersion,
 	})
 	if err != nil {
 		t.Fatalf("stamp evidence pdf: %v", err)

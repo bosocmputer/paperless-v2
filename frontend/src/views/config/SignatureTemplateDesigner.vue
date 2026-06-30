@@ -25,6 +25,7 @@ const configs = ref([]);
 const draft = ref(null);
 const active = ref(null);
 const boxes = ref([]);
+const legalNoticeBox = ref(null);
 const dirty = ref(false);
 const selectedPositionCode = ref('');
 const selectedBoxKey = ref('');
@@ -56,6 +57,11 @@ const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, i
 const currentPageLabel = computed(() => (pageCount.value ? `หน้า ${currentPage.value} / ${pageCount.value}` : 'หน้า - / -'));
 const selectedStep = computed(() => configs.value.find((item) => item.positionCode === selectedPositionCode.value));
 const selectedBox = computed(() => boxes.value.find((box) => box.clientKey === selectedBoxKey.value) || null);
+const legalNoticeKey = 'legal_notice_box';
+const legalNoticeText = 'เอกสารนี้จัดทำและลงนามในรูปแบบอิเล็กทรอนิกส์ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ผู้ลงนามยืนยันความถูกต้องของเนื้อหาและยอมรับผลผูกพันทางกฎหมายทุกประการ';
+const selectedLegalNotice = computed(() => (selectedBoxKey.value === legalNoticeKey && legalNoticeBox.value ? legalOverlayBox(legalNoticeBox.value) : null));
+const selectedItem = computed(() => selectedLegalNotice.value || selectedBox.value);
+const selectedIsLegalNotice = computed(() => !!selectedLegalNotice.value);
 const selectedBoxStep = computed(() => (selectedBox.value ? configs.value.find((item) => item.positionCode === selectedBox.value.positionCode) : null));
 const selectedBoxSignerOptions = computed(() => stepUsers(selectedBoxStep.value || {}).map((user, index) => ({ label: user, value: user, slot: index + 1 })));
 const selectedBoxSignerTypeLabel = computed(() => {
@@ -67,6 +73,7 @@ const selectedBoxSignerTypeLabel = computed(() => {
 const boxesByPosition = computed(() => groupBoxesBy((box) => box.positionCode));
 const boxesByPage = computed(() => groupBoxesBy((box) => Number(box.pageNo)));
 const currentPageBoxes = computed(() => boxesByPage.value.get(Number(currentPage.value)) || []);
+const currentPageLegalNotice = computed(() => (legalNoticeBox.value && Number(legalNoticeBox.value.pageNo || 1) === Number(currentPage.value) ? legalOverlayBox(legalNoticeBox.value) : null));
 const validationIssues = computed(() => validateBoxes());
 const validationByPosition = computed(() => {
     const grouped = new Map();
@@ -173,6 +180,7 @@ async function loadState() {
         active.value = result.active;
         maxTemplatePages.value = result.maxTemplatePages || 20;
         boxes.value = withClientKeys((active.value || draft.value)?.boxes || []);
+        legalNoticeBox.value = withLegalNoticeClientKey((active.value || draft.value)?.legalNoticeBox || null);
         selectedPositionCode.value = configs.value[0]?.positionCode || '';
         selectedBoxKey.value = '';
         dirty.value = false;
@@ -279,9 +287,9 @@ async function handleFileChange(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if (boxes.value.length > 0) {
+    if (boxes.value.length > 0 || legalNoticeBox.value) {
         confirm.require({
-            message: 'อัปโหลด PDF ใหม่จะล้างกรอบเดิมทั้งหมด และใช้ไฟล์ใหม่นี้แทนของเก่า',
+            message: 'อัปโหลด PDF ใหม่จะล้างกรอบลายเซ็นและกรอบข้อความกฎหมายเดิมทั้งหมด และใช้ไฟล์ใหม่นี้แทนของเก่า',
             header: 'แทนที่ PDF ตัวอย่าง',
             icon: 'pi pi-exclamation-triangle',
             rejectProps: {
@@ -313,6 +321,7 @@ async function uploadSamplePDF(file) {
         active.value = result.template;
         draft.value = null;
         boxes.value = withClientKeys(result.template?.boxes || []);
+        legalNoticeBox.value = withLegalNoticeClientKey(result.template?.legalNoticeBox || null);
         dirty.value = false;
         currentPage.value = 1;
         selectedBoxKey.value = '';
@@ -394,6 +403,55 @@ function deleteBox(box) {
     });
 }
 
+function addLegalNoticeBox() {
+    if (!canEdit.value || !template.value?.sampleFileId) {
+        toast.add({ severity: 'warn', summary: 'ต้องอัปโหลด PDF ตัวอย่างก่อน', life: 3500 });
+        return;
+    }
+    if (legalNoticeBox.value) {
+        selectLegalNoticeBox({ scrollIntoView: true });
+        return;
+    }
+    legalNoticeBox.value = {
+        clientKey: legalNoticeKey,
+        pageNo: currentPage.value,
+        xRatio: 0.2,
+        yRatio: 0.62,
+        widthRatio: 0.6,
+        heightRatio: 0.065,
+        label: 'ข้อความกฎหมาย',
+        source: 'preset'
+    };
+    selectedBoxKey.value = legalNoticeKey;
+    dirty.value = true;
+    recordDesignerEvent('legal_notice_box_add');
+    nextTick(() => scrollBoxIntoView(legalNoticeBox.value));
+}
+
+function deleteLegalNoticeBox() {
+    if (!legalNoticeBox.value) return;
+    confirm.require({
+        message: 'ลบกรอบข้อความกฎหมายออกจากกรอบเริ่มต้นนี้ใช่ไหม?',
+        header: 'ลบกรอบข้อความกฎหมาย',
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: 'ยกเลิก',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ลบกรอบ',
+            severity: 'danger'
+        },
+        accept: () => {
+            legalNoticeBox.value = null;
+            if (selectedBoxKey.value === legalNoticeKey) selectedBoxKey.value = '';
+            dirty.value = true;
+            recordDesignerEvent('legal_notice_box_delete');
+        }
+    });
+}
+
 function removeBox(box) {
     const step = configs.value.find((item) => item.positionCode === box.positionCode);
     boxes.value = boxes.value.filter((item) => item.clientKey !== box.clientKey);
@@ -410,8 +468,29 @@ function selectBox(box, options = {}) {
     if (options.scrollIntoView) nextTick(() => scrollBoxIntoView(box));
 }
 
+function selectLegalNoticeBox(options = {}) {
+    if (!legalNoticeBox.value) return;
+    selectedBoxKey.value = legalNoticeKey;
+    if (Number(legalNoticeBox.value.pageNo) !== Number(currentPage.value)) currentPage.value = Number(legalNoticeBox.value.pageNo || 1);
+    if (options.scrollIntoView) nextTick(() => scrollBoxIntoView(legalNoticeBox.value));
+}
+
+function legalOverlayBox(box) {
+    return {
+        ...box,
+        clientKey: legalNoticeKey,
+        label: box.label || 'ข้อความกฎหมาย',
+        boxType: 'legal_notice'
+    };
+}
+
 function updateBoxLabel(box, value) {
     if (!canEdit.value || !box) return;
+    if (box.clientKey === legalNoticeKey) {
+        legalNoticeBox.value = { ...legalNoticeBox.value, label: 'ข้อความกฎหมาย' };
+        dirty.value = true;
+        return;
+    }
     box.label = String(value || '').slice(0, 80);
     dirty.value = true;
 }
@@ -420,6 +499,12 @@ function updateBoxPage(box, value) {
     if (!canEdit.value || !box) return;
     const pageNo = Number(value);
     if (!Number.isFinite(pageNo) || pageNo < 1 || pageNo > Math.max(pageCount.value, 1)) return;
+    if (box.clientKey === legalNoticeKey) {
+        legalNoticeBox.value = { ...legalNoticeBox.value, pageNo };
+        currentPage.value = pageNo;
+        dirty.value = true;
+        return;
+    }
     box.pageNo = pageNo;
     currentPage.value = pageNo;
     dirty.value = true;
@@ -446,16 +531,18 @@ function updateBoxRatio(box, field, value) {
     const percent = Number(value);
     if (!Number.isFinite(percent)) return;
     const ratio = percent / 100;
+    const target = box.clientKey === legalNoticeKey ? { ...legalNoticeBox.value } : box;
 
     if (field === 'xRatio') {
-        box.xRatio = clamp(ratio, 0, 1 - box.widthRatio);
+        target.xRatio = clamp(ratio, 0, 1 - target.widthRatio);
     } else if (field === 'yRatio') {
-        box.yRatio = clamp(ratio, 0, 1 - box.heightRatio);
+        target.yRatio = clamp(ratio, 0, 1 - target.heightRatio);
     } else if (field === 'widthRatio') {
-        box.widthRatio = clamp(ratio, 0.03, 1 - box.xRatio);
+        target.widthRatio = clamp(ratio, box.clientKey === legalNoticeKey ? 0.2 : 0.03, 1 - target.xRatio);
     } else if (field === 'heightRatio') {
-        box.heightRatio = clamp(ratio, 0.03, 1 - box.yRatio);
+        target.heightRatio = clamp(ratio, box.clientKey === legalNoticeKey ? 0.035 : 0.03, 1 - target.yRatio);
     }
+    if (box.clientKey === legalNoticeKey) legalNoticeBox.value = target;
 
     dirty.value = true;
 }
@@ -470,7 +557,8 @@ function boxStyle(box) {
 }
 
 function startBoxPointer(event, box, mode) {
-    selectBox(box);
+    if (box.clientKey === legalNoticeKey) selectLegalNoticeBox();
+    else selectBox(box);
     if (!canEdit.value || !overlayRef.value) return;
     cleanupPointerListeners();
     event.preventDefault();
@@ -488,15 +576,16 @@ function startBoxPointer(event, box, mode) {
         frame = null;
         const dx = (latestEvent.clientX - start.x) / rect.width;
         const dy = (latestEvent.clientY - start.y) / rect.height;
-        const target = boxes.value.find((item) => item.clientKey === box.clientKey);
+        const target = box.clientKey === legalNoticeKey ? legalNoticeBox.value : boxes.value.find((item) => item.clientKey === box.clientKey);
         if (!target) return;
         if (mode === 'move') {
             target.xRatio = clamp(start.box.xRatio + dx, 0, 1 - target.widthRatio);
             target.yRatio = clamp(start.box.yRatio + dy, 0, 1 - target.heightRatio);
         } else {
-            target.widthRatio = clamp(start.box.widthRatio + dx, 0.03, 1 - target.xRatio);
-            target.heightRatio = clamp(start.box.heightRatio + dy, 0.03, 1 - target.yRatio);
+            target.widthRatio = clamp(start.box.widthRatio + dx, box.clientKey === legalNoticeKey ? 0.2 : 0.03, 1 - target.xRatio);
+            target.heightRatio = clamp(start.box.heightRatio + dy, box.clientKey === legalNoticeKey ? 0.035 : 0.03, 1 - target.yRatio);
         }
+        if (box.clientKey === legalNoticeKey) legalNoticeBox.value = { ...target };
         dirty.value = true;
     };
 
@@ -546,13 +635,16 @@ async function saveTemplate(showToast = true) {
                 widthRatio: Number(box.widthRatio),
                 heightRatio: Number(box.heightRatio),
                 label: box.label || ''
-            }))
+            })),
+            legalNoticeBox: toLegalNoticePayload(legalNoticeBox.value)
         };
         const result = await api.saveSignatureTemplateBoxes(template.value.id, payload);
         active.value = result.template;
         draft.value = null;
         boxes.value = withClientKeys(result.template?.boxes || []);
+        legalNoticeBox.value = withLegalNoticeClientKey(result.template?.legalNoticeBox || null);
         restoreSelectedBox(selectedSnapshot);
+        if (!selectedSnapshot && selectedBoxKey.value === legalNoticeKey && legalNoticeBox.value) selectLegalNoticeBox();
         dirty.value = false;
         recordDesignerEvent('save_success');
         if (showToast) toast.add({ severity: 'success', summary: 'บันทึกแล้ว', life: 2500 });
@@ -590,6 +682,18 @@ function validateBoxes() {
             issues.push({ code: 'box_bounds_invalid', positionCode: box.positionCode, message: `กรอบของ Position ${box.positionCode} อยู่นอกหน้า PDF` });
         }
     });
+    if (legalNoticeBox.value) {
+        const box = legalNoticeBox.value;
+        if (box.pageNo < 1 || box.pageNo > Math.max(storedPageCount.value || pageCount.value || 1, 1)) {
+            issues.push({ code: 'legal_notice_page_invalid', message: 'กรอบข้อความกฎหมายอยู่หน้าที่ไม่ถูกต้อง' });
+        }
+        if (box.xRatio < 0 || box.yRatio < 0 || box.widthRatio <= 0 || box.heightRatio <= 0 || box.xRatio + box.widthRatio > 1 || box.yRatio + box.heightRatio > 1) {
+            issues.push({ code: 'legal_notice_bounds_invalid', message: 'กรอบข้อความกฎหมายอยู่นอกหน้า PDF' });
+        }
+        if (box.widthRatio < 0.2 || box.heightRatio < 0.035) {
+            issues.push({ code: 'legal_notice_box_too_small', message: 'กรอบข้อความกฎหมายเล็กเกินไป' });
+        }
+    }
 
     configs.value.forEach((step) => {
         const stepBoxes = byPosition.get(step.positionCode) || [];
@@ -713,6 +817,29 @@ function groupBoxesBy(getKey) {
 
 function withClientKeys(items) {
     return items.map((item) => ({ ...item, clientKey: item.id || makeClientKey() }));
+}
+
+function withLegalNoticeClientKey(item) {
+    if (!item) return null;
+    return {
+        ...item,
+        clientKey: legalNoticeKey,
+        label: item.label || 'ข้อความกฎหมาย',
+        source: item.source || 'preset'
+    };
+}
+
+function toLegalNoticePayload(box) {
+    if (!box) return null;
+    return {
+        pageNo: Number(box.pageNo || 1),
+        xRatio: Number(box.xRatio || 0),
+        yRatio: Number(box.yRatio || 0),
+        widthRatio: Number(box.widthRatio || 0),
+        heightRatio: Number(box.heightRatio || 0),
+        label: 'ข้อความกฎหมาย',
+        source: 'preset'
+    };
 }
 
 function makeClientKey() {
@@ -894,6 +1021,19 @@ function recordDesignerEvent(event, extra = {}) {
                         <canvas ref="canvasRef" class="pdf-canvas"></canvas>
                         <div ref="overlayRef" class="pdf-overlay">
                             <div
+                                v-if="currentPageLegalNotice"
+                                class="signature-box legal-notice-box"
+                                :class="{ selected: selectedBoxKey === legalNoticeKey, readonly: !canEdit }"
+                                :style="boxStyle(currentPageLegalNotice)"
+                                @pointerdown="startBoxPointer($event, currentPageLegalNotice, 'move')"
+                            >
+                                <div class="signature-box-label">ข้อความกฎหมาย</div>
+                                <button v-if="canEdit" class="signature-box-delete" type="button" aria-label="ลบกรอบข้อความกฎหมาย" @pointerdown.stop @click.stop="deleteLegalNoticeBox">
+                                    <i class="pi pi-times"></i>
+                                </button>
+                                <span v-if="canEdit" class="signature-box-handle" @pointerdown="startBoxPointer($event, currentPageLegalNotice, 'resize')"></span>
+                            </div>
+                            <div
                                 v-for="box in currentPageBoxes"
                                 :key="box.clientKey"
                                 class="signature-box"
@@ -917,118 +1057,136 @@ function recordDesignerEvent(event, extra = {}) {
                     <div class="panel-title">
                         <div>
                             <div class="font-semibold">กรอบที่เลือก</div>
-                            <div v-if="selectedBoxStep" class="text-sm text-muted-color">{{ selectedBoxStep.positionCode }} - {{ selectedBoxStep.positionName }}</div>
+                            <div v-if="selectedIsLegalNotice" class="text-sm text-muted-color">ข้อความกฎหมายบน PDF จริง</div>
+                            <div v-else-if="selectedBoxStep" class="text-sm text-muted-color">{{ selectedBoxStep.positionCode }} - {{ selectedBoxStep.positionName }}</div>
                         </div>
                     </div>
 
-                    <div v-if="!selectedBox" class="selected-empty">
+                    <div v-if="!selectedItem" class="selected-empty">
                         <i class="pi pi-mouse-pointer text-muted-color"></i>
                         <span>เลือกกรอบจาก PDF หรือจากรายการด้านล่างเพื่อแก้รายละเอียด</span>
                     </div>
 
                     <div v-else class="selected-form">
                         <div class="field-row full">
-                            <label :for="`box-label-${selectedBox.clientKey}`">ข้อความบนกรอบ</label>
+                            <label :for="`box-label-${selectedItem.clientKey}`">ข้อความบนกรอบ</label>
                             <InputText
-                                :id="`box-label-${selectedBox.clientKey}`"
-                                :modelValue="selectedBox.label"
+                                :id="`box-label-${selectedItem.clientKey}`"
+                                :modelValue="selectedItem.label"
                                 maxlength="80"
-                                :disabled="!canEdit"
-                                @update:modelValue="updateBoxLabel(selectedBox, $event)"
+                                :disabled="!canEdit || selectedIsLegalNotice"
+                                @update:modelValue="updateBoxLabel(selectedItem, $event)"
                             />
+                            <small v-if="selectedIsLegalNotice" class="text-muted-color">{{ legalNoticeText }}</small>
                         </div>
 
                         <div class="field-grid">
                             <div class="field-row">
-                                <label :for="`box-page-${selectedBox.clientKey}`">หน้า PDF</label>
+                                <label :for="`box-page-${selectedItem.clientKey}`">หน้า PDF</label>
                                 <Select
-                                    :id="`box-page-${selectedBox.clientKey}`"
-                                    :modelValue="Number(selectedBox.pageNo)"
+                                    :id="`box-page-${selectedItem.clientKey}`"
+                                    :modelValue="Number(selectedItem.pageNo)"
                                     :options="pageOptions"
                                     optionLabel="label"
                                     optionValue="value"
                                     :disabled="!canEdit || pageOptions.length <= 1"
-                                    @update:modelValue="updateBoxPage(selectedBox, $event)"
+                                    @update:modelValue="updateBoxPage(selectedItem, $event)"
                                 />
                             </div>
                             <div class="field-row">
                                 <span>ประเภท</span>
-                                <Tag :value="selectedBoxSignerTypeLabel" :severity="conditionSeverity(selectedBoxStep?.conditionType)" class="w-fit" />
+                                <Tag :value="selectedIsLegalNotice ? 'ข้อความกฎหมาย' : selectedBoxSignerTypeLabel" :severity="selectedIsLegalNotice ? 'success' : conditionSeverity(selectedBoxStep?.conditionType)" class="w-fit" />
                             </div>
                         </div>
 
-                        <div v-if="Number(selectedBoxStep?.conditionType) === 2" class="field-row full">
-                            <label :for="`box-user-${selectedBox.clientKey}`">ผู้ลงนาม</label>
+                        <div v-if="!selectedIsLegalNotice && Number(selectedBoxStep?.conditionType) === 2" class="field-row full">
+                            <label :for="`box-user-${selectedItem.clientKey}`">ผู้ลงนาม</label>
                             <Select
-                                :id="`box-user-${selectedBox.clientKey}`"
-                                :modelValue="selectedBox.signerUser"
+                                :id="`box-user-${selectedItem.clientKey}`"
+                                :modelValue="selectedItem.signerUser"
                                 :options="selectedBoxSignerOptions"
                                 optionLabel="label"
                                 optionValue="value"
                                 :disabled="!canEdit"
-                                @update:modelValue="updateBoxSignerUser(selectedBox, $event)"
+                                @update:modelValue="updateBoxSignerUser(selectedItem, $event)"
                             />
                             <small class="text-muted-color">เงื่อนไข “ทุกคน” ต้องมีผู้ใช้งานไม่ซ้ำกันในตำแหน่งเดียวกัน</small>
                         </div>
 
                         <div class="ratio-grid">
                             <div class="field-row">
-                                <label :for="`box-x-${selectedBox.clientKey}`">X (%)</label>
+                                <label :for="`box-x-${selectedItem.clientKey}`">X (%)</label>
                                 <input
-                                    :id="`box-x-${selectedBox.clientKey}`"
+                                    :id="`box-x-${selectedItem.clientKey}`"
                                     type="number"
                                     class="p-inputtext p-component w-full"
-                                    :value="ratioPercent(selectedBox, 'xRatio')"
+                                    :value="ratioPercent(selectedItem, 'xRatio')"
                                     min="0"
                                     max="100"
                                     step="0.01"
                                     :disabled="!canEdit"
-                                    @input="updateBoxRatio(selectedBox, 'xRatio', $event.target.value)"
+                                    @input="updateBoxRatio(selectedItem, 'xRatio', $event.target.value)"
                                 />
                             </div>
                             <div class="field-row">
-                                <label :for="`box-y-${selectedBox.clientKey}`">Y (%)</label>
+                                <label :for="`box-y-${selectedItem.clientKey}`">Y (%)</label>
                                 <input
-                                    :id="`box-y-${selectedBox.clientKey}`"
+                                    :id="`box-y-${selectedItem.clientKey}`"
                                     type="number"
                                     class="p-inputtext p-component w-full"
-                                    :value="ratioPercent(selectedBox, 'yRatio')"
+                                    :value="ratioPercent(selectedItem, 'yRatio')"
                                     min="0"
                                     max="100"
                                     step="0.01"
                                     :disabled="!canEdit"
-                                    @input="updateBoxRatio(selectedBox, 'yRatio', $event.target.value)"
+                                    @input="updateBoxRatio(selectedItem, 'yRatio', $event.target.value)"
                                 />
                             </div>
                             <div class="field-row">
-                                <label :for="`box-width-${selectedBox.clientKey}`">กว้าง (%)</label>
+                                <label :for="`box-width-${selectedItem.clientKey}`">กว้าง (%)</label>
                                 <input
-                                    :id="`box-width-${selectedBox.clientKey}`"
+                                    :id="`box-width-${selectedItem.clientKey}`"
                                     type="number"
                                     class="p-inputtext p-component w-full"
-                                    :value="ratioPercent(selectedBox, 'widthRatio')"
-                                    min="3"
+                                    :value="ratioPercent(selectedItem, 'widthRatio')"
+                                    :min="selectedIsLegalNotice ? 20 : 3"
                                     max="100"
                                     step="0.01"
                                     :disabled="!canEdit"
-                                    @input="updateBoxRatio(selectedBox, 'widthRatio', $event.target.value)"
+                                    @input="updateBoxRatio(selectedItem, 'widthRatio', $event.target.value)"
                                 />
                             </div>
                             <div class="field-row">
-                                <label :for="`box-height-${selectedBox.clientKey}`">สูง (%)</label>
+                                <label :for="`box-height-${selectedItem.clientKey}`">สูง (%)</label>
                                 <input
-                                    :id="`box-height-${selectedBox.clientKey}`"
+                                    :id="`box-height-${selectedItem.clientKey}`"
                                     type="number"
                                     class="p-inputtext p-component w-full"
-                                    :value="ratioPercent(selectedBox, 'heightRatio')"
-                                    min="3"
+                                    :value="ratioPercent(selectedItem, 'heightRatio')"
+                                    :min="selectedIsLegalNotice ? 3.5 : 3"
                                     max="100"
                                     step="0.01"
                                     :disabled="!canEdit"
-                                    @input="updateBoxRatio(selectedBox, 'heightRatio', $event.target.value)"
+                                    @input="updateBoxRatio(selectedItem, 'heightRatio', $event.target.value)"
                                 />
                             </div>
                         </div>
+                    </div>
+                </section>
+
+                <section class="inspector-panel">
+                    <div class="panel-title">
+                        <div>
+                            <div class="font-semibold">ข้อความกฎหมาย</div>
+                            <div class="text-sm text-muted-color">{{ legalNoticeBox ? `หน้า ${legalNoticeBox.pageNo}` : 'ใช้ stamp ข้อความ พ.ร.บ. บน PDF จริง' }}</div>
+                        </div>
+                        <Tag :value="legalNoticeBox ? 'มีกรอบแล้ว' : 'ยังไม่มีกรอบ'" :severity="legalNoticeBox ? 'success' : 'warn'" />
+                    </div>
+                    <Message v-if="!legalNoticeBox" severity="info" class="mb-3">กรอบนี้เป็นค่าเริ่มต้น ตอนส่งเอกสารจริง admin ยังปรับตำแหน่งได้อีกครั้ง</Message>
+                    <div class="flex flex-wrap gap-2">
+                        <Button v-if="!legalNoticeBox" label="เพิ่มกรอบข้อความ" icon="pi pi-plus" :disabled="!canAddBoxes" @click="addLegalNoticeBox" />
+                        <Button v-else label="เลือกกรอบ" icon="pi pi-mouse-pointer" severity="secondary" outlined @click="selectLegalNoticeBox({ scrollIntoView: true })" />
+                        <Button v-if="legalNoticeBox" label="ลบ" icon="pi pi-trash" severity="danger" outlined @click="deleteLegalNoticeBox" />
                     </div>
                 </section>
 
@@ -1218,6 +1376,15 @@ function recordDesignerEvent(event, extra = {}) {
     background: rgba(245, 158, 11, 0.2);
     outline: 2px solid rgba(245, 158, 11, 0.22);
     outline-offset: 2px;
+}
+
+.legal-notice-box {
+    border-style: dashed;
+    background: color-mix(in srgb, var(--green-500, #22c55e) 16%, transparent);
+}
+
+.legal-notice-box .signature-box-label {
+    color: var(--green-700, #15803d);
 }
 
 .signature-box.readonly {

@@ -164,11 +164,15 @@ CREATE TABLE IF NOT EXISTS signature_templates (
     sample_file_id UUID REFERENCES uploaded_files(id),
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_by UUID REFERENCES users(id),
+    legal_notice_box JSONB NOT NULL DEFAULT '{}'::jsonb,
     published_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     published_at TIMESTAMPTZ
 );
+
+ALTER TABLE signature_templates
+ADD COLUMN IF NOT EXISTS legal_notice_box JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE UNIQUE INDEX IF NOT EXISTS signature_templates_active_unique_idx
 ON signature_templates (screen_code, lower(doc_format_code))
@@ -228,12 +232,16 @@ CREATE TABLE IF NOT EXISTS signing_documents (
     signature_template_id UUID REFERENCES signature_templates(id),
     config_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
     template_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    legal_notice_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at TIMESTAMPTZ,
     locked_at TIMESTAMPTZ
 );
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS legal_notice_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 ALTER TABLE signing_documents
 DROP CONSTRAINT IF EXISTS signing_documents_status_check;
@@ -986,7 +994,7 @@ func (s *Store) GetSignatureTemplateState(ctx context.Context, screenCode, docFo
 	rows, err := s.pool.Query(ctx, `
 SELECT t.id::text, t.screen_code, t.doc_format_code, t.version, t.status, COALESCE(t.sample_file_id::text, ''),
        t.revision, COALESCE(t.created_by::text, ''), COALESCE(t.published_by::text, ''),
-       t.created_at, t.updated_at, t.published_at,
+       t.created_at, t.updated_at, t.published_at, COALESCE(t.legal_notice_box, '{}'::jsonb)::text,
        COALESCE(f.id::text, ''), COALESCE(f.original_name, ''), COALESCE(f.stored_name, ''), COALESCE(f.storage_path, ''),
        COALESCE(f.content_type, ''), COALESCE(f.size_bytes, 0), COALESCE(f.page_count, 0),
        COALESCE(f.sha256, ''), COALESCE(f.created_by::text, ''), f.created_at
@@ -1030,7 +1038,7 @@ func (s *Store) FindSignatureTemplateByID(ctx context.Context, id string) (model
 	template, err := scanSignatureTemplateWithFile(s.pool.QueryRow(ctx, `
 SELECT t.id::text, t.screen_code, t.doc_format_code, t.version, t.status, COALESCE(t.sample_file_id::text, ''),
        t.revision, COALESCE(t.created_by::text, ''), COALESCE(t.published_by::text, ''),
-       t.created_at, t.updated_at, t.published_at,
+       t.created_at, t.updated_at, t.published_at, COALESCE(t.legal_notice_box, '{}'::jsonb)::text,
        COALESCE(f.id::text, ''), COALESCE(f.original_name, ''), COALESCE(f.stored_name, ''), COALESCE(f.storage_path, ''),
        COALESCE(f.content_type, ''), COALESCE(f.size_bytes, 0), COALESCE(f.page_count, 0),
        COALESCE(f.sha256, ''), COALESCE(f.created_by::text, ''), f.created_at
@@ -1078,6 +1086,7 @@ updated_draft AS (
     UPDATE signature_templates
     SET status = 'active',
         sample_file_id = $3,
+        legal_notice_box = '{}'::jsonb,
         revision = revision + 1,
         published_by = NULLIF($4, '')::uuid,
         published_at = now(),
@@ -1104,6 +1113,7 @@ LIMIT 1
 		if _, err := tx.Exec(ctx, `
 UPDATE signature_templates
 SET sample_file_id = $1,
+    legal_notice_box = '{}'::jsonb,
     revision = revision + 1,
     published_by = NULLIF($2, '')::uuid,
     published_at = now(),
@@ -1115,6 +1125,9 @@ WHERE id = $3 AND status = 'active'
 	}
 
 	if _, err := tx.Exec(ctx, `DELETE FROM signature_template_boxes WHERE template_id = $1`, templateID); err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE signature_templates SET legal_notice_box = '{}'::jsonb WHERE id = $1`, templateID); err != nil {
 		return models.SignatureTemplate{}, err
 	}
 
@@ -1158,7 +1171,7 @@ ORDER BY page_no, lower(position_code), signer_slot
 	return boxes, rows.Err()
 }
 
-func (s *Store) ReplaceSignatureTemplateBoxes(ctx context.Context, templateID string, revision int, boxes []models.SignatureTemplateBoxRequest) (models.SignatureTemplate, error) {
+func (s *Store) ReplaceSignatureTemplateBoxes(ctx context.Context, templateID string, revision int, boxes []models.SignatureTemplateBoxRequest, legalNoticeBox *models.LegalNoticeBoxRequest) (models.SignatureTemplate, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return models.SignatureTemplate{}, err
@@ -1194,11 +1207,17 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			return models.SignatureTemplate{}, err
 		}
 	}
+	legalNoticeJSON, err := marshalLegalNoticeBox(legalNoticeBox)
+	if err != nil {
+		return models.SignatureTemplate{}, err
+	}
 	if _, err := tx.Exec(ctx, `
 UPDATE signature_templates
-SET revision = revision + 1, updated_at = now()
+SET legal_notice_box = $2::jsonb,
+    revision = revision + 1,
+    updated_at = now()
 WHERE id = $1
-`, templateID); err != nil {
+`, templateID, legalNoticeJSON); err != nil {
 		return models.SignatureTemplate{}, err
 	}
 
@@ -1314,6 +1333,7 @@ func scanUploadedFile(row rowScanner) (models.UploadedFile, error) {
 func scanSignatureTemplateWithFile(row rowScanner) (models.SignatureTemplate, error) {
 	var template models.SignatureTemplate
 	var publishedAt sql.NullTime
+	var legalNoticeRaw string
 	var fileID, fileOriginalName, fileStoredName, fileStoragePath, fileContentType, fileSHA256, fileCreatedBy string
 	var fileSize int64
 	var filePageCount int
@@ -1331,6 +1351,7 @@ func scanSignatureTemplateWithFile(row rowScanner) (models.SignatureTemplate, er
 		&template.CreatedAt,
 		&template.UpdatedAt,
 		&publishedAt,
+		&legalNoticeRaw,
 		&fileID,
 		&fileOriginalName,
 		&fileStoredName,
@@ -1348,6 +1369,7 @@ func scanSignatureTemplateWithFile(row rowScanner) (models.SignatureTemplate, er
 	if publishedAt.Valid {
 		template.PublishedAt = &publishedAt.Time
 	}
+	template.LegalNoticeBox = parseLegalNoticeBox(legalNoticeRaw)
 	if fileID != "" {
 		template.SampleFile = &models.UploadedFile{
 			ID:           fileID,
@@ -1365,6 +1387,56 @@ func scanSignatureTemplateWithFile(row rowScanner) (models.SignatureTemplate, er
 		}
 	}
 	return template, nil
+}
+
+func parseLegalNoticeBox(raw string) *models.LegalNoticeBox {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" || raw == "null" {
+		return nil
+	}
+	var box models.LegalNoticeBox
+	if err := json.Unmarshal([]byte(raw), &box); err != nil {
+		return nil
+	}
+	if box.PageNo <= 0 || box.WidthRatio <= 0 || box.HeightRatio <= 0 {
+		return nil
+	}
+	return &box
+}
+
+func marshalLegalNoticeBox(box *models.LegalNoticeBoxRequest) (string, error) {
+	if box == nil {
+		return "{}", nil
+	}
+	stored := models.LegalNoticeBox{
+		PageNo:      box.PageNo,
+		XRatio:      box.XRatio,
+		YRatio:      box.YRatio,
+		WidthRatio:  box.WidthRatio,
+		HeightRatio: box.HeightRatio,
+		Label:       strings.TrimSpace(box.Label),
+		Source:      strings.TrimSpace(box.Source),
+	}
+	data, err := json.Marshal(stored)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func parseLegalNoticeSnapshot(raw string) *models.LegalNoticeSnapshot {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" || raw == "null" {
+		return nil
+	}
+	var snapshot models.LegalNoticeSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return nil
+	}
+	if snapshot.Text == "" || snapshot.PageNo <= 0 || snapshot.WidthRatio <= 0 || snapshot.HeightRatio <= 0 {
+		return nil
+	}
+	return &snapshot
 }
 
 func scanSignatureTemplateBox(row rowScanner) (models.SignatureTemplateBox, error) {

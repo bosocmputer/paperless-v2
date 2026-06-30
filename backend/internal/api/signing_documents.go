@@ -44,21 +44,24 @@ var signingUXEventNames = map[string]bool{
 }
 
 var signingCreateEventNames = map[string]bool{
-	"create_layout_open":      true,
-	"wizard_open":             true,
-	"step_complete":           true,
-	"pdf_upload_success":      true,
-	"pdf_upload_error":        true,
-	"preset_applied":          true,
-	"box_add":                 true,
-	"box_delete":              true,
-	"layout_validation_error": true,
-	"validation_blocked":      true,
-	"create_submit_success":   true,
-	"create_submit_error":     true,
-	"create_success":          true,
-	"create_error":            true,
-	"pdf_render_error":        true,
+	"create_layout_open":           true,
+	"wizard_open":                  true,
+	"step_complete":                true,
+	"pdf_upload_success":           true,
+	"pdf_upload_error":             true,
+	"preset_applied":               true,
+	"box_add":                      true,
+	"box_delete":                   true,
+	"legal_notice_box_add":         true,
+	"legal_notice_box_delete":      true,
+	"legal_notice_missing_blocked": true,
+	"layout_validation_error":      true,
+	"validation_blocked":           true,
+	"create_submit_success":        true,
+	"create_submit_error":          true,
+	"create_success":               true,
+	"create_error":                 true,
+	"pdf_render_error":             true,
 }
 
 type createSigningDocumentRequest struct {
@@ -68,6 +71,7 @@ type createSigningDocumentRequest struct {
 	SignatureTemplateID string                               `json:"signatureTemplateId"`
 	ConfirmLocked       bool                                 `json:"confirmLocked"`
 	LayoutBoxes         []models.SignatureTemplateBoxRequest `json:"layoutBoxes"`
+	LegalNoticeBox      *models.LegalNoticeBoxRequest        `json:"legalNoticeBox"`
 }
 
 type signingCreateEventRequest struct {
@@ -225,16 +229,24 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 	if len(issues) == 0 {
 		issues = append(issues, s.inactiveSigningLayoutUserIssues(r.Context(), selectedConfigs, layoutBoxes)...)
 	}
+	legalNoticeBox, legalNoticeIssues := normalizeAndValidateLegalNoticeBox(req.LegalNoticeBox, uploaded.PageCount, true)
+	issues = append(issues, legalNoticeIssues...)
 	if len(issues) > 0 {
 		writeValidationIssues(w, http.StatusBadRequest, "signature_layout_invalid", issues)
 		return
 	}
+	legalNoticeSource := "per_document"
+	if legalNoticeBox.Source == "preset" || (legalNoticeBox.Source == "" && req.SignatureTemplateID != "") {
+		legalNoticeSource = "preset"
+	}
+	legalNoticeSnapshot := legalNoticeSnapshotFromBox(*legalNoticeBox, legalNoticeSource)
 
 	layoutSnapshot := map[string]any{
 		"source":              "per_document_upload",
 		"signatureTemplateId": req.SignatureTemplateID,
 		"pageCount":           uploaded.PageCount,
 		"boxes":               layoutBoxes,
+		"legalNoticeBox":      legalNoticeBox,
 	}
 	document, err := s.store.CreateSigningDocument(r.Context(), store.CreateSigningDocumentInput{
 		ScreenCode:          screenCode,
@@ -242,6 +254,7 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		Candidate:           candidate,
 		SignatureTemplateID: req.SignatureTemplateID,
 		TemplateSnapshot:    layoutSnapshot,
+		LegalNoticeSnapshot: legalNoticeSnapshot,
 		LayoutBoxes:         layoutBoxes,
 		Configs:             selectedConfigs,
 		File:                uploaded,
@@ -285,6 +298,13 @@ func (s *Server) decodeCreateSigningDocumentRequest(w http.ResponseWriter, r *ht
 		if rawBoxes != "" {
 			if err := json.Unmarshal([]byte(rawBoxes), &req.LayoutBoxes); err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_layout_boxes", "layout_boxes must be valid JSON.")
+				return req, false
+			}
+		}
+		rawLegalNoticeBox := firstNonEmpty(r.FormValue("legalNoticeBox"), r.FormValue("legal_notice_box"))
+		if rawLegalNoticeBox != "" {
+			if err := json.Unmarshal([]byte(rawLegalNoticeBox), &req.LegalNoticeBox); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_legal_notice_box", "legal_notice_box must be valid JSON.")
 				return req, false
 			}
 		}

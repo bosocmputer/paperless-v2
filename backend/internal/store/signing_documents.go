@@ -21,6 +21,7 @@ type CreateSigningDocumentInput struct {
 	Candidate           models.SMLDocumentCandidate
 	SignatureTemplateID string
 	TemplateSnapshot    any
+	LegalNoticeSnapshot models.LegalNoticeSnapshot
 	LayoutBoxes         []models.SignatureTemplateBoxRequest
 	Configs             []models.DocumentConfigStep
 	File                models.UploadedFile
@@ -63,6 +64,10 @@ func (s *Store) CreateSigningDocument(ctx context.Context, input CreateSigningDo
 	if err != nil {
 		return models.SigningDocument{}, err
 	}
+	legalNoticeSnapshot, err := json.Marshal(input.LegalNoticeSnapshot)
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
 
 	if err := consumeSigningDocumentUpload(ctx, tx, input.File.ID, input.ActorID); err != nil {
 		return models.SigningDocument{}, err
@@ -73,14 +78,14 @@ func (s *Store) CreateSigningDocument(ctx context.Context, input CreateSigningDo
 INSERT INTO signing_documents (
     screen_code, doc_format_code, doc_no, sml_table, trans_flag, party_code, party_name, party_type,
     doc_date, total_amount, sml_is_lock_record, status, current_version,
-    original_file_id, current_file_id, signature_template_id, config_snapshot, template_snapshot, created_by
+    original_file_id, current_file_id, signature_template_id, config_snapshot, template_snapshot, legal_notice_snapshot, created_by
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::date,$10,$11,'in_progress',1,$12,$12,$13,$14::jsonb,$15::jsonb,NULLIF($16,'')::uuid)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::date,$10,$11,'in_progress',1,$12,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb,NULLIF($17,'')::uuid)
 RETURNING id::text
 `, input.ScreenCode, input.Format.Code, input.Candidate.DocNo, input.Candidate.Table, input.Candidate.TransFlag,
 		input.Candidate.PartyCode, input.Candidate.PartyName, input.Candidate.PartyType, input.Candidate.DocDate,
 		input.Candidate.TotalAmount, input.Candidate.IsLockRecord, input.File.ID, input.SignatureTemplateID,
-		string(configSnapshot), string(templateSnapshot), input.ActorID).Scan(&documentID)
+		string(configSnapshot), string(templateSnapshot), string(legalNoticeSnapshot), input.ActorID).Scan(&documentID)
 	if err != nil {
 		if strings.Contains(err.Error(), "signing_documents_active_doc_unique_idx") {
 			return models.SigningDocument{}, ErrSigningDocumentDuplicate
@@ -1032,7 +1037,7 @@ SELECT d.id::text, d.screen_code, d.doc_format_code, d.doc_no, d.sml_table, d.tr
        d.sml_is_lock_record, d.status, d.current_version,
        COALESCE(d.original_file_id::text,''), COALESCE(d.current_file_id::text,''), COALESCE(d.final_file_id::text,''),
        COALESCE(d.signature_template_id::text,''), COALESCE(d.created_by::text,''),
-       d.created_at, d.updated_at, d.completed_at, d.locked_at,
+       d.created_at, d.updated_at, d.completed_at, d.locked_at, COALESCE(d.legal_notice_snapshot, '{}'::jsonb)::text,
        COALESCE(of.id::text,''), COALESCE(of.original_name,''), COALESCE(of.stored_name,''), COALESCE(of.storage_path,''), COALESCE(of.content_type,''), COALESCE(of.size_bytes,0), COALESCE(of.page_count,0), COALESCE(of.sha256,''), COALESCE(of.created_by::text,''), of.created_at,
        COALESCE(cf.id::text,''), COALESCE(cf.original_name,''), COALESCE(cf.stored_name,''), COALESCE(cf.storage_path,''), COALESCE(cf.content_type,''), COALESCE(cf.size_bytes,0), COALESCE(cf.page_count,0), COALESCE(cf.sha256,''), COALESCE(cf.created_by::text,''), cf.created_at,
        COALESCE(ff.id::text,''), COALESCE(ff.original_name,''), COALESCE(ff.stored_name,''), COALESCE(ff.storage_path,''), COALESCE(ff.content_type,''), COALESCE(ff.size_bytes,0), COALESCE(ff.page_count,0), COALESCE(ff.sha256,''), COALESCE(ff.created_by::text,''), ff.created_at
@@ -1057,6 +1062,7 @@ FROM signing_document_signers sg
 func scanSigningDocument(row rowScanner) (models.SigningDocument, error) {
 	var doc models.SigningDocument
 	var completedAt, lockedAt sql.NullTime
+	var legalNoticeRaw string
 	var original, current, final models.UploadedFile
 	var originalCreated, currentCreated, finalCreated sql.NullTime
 	err := row.Scan(
@@ -1064,7 +1070,7 @@ func scanSigningDocument(row rowScanner) (models.SigningDocument, error) {
 		&doc.PartyCode, &doc.PartyName, &doc.PartyType, &doc.DocDate, &doc.TotalAmount,
 		&doc.SMLIsLockRecord, &doc.Status, &doc.CurrentVersion,
 		&doc.OriginalFileID, &doc.CurrentFileID, &doc.FinalFileID, &doc.SignatureTemplateID, &doc.CreatedBy,
-		&doc.CreatedAt, &doc.UpdatedAt, &completedAt, &lockedAt,
+		&doc.CreatedAt, &doc.UpdatedAt, &completedAt, &lockedAt, &legalNoticeRaw,
 		&original.ID, &original.OriginalName, &original.StoredName, &original.StoragePath, &original.ContentType, &original.SizeBytes, &original.PageCount, &original.SHA256, &original.CreatedBy, &originalCreated,
 		&current.ID, &current.OriginalName, &current.StoredName, &current.StoragePath, &current.ContentType, &current.SizeBytes, &current.PageCount, &current.SHA256, &current.CreatedBy, &currentCreated,
 		&final.ID, &final.OriginalName, &final.StoredName, &final.StoragePath, &final.ContentType, &final.SizeBytes, &final.PageCount, &final.SHA256, &final.CreatedBy, &finalCreated,
@@ -1078,6 +1084,7 @@ func scanSigningDocument(row rowScanner) (models.SigningDocument, error) {
 	if lockedAt.Valid {
 		doc.LockedAt = &lockedAt.Time
 	}
+	doc.LegalNoticeSnapshot = parseLegalNoticeSnapshot(legalNoticeRaw)
 	if original.ID != "" {
 		if originalCreated.Valid {
 			original.CreatedAt = originalCreated.Time
