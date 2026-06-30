@@ -135,7 +135,10 @@ onBeforeRouteLeave((_to, _from, next) => {
             label: 'ออกจากหน้านี้',
             severity: 'danger'
         },
-        accept: () => next(),
+        accept: () => {
+            discardDraft();
+            next();
+        },
         reject: () => next(false)
     });
 });
@@ -372,9 +375,7 @@ async function submitDocument() {
             layoutBoxes: form.value.layoutBoxes.map(toLayoutPayload),
             idempotencyKey: createIdempotencyKey.value
         });
-        createFinished = true;
-        sessionStorage.removeItem(draftKey);
-        sessionStorage.removeItem(legacyDraftKey);
+        discardDraft();
         recordCreateEvent('create_success');
         toast.add({ severity: 'success', summary: 'ส่งเอกสารให้ผู้เซ็นแล้ว', life: 2500 });
         router.push({ name: 'signing-document-detail', params: { id: result.document.id } });
@@ -454,6 +455,12 @@ function resetUploadedLayout() {
     form.value.uploadedFile = null;
     form.value.layoutBoxes = [];
     form.value.selectedPresetId = '';
+}
+
+function discardDraft() {
+    createFinished = true;
+    sessionStorage.removeItem(draftKey);
+    sessionStorage.removeItem(legacyDraftKey);
 }
 
 function toLayoutPayload(box) {
