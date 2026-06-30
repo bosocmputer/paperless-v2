@@ -521,32 +521,6 @@ function updateBoxSignerUser(box, value) {
     dirty.value = true;
 }
 
-function ratioPercent(box, field) {
-    if (!box) return 0;
-    return Number((Number(box[field] || 0) * 100).toFixed(2));
-}
-
-function updateBoxRatio(box, field, value) {
-    if (!canEdit.value || !box) return;
-    const percent = Number(value);
-    if (!Number.isFinite(percent)) return;
-    const ratio = percent / 100;
-    const target = box.clientKey === legalNoticeKey ? { ...legalNoticeBox.value } : box;
-
-    if (field === 'xRatio') {
-        target.xRatio = clamp(ratio, 0, 1 - target.widthRatio);
-    } else if (field === 'yRatio') {
-        target.yRatio = clamp(ratio, 0, 1 - target.heightRatio);
-    } else if (field === 'widthRatio') {
-        target.widthRatio = clamp(ratio, box.clientKey === legalNoticeKey ? 0.2 : 0.03, 1 - target.xRatio);
-    } else if (field === 'heightRatio') {
-        target.heightRatio = clamp(ratio, box.clientKey === legalNoticeKey ? 0.035 : 0.03, 1 - target.yRatio);
-    }
-    if (box.clientKey === legalNoticeKey) legalNoticeBox.value = target;
-
-    dirty.value = true;
-}
-
 function boxStyle(box) {
     return {
         left: `${box.xRatio * 100}%`,
@@ -1113,64 +1087,6 @@ function recordDesignerEvent(event, extra = {}) {
                             <small class="text-muted-color">เงื่อนไข “ทุกคน” ต้องมีผู้ใช้งานไม่ซ้ำกันในตำแหน่งเดียวกัน</small>
                         </div>
 
-                        <div class="ratio-grid">
-                            <div class="field-row">
-                                <label :for="`box-x-${selectedItem.clientKey}`">X (%)</label>
-                                <input
-                                    :id="`box-x-${selectedItem.clientKey}`"
-                                    type="number"
-                                    class="p-inputtext p-component w-full"
-                                    :value="ratioPercent(selectedItem, 'xRatio')"
-                                    min="0"
-                                    max="100"
-                                    step="0.01"
-                                    :disabled="!canEdit"
-                                    @input="updateBoxRatio(selectedItem, 'xRatio', $event.target.value)"
-                                />
-                            </div>
-                            <div class="field-row">
-                                <label :for="`box-y-${selectedItem.clientKey}`">Y (%)</label>
-                                <input
-                                    :id="`box-y-${selectedItem.clientKey}`"
-                                    type="number"
-                                    class="p-inputtext p-component w-full"
-                                    :value="ratioPercent(selectedItem, 'yRatio')"
-                                    min="0"
-                                    max="100"
-                                    step="0.01"
-                                    :disabled="!canEdit"
-                                    @input="updateBoxRatio(selectedItem, 'yRatio', $event.target.value)"
-                                />
-                            </div>
-                            <div class="field-row">
-                                <label :for="`box-width-${selectedItem.clientKey}`">กว้าง (%)</label>
-                                <input
-                                    :id="`box-width-${selectedItem.clientKey}`"
-                                    type="number"
-                                    class="p-inputtext p-component w-full"
-                                    :value="ratioPercent(selectedItem, 'widthRatio')"
-                                    :min="selectedIsLegalNotice ? 20 : 3"
-                                    max="100"
-                                    step="0.01"
-                                    :disabled="!canEdit"
-                                    @input="updateBoxRatio(selectedItem, 'widthRatio', $event.target.value)"
-                                />
-                            </div>
-                            <div class="field-row">
-                                <label :for="`box-height-${selectedItem.clientKey}`">สูง (%)</label>
-                                <input
-                                    :id="`box-height-${selectedItem.clientKey}`"
-                                    type="number"
-                                    class="p-inputtext p-component w-full"
-                                    :value="ratioPercent(selectedItem, 'heightRatio')"
-                                    :min="selectedIsLegalNotice ? 3.5 : 3"
-                                    max="100"
-                                    step="0.01"
-                                    :disabled="!canEdit"
-                                    @input="updateBoxRatio(selectedItem, 'heightRatio', $event.target.value)"
-                                />
-                            </div>
-                        </div>
                     </div>
                 </section>
 
@@ -1484,15 +1400,10 @@ function recordDesignerEvent(event, extra = {}) {
     gap: 0.55rem;
 }
 
-.field-grid,
-.ratio-grid {
+.field-grid {
     display: grid;
     gap: 0.65rem;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.ratio-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .field-row {
@@ -1647,15 +1558,8 @@ function recordDesignerEvent(event, extra = {}) {
         min-height: 28rem;
     }
 
-    .field-grid,
-    .ratio-grid {
+    .field-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
-@media (max-width: 520px) {
-    .ratio-grid {
-        grid-template-columns: 1fr;
     }
 }
 </style>
