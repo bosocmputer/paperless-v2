@@ -55,6 +55,13 @@ const uploadingAttachment = ref(false);
 const attachmentCount = ref(0);
 const localSaving = ref(false);
 const relatedVisible = ref(false);
+const attachmentVisible = ref(false);
+const legalDialogVisible = ref(false);
+const pdfDialogVisible = ref(false);
+const pdfDialogUrl = ref('');
+const pdfDialogLoading = ref(false);
+const signIdempotencyKey = ref(newRequestKey());
+const rejectIdempotencyKey = ref(newRequestKey());
 
 const sessionId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 const openedAt = Date.now();
@@ -98,6 +105,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
     window.removeEventListener('beforeunload', handleBeforeUnload);
     cleanupPDF();
+    cleanupPdfDialog();
     if (resizeObserver) resizeObserver.disconnect();
 });
 
@@ -131,6 +139,10 @@ watch(
     }
 );
 
+watch(pdfDialogVisible, (visible) => {
+    if (!visible) cleanupPdfDialog();
+});
+
 watch(
     () => props.task?.id,
     (taskId) => {
@@ -149,6 +161,13 @@ watch(
         if (!loading && taskId) {
             await nextTick();
             setupSignatureCanvas(taskId !== previousTaskId);
+            if (taskId !== previousTaskId) {
+                signIdempotencyKey.value = newRequestKey();
+                rejectIdempotencyKey.value = newRequestKey();
+                attachmentVisible.value = false;
+                legalDialogVisible.value = false;
+                pdfDialogVisible.value = false;
+            }
         }
     },
     { immediate: true }
@@ -324,7 +343,7 @@ async function confirmSign() {
             legalAccepted: true,
             legalText: legalText.value,
             deviceId: deviceId(),
-            idempotencyKey: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`
+            idempotencyKey: signIdempotencyKey.value
         };
         await props.onSign(payload);
         submitted = true;
@@ -365,7 +384,7 @@ async function submitRejectTask(reason) {
         await props.onReject?.({
             reason,
             deviceId: deviceId(),
-            idempotencyKey: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`
+            idempotencyKey: rejectIdempotencyKey.value
         });
         submitted = true;
         recordEvent('reject_success');
@@ -399,6 +418,31 @@ async function fetchPdfBlob() {
     const response = await fetch(props.pdfUrl, { headers: props.pdfHeaders || {} });
     if (!response.ok) throw new Error('โหลด PDF ไม่สำเร็จ');
     return response.blob();
+}
+
+async function openFullPDF() {
+    if (pdfDialogUrl.value) {
+        pdfDialogVisible.value = true;
+        return;
+    }
+    pdfDialogVisible.value = true;
+    pdfDialogLoading.value = true;
+    try {
+        if (props.pdfOpenEventName) recordEvent(props.pdfOpenEventName);
+        const blob = await fetchPdfBlob();
+        pdfDialogUrl.value = URL.createObjectURL(blob);
+    } catch (err) {
+        pdfDialogVisible.value = false;
+        toast.add({ severity: 'error', summary: 'เปิด PDF ไม่สำเร็จ', detail: err.message, life: 3000 });
+    } finally {
+        pdfDialogLoading.value = false;
+    }
+}
+
+function cleanupPdfDialog() {
+    if (pdfDialogUrl.value) URL.revokeObjectURL(pdfDialogUrl.value);
+    pdfDialogUrl.value = '';
+    pdfDialogLoading.value = false;
 }
 
 async function openPDF() {
@@ -486,10 +530,14 @@ function statusMeta(status) {
 function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
 }
+
+function newRequestKey() {
+    return crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+}
 </script>
 
 <template>
-    <section class="signing-workspace">
+    <section class="signing-workspace" :class="{ 'read-only-workspace': !canInteract }">
         <div class="signing-header">
             <Button v-if="onBack" icon="pi pi-arrow-left" text rounded aria-label="กลับ" @click="onBack" />
             <div class="doc-title">
@@ -504,19 +552,19 @@ function clamp(value, min, max) {
             <span>กำลังโหลดเอกสาร</span>
         </div>
 
-        <div v-else class="workspace-grid">
+        <div v-else class="workspace-grid" :class="{ 'readonly-grid': !canInteract }">
             <section class="pdf-shell">
                 <div class="pdf-toolbar">
                     <div class="toolbar-title">
                         <strong>PDF</strong>
                         <span v-if="pageCount">หน้า {{ currentPage }} จาก {{ pageCount }}</span>
                     </div>
+                    <Select v-if="pageOptions.length > 1" v-model="currentPage" :options="pageOptions" optionLabel="label" optionValue="value" class="page-select" />
                     <div class="toolbar-actions">
-                        <Button icon="pi pi-minus" text rounded aria-label="ซูมออก" :disabled="!pdfDoc" @click="zoomOut" />
-                        <Button label="Fit" severity="secondary" text :disabled="!pdfDoc" @click="fitWidth" />
-                        <Button icon="pi pi-plus" text rounded aria-label="ซูมเข้า" :disabled="!pdfDoc" @click="zoomIn" />
-                        <Button icon="pi pi-external-link" text rounded aria-label="เปิด PDF" :disabled="!pdfUrl" @click="openPDF" />
-                        <Button icon="pi pi-download" text rounded aria-label="ดาวน์โหลด PDF" :disabled="!pdfUrl" @click="downloadPDF" />
+                        <Button class="desktop-tool" icon="pi pi-minus" text rounded aria-label="ซูมออก" :disabled="!pdfDoc" @click="zoomOut" />
+                        <Button label="พอดีกว้าง" icon="pi pi-arrows-h" severity="secondary" text :disabled="!pdfDoc" @click="fitWidth" />
+                        <Button class="desktop-tool" icon="pi pi-plus" text rounded aria-label="ซูมเข้า" :disabled="!pdfDoc" @click="zoomIn" />
+                        <Button label="เต็มจอ" icon="pi pi-window-maximize" text :disabled="!pdfUrl" @click="openFullPDF" />
                     </div>
                 </div>
                 <div ref="viewerRef" class="pdf-viewer">
@@ -528,23 +576,18 @@ function clamp(value, min, max) {
                         {{ pdfError }}
                         <div class="mt-3 flex gap-2">
                             <Button size="small" label="ลองใหม่" icon="pi pi-refresh" severity="secondary" outlined @click="loadPDF" />
-                            <Button size="small" label="เปิด PDF" icon="pi pi-external-link" @click="openPDF" />
+                            <Button size="small" label="ดูเต็มจอ" icon="pi pi-window-maximize" @click="openFullPDF" />
                         </div>
                     </Message>
                     <canvas v-show="!pdfLoading && !pdfError" ref="pdfCanvas" class="pdf-canvas"></canvas>
                 </div>
-                <div class="page-strip">
-                    <Select v-model="currentPage" :options="pageOptions" optionLabel="label" optionValue="value" :disabled="pageOptions.length <= 1" class="page-select" />
-                    <Button icon="pi pi-refresh" label="โหลดใหม่" severity="secondary" outlined :disabled="!onReload" @click="onReload" />
-                </div>
             </section>
 
             <aside v-if="canInteract" class="sign-card">
-                <div class="signer-summary">
-                    <div>
-                        <span>ผู้เซ็น</span>
-                        <strong>{{ identityLabel || task?.signerName || task?.signerUser || '-' }}</strong>
-                    </div>
+                <div class="signer-summary position-summary">
+                    <span><i class="pi pi-user-edit"></i> ตำแหน่งของคุณ</span>
+                    <strong>{{ task?.positionName || '-' }}</strong>
+                    <small>{{ identityLabel || task?.signerName || task?.signerUser || '-' }}</small>
                     <Message :severity="canInteract ? 'info' : statusView.severity">{{ statusView.message }}</Message>
                 </div>
 
@@ -578,32 +621,36 @@ function clamp(value, min, max) {
                 </div>
 
                 <div class="attachment-block">
-                    <div class="section-heading">
-                        <strong>ไฟล์อ้างอิง</strong>
-                        <span>{{ attachmentCount }} ไฟล์</span>
+                    <Button
+                        :label="attachmentVisible ? `ซ่อนไฟล์อ้างอิง (${attachmentCount} ไฟล์)` : `แนบไฟล์อ้างอิง (${attachmentCount} ไฟล์)`"
+                        :icon="attachmentVisible ? 'pi pi-chevron-up' : 'pi pi-paperclip'"
+                        severity="secondary"
+                        outlined
+                        class="w-full"
+                        @click="attachmentVisible = !attachmentVisible"
+                    />
+                    <div v-if="attachmentVisible" class="attachment-fields">
+                        <InputText v-model="attachmentNote" placeholder="หมายเหตุไฟล์แนบ (ถ้ามี)" :disabled="!canInteract || uploadingAttachment" />
+                        <label class="attach-button" :class="{ disabled: !canInteract || uploadingAttachment }">
+                            <input type="file" accept="application/pdf,image/png,image/jpeg" :disabled="!canInteract || uploadingAttachment" @change="uploadAttachment" />
+                            <i :class="uploadingAttachment ? 'pi pi-spin pi-spinner' : 'pi pi-paperclip'"></i>
+                            <span>{{ uploadingAttachment ? 'กำลังแนบไฟล์' : 'เลือก PDF/รูปภาพ' }}</span>
+                        </label>
                     </div>
-                    <InputText v-model="attachmentNote" placeholder="หมายเหตุไฟล์แนบ (ถ้ามี)" :disabled="!canInteract || uploadingAttachment" />
-                    <label class="attach-button" :class="{ disabled: !canInteract || uploadingAttachment }">
-                        <input type="file" accept="application/pdf,image/png,image/jpeg" :disabled="!canInteract || uploadingAttachment" @change="uploadAttachment" />
-                        <i :class="uploadingAttachment ? 'pi pi-spin pi-spinner' : 'pi pi-paperclip'"></i>
-                        <span>{{ uploadingAttachment ? 'กำลังแนบไฟล์' : 'แนบ PDF/รูปภาพ' }}</span>
-                    </label>
                 </div>
 
-                <label class="legal-check">
-                    <Checkbox v-model="legalAccepted" binary :disabled="!canInteract" />
-                    <span>{{ legalText }}</span>
-                </label>
-
-                <Message v-if="primaryDisabledReason && canInteract" severity="warn">{{ primaryDisabledReason }}</Message>
+                <div class="legal-check">
+                    <Checkbox v-model="legalAccepted" inputId="legalAccepted" binary :disabled="!canInteract" />
+                    <label for="legalAccepted">ยืนยันข้อความ พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์</label>
+                    <Button label="อ่านข้อความ" icon="pi pi-book" text size="small" @click="legalDialogVisible = true" />
+                </div>
             </aside>
 
             <aside v-else class="sign-card readonly-card">
-                <div class="signer-summary">
-                    <div>
-                        <span>ผู้เซ็น</span>
-                        <strong>{{ identityLabel || task?.signerName || task?.signerUser || '-' }}</strong>
-                    </div>
+                <div class="signer-summary position-summary">
+                    <span><i class="pi pi-user-edit"></i> ตำแหน่งของคุณ</span>
+                    <strong>{{ task?.positionName || '-' }}</strong>
+                    <small>{{ identityLabel || task?.signerName || task?.signerUser || '-' }}</small>
                     <Message :severity="statusView.severity">
                         {{ readOnlyReason || (taskStatus === 'waiting' ? 'ยังไม่ถึงคิวของคุณ ต้องรอขั้นตอนก่อนหน้าเสร็จก่อน' : statusView.message) }}
                     </Message>
@@ -629,8 +676,11 @@ function clamp(value, min, max) {
         </div>
 
         <div v-if="!loading && canInteract" class="sticky-actions">
-            <Button label="ปฏิเสธ" icon="pi pi-times" severity="danger" outlined :disabled="!canInteract || isBusy" @click="rejectVisible = true" />
-            <Button label="ยืนยันเซ็น" icon="pi pi-check" :disabled="!canConfirm" :loading="isBusy" @click="confirmSign" />
+            <Message v-if="primaryDisabledReason" severity="warn" class="sticky-reason">{{ primaryDisabledReason }}</Message>
+            <div class="sticky-buttons">
+                <Button label="ปฏิเสธ" icon="pi pi-times" severity="danger" outlined :disabled="!canInteract || isBusy" @click="rejectVisible = true" />
+                <Button label="ยืนยันเซ็น" icon="pi pi-check" :disabled="!canConfirm" :loading="isBusy" @click="confirmSign" />
+            </div>
         </div>
 
         <Dialog v-model:visible="rejectVisible" modal header="ปฏิเสธเอกสาร" :style="{ width: 'min(34rem, 94vw)' }">
@@ -644,6 +694,32 @@ function clamp(value, min, max) {
                 <Button label="ยืนยันปฏิเสธ" severity="danger" :loading="isBusy" @click="rejectTask" />
             </template>
         </Dialog>
+
+        <Dialog v-model:visible="legalDialogVisible" modal header="ข้อความยืนยัน พ.ร.บ." :style="{ width: 'min(34rem, 94vw)' }">
+            <p class="legal-dialog-text">{{ legalText }}</p>
+            <template #footer>
+                <Button label="ปิด" severity="secondary" outlined @click="legalDialogVisible = false" />
+                <Button
+                    v-if="canInteract"
+                    label="รับทราบและยืนยัน"
+                    icon="pi pi-check"
+                    @click="
+                        legalAccepted = true;
+                        legalDialogVisible = false;
+                    "
+                />
+            </template>
+        </Dialog>
+
+        <Dialog v-model:visible="pdfDialogVisible" modal header="ดู PDF" class="pdf-dialog" :style="{ width: 'min(960px, 96vw)' }">
+            <div class="pdf-dialog-body">
+                <div v-if="pdfDialogLoading" class="pdf-state">
+                    <i class="pi pi-spin pi-spinner"></i>
+                    <span>กำลังเปิด PDF</span>
+                </div>
+                <iframe v-else-if="pdfDialogUrl" :src="pdfDialogUrl" title="PDF" class="pdf-frame"></iframe>
+            </div>
+        </Dialog>
     </section>
 </template>
 
@@ -652,17 +728,17 @@ function clamp(value, min, max) {
     min-height: calc(100dvh - 56px);
     display: flex;
     flex-direction: column;
-    gap: 0.65rem;
-    padding: 0.75rem;
-    padding-bottom: 5.25rem;
+    gap: 0.55rem;
+    padding: 0.65rem;
+    padding-bottom: 6.75rem;
 }
 
 .signing-header {
-    min-height: 52px;
+    min-height: 46px;
     display: flex;
     align-items: center;
-    gap: 0.65rem;
-    padding: 0.55rem 0.7rem;
+    gap: 0.55rem;
+    padding: 0.45rem 0.6rem;
     border: 1px solid var(--surface-border);
     border-radius: 8px;
     background: var(--surface-card);
@@ -704,7 +780,7 @@ function clamp(value, min, max) {
     flex: 1;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(340px, 400px);
-    gap: 0.75rem;
+    gap: 0.65rem;
 }
 
 .pdf-shell,
@@ -721,8 +797,7 @@ function clamp(value, min, max) {
     flex-direction: column;
 }
 
-.pdf-toolbar,
-.page-strip {
+.pdf-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -731,14 +806,10 @@ function clamp(value, min, max) {
     border-bottom: 1px solid var(--surface-border);
 }
 
-.page-strip {
-    border-top: 1px solid var(--surface-border);
-    border-bottom: 0;
-}
-
 .toolbar-title {
     display: grid;
     line-height: 1.2;
+    min-width: 4rem;
 }
 
 .toolbar-title span {
@@ -752,6 +823,10 @@ function clamp(value, min, max) {
     gap: 0.15rem;
     flex-wrap: wrap;
     justify-content: flex-end;
+}
+
+.toolbar-actions :deep(.p-button) {
+    min-height: 36px;
 }
 
 .pdf-viewer {
@@ -777,7 +852,8 @@ function clamp(value, min, max) {
 }
 
 .page-select {
-    width: 8rem;
+    width: 6.5rem;
+    flex: 0 0 auto;
 }
 
 .sign-card {
@@ -797,15 +873,35 @@ function clamp(value, min, max) {
     gap: 0.65rem;
 }
 
-.signer-summary div {
+.position-summary {
     display: grid;
-    gap: 0.15rem;
+    gap: 0.2rem;
+    border: 1px solid color-mix(in srgb, var(--primary-color) 24%, var(--surface-border));
+    border-radius: 8px;
+    padding: 0.7rem 0.8rem;
+    background: color-mix(in srgb, var(--primary-color) 8%, var(--surface-card));
 }
 
-.signer-summary span,
+.position-summary span,
 .attachment-block span {
     color: var(--text-color-secondary);
     font-size: 0.86rem;
+}
+
+.position-summary span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.position-summary strong {
+    color: var(--primary-color);
+    font-size: 1.12rem;
+    line-height: 1.2;
+}
+
+.position-summary small {
+    color: var(--text-color-secondary);
 }
 
 .section-heading {
@@ -845,6 +941,11 @@ function clamp(value, min, max) {
     gap: 0.55rem;
 }
 
+.attachment-fields {
+    display: grid;
+    gap: 0.55rem;
+}
+
 .attach-button {
     min-height: 44px;
     display: flex;
@@ -867,10 +968,20 @@ function clamp(value, min, max) {
 }
 
 .legal-check {
-    display: flex;
-    align-items: flex-start;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
     gap: 0.65rem;
     line-height: 1.45;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 0.7rem 0.8rem;
+    background: var(--surface-card);
+}
+
+.legal-check label {
+    min-width: 0;
+    font-weight: 600;
 }
 
 .sticky-actions {
@@ -880,22 +991,54 @@ function clamp(value, min, max) {
     bottom: 0;
     z-index: 30;
     display: grid;
-    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
-    gap: 0.65rem;
+    gap: 0.45rem;
     padding: 0.75rem;
     padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
     border-top: 1px solid var(--surface-border);
     background: var(--surface-card);
 }
 
-.sticky-actions :deep(.p-button) {
+.sticky-reason {
+    margin: 0;
+}
+
+.sticky-buttons {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: 0.65rem;
+}
+
+.sticky-buttons :deep(.p-button) {
     min-height: 44px;
+}
+
+.legal-dialog-text {
+    margin: 0;
+    line-height: 1.7;
+    color: var(--text-color);
+}
+
+.pdf-dialog-body {
+    min-height: 70dvh;
+    display: grid;
+}
+
+.pdf-frame {
+    width: 100%;
+    height: 76dvh;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: white;
+}
+
+:global(.pdf-dialog .p-dialog-content) {
+    padding-top: 0;
 }
 
 @media (max-width: 920px) {
     .signing-workspace {
         padding: 0.55rem;
-        padding-bottom: 5.4rem;
+        padding-bottom: 7.25rem;
     }
 
     .workspace-grid {
@@ -903,16 +1046,20 @@ function clamp(value, min, max) {
     }
 
     .pdf-shell {
-        min-height: 62dvh;
+        height: clamp(340px, 46dvh, 430px);
+        min-height: 0;
     }
 
     .pdf-viewer {
-        max-height: 62dvh;
         padding: 0.75rem;
     }
 
     .sign-card {
         padding: 0.75rem;
+    }
+
+    .readonly-grid .sign-card {
+        order: -1;
     }
 }
 
@@ -932,13 +1079,41 @@ function clamp(value, min, max) {
     }
 }
 
+@media (max-width: 520px) {
+    .desktop-tool {
+        display: none;
+    }
+}
+
 @media (max-width: 430px) {
     .signing-header {
         padding-inline: 0.45rem;
     }
 
-    .toolbar-actions :deep(.p-button-label) {
-        display: none;
+    .pdf-toolbar {
+        padding-inline: 0.55rem;
+    }
+
+    .toolbar-actions {
+        gap: 0;
+    }
+
+    .toolbar-actions :deep(.p-button) {
+        padding-inline: 0.45rem;
+    }
+
+    .legal-check {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .legal-check :deep(.p-button) {
+        grid-column: 2;
+        justify-self: start;
+        padding-left: 0;
+    }
+
+    .signature-canvas {
+        height: 168px;
     }
 }
 </style>

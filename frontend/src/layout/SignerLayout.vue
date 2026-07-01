@@ -7,6 +7,7 @@ const router = useRouter();
 const route = useRoute();
 
 const pageLabel = computed(() => (String(route.name || '').includes('history') ? 'ประวัติการเซ็น' : 'งานรอเซ็น'));
+const compactMode = computed(() => Boolean(route.meta.compactSignerLayout));
 
 async function logout() {
     await authStore.logout();
@@ -15,13 +16,13 @@ async function logout() {
 </script>
 
 <template>
-    <div class="signer-layout">
+    <div class="signer-layout" :class="{ 'compact-signer-layout': compactMode }">
         <header class="signer-topbar">
             <button class="brand" type="button" @click="router.push({ name: 'my-signing-tasks' })">
                 <span class="brand-icon"><i class="pi pi-file-check"></i></span>
                 <span>
                     <strong>PaperLess</strong>
-                    <small>{{ pageLabel }}</small>
+                    <small v-if="!compactMode">{{ pageLabel }}</small>
                 </span>
             </button>
             <div class="signer-user">
@@ -29,7 +30,7 @@ async function logout() {
                 <Button icon="pi pi-sign-out" text rounded aria-label="ออกจากระบบ" @click="logout" />
             </div>
         </header>
-        <nav class="signer-nav" aria-label="เมนูงานเซ็น">
+        <nav v-if="!compactMode" class="signer-nav" aria-label="เมนูงานเซ็น">
             <RouterLink :to="{ name: 'my-signing-tasks' }" class="signer-nav-link">
                 <i class="pi pi-inbox"></i>
                 <span>งานรอเซ็น</span>
@@ -87,6 +88,13 @@ async function logout() {
     color: var(--text-color-secondary);
     text-decoration: none;
     font-weight: 600;
+}
+
+.signer-nav-link:focus-visible,
+.brand:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
+    outline-offset: 2px;
+    box-shadow: none;
 }
 
 .signer-nav-link.router-link-active {
@@ -147,6 +155,10 @@ async function logout() {
     min-width: 0;
 }
 
+.compact-signer-layout .signer-topbar {
+    height: 52px;
+}
+
 @media (max-width: 420px) {
     .signer-topbar {
         padding-inline: 0.7rem;
@@ -162,6 +174,15 @@ async function logout() {
 
     .signer-nav-link {
         font-size: 0.92rem;
+    }
+
+    .compact-signer-layout .brand-icon {
+        width: 2rem;
+        height: 2rem;
+    }
+
+    .compact-signer-layout .brand strong {
+        font-size: 0.98rem;
     }
 }
 </style>

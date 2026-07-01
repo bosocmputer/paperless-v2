@@ -107,7 +107,10 @@ function formatDateTime(value) {
                 <h1>ประวัติการเซ็น</h1>
                 <p>ดูเอกสารที่คุณเคยเซ็นหรือปฏิเสธไว้</p>
             </div>
-            <Tag :value="`${total || 0} รายการ`" severity="secondary" />
+            <div class="header-actions">
+                <Tag :value="`${total || 0} รายการ`" severity="secondary" />
+                <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadHistory" />
+            </div>
         </header>
 
         <div class="history-search">
@@ -115,7 +118,6 @@ function formatDateTime(value) {
                 <InputIcon><i class="pi pi-search" /></InputIcon>
                 <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร, คู่ค้า หรือตำแหน่ง" />
             </IconField>
-            <Button label="โหลดใหม่" icon="pi pi-refresh" severity="secondary" outlined aria-label="โหลดใหม่" class="refresh-button" :loading="loading" @click="loadHistory" />
         </div>
 
         <div v-if="loading" class="history-state">
@@ -171,10 +173,10 @@ function formatDateTime(value) {
 <style scoped>
 .history-page {
     min-height: calc(100dvh - 96px);
-    padding: 0.85rem;
+    padding: 0.75rem;
     display: grid;
     align-content: start;
-    gap: 0.85rem;
+    gap: 0.75rem;
 }
 
 .history-header {
@@ -191,15 +193,18 @@ function formatDateTime(value) {
 }
 
 .history-header p {
-    margin: 0.25rem 0 0;
+    margin: 0.2rem 0 0;
     color: var(--text-color-secondary);
 }
 
+.header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
 .history-search {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: stretch;
-    gap: 0.6rem;
+    display: block;
 }
 
 .search-field {
@@ -209,11 +214,7 @@ function formatDateTime(value) {
 .search-field :deep(.p-inputtext) {
     width: 100%;
     min-height: 44px;
-}
-
-.refresh-button {
-    min-height: 44px;
-    white-space: nowrap;
+    font-size: 16px;
 }
 
 .history-state,
@@ -359,19 +360,15 @@ dd i {
 @media (max-width: 520px) {
     .history-header {
         display: grid;
+        gap: 0.55rem;
+    }
+
+    .header-actions {
+        justify-content: space-between;
     }
 
     dl {
         grid-template-columns: 1fr;
-    }
-
-    .refresh-button {
-        width: 44px;
-        padding-inline: 0;
-    }
-
-    .refresh-button :deep(.p-button-label) {
-        display: none;
     }
 }
 </style>

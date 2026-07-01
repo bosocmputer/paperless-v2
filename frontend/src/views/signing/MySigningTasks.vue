@@ -151,9 +151,12 @@ function formatDate(value) {
                 <h1>งานรอเซ็น</h1>
                 <p>ดูงานที่เซ็นได้ทันที และเอกสารที่กำลังรอขั้นตอนก่อนหน้า</p>
             </div>
-            <div class="queue-tags">
-                <Tag :value="`เซ็นได้ ${counts.ready || 0}`" severity="info" />
-                <Tag :value="`รอคิว ${counts.waiting || 0}`" severity="secondary" />
+            <div class="header-actions">
+                <div class="queue-tags">
+                    <Tag :value="`เซ็นได้ ${counts.ready || 0}`" severity="info" />
+                    <Tag :value="`รอคิว ${counts.waiting || 0}`" severity="secondary" />
+                </div>
+                <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadTasks" />
             </div>
         </header>
 
@@ -162,7 +165,6 @@ function formatDate(value) {
                 <InputIcon><i class="pi pi-search" /></InputIcon>
                 <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร, คู่ค้า, ขั้นตอน หรือผู้เซ็น" />
             </IconField>
-            <Button label="โหลดใหม่" icon="pi pi-refresh" severity="secondary" outlined aria-label="โหลดใหม่" class="refresh-button" :loading="loading" @click="loadTasks" />
         </div>
 
         <div v-if="loading" class="task-state">
@@ -280,10 +282,10 @@ function formatDate(value) {
 <style scoped>
 .tasks-page {
     min-height: calc(100dvh - 56px);
-    padding: 0.85rem;
+    padding: 0.75rem;
     display: grid;
     align-content: start;
-    gap: 0.85rem;
+    gap: 0.75rem;
 }
 
 .tasks-header,
@@ -310,8 +312,14 @@ function formatDate(value) {
 
 .tasks-header p,
 .queue-header p {
-    margin: 0.25rem 0 0;
+    margin: 0.2rem 0 0;
     color: var(--text-color-secondary);
+}
+
+.header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
 }
 
 .queue-tags {
@@ -322,10 +330,7 @@ function formatDate(value) {
 }
 
 .task-search {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: stretch;
-    gap: 0.6rem;
+    display: block;
 }
 
 .search-field {
@@ -335,11 +340,7 @@ function formatDate(value) {
 .search-field :deep(.p-inputtext) {
     width: 100%;
     min-height: 44px;
-}
-
-.refresh-button {
-    min-height: 44px;
-    white-space: nowrap;
+    font-size: 16px;
 }
 
 .task-state,
@@ -492,6 +493,11 @@ dd {
     .tasks-header,
     .queue-header {
         display: grid;
+        gap: 0.55rem;
+    }
+
+    .header-actions {
+        justify-content: space-between;
     }
 
     .queue-tags {
@@ -500,15 +506,6 @@ dd {
 
     dl {
         grid-template-columns: 1fr;
-    }
-
-    .refresh-button {
-        width: 44px;
-        padding-inline: 0;
-    }
-
-    .refresh-button :deep(.p-button-label) {
-        display: none;
     }
 }
 </style>
