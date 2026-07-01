@@ -158,8 +158,11 @@ function formatDate(value) {
         </header>
 
         <div class="task-search">
-            <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร, คู่ค้า, ขั้นตอน หรือผู้เซ็น" />
-            <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadTasks" />
+            <IconField class="search-field">
+                <InputIcon><i class="pi pi-search" /></InputIcon>
+                <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร, คู่ค้า, ขั้นตอน หรือผู้เซ็น" />
+            </IconField>
+            <Button label="โหลดใหม่" icon="pi pi-refresh" severity="secondary" outlined aria-label="โหลดใหม่" class="refresh-button" :loading="loading" @click="loadTasks" />
         </div>
 
         <div v-if="loading" class="task-state">
@@ -321,11 +324,22 @@ function formatDate(value) {
 .task-search {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
     gap: 0.6rem;
 }
 
-.task-search :deep(.p-inputtext) {
+.search-field {
+    width: 100%;
+}
+
+.search-field :deep(.p-inputtext) {
+    width: 100%;
     min-height: 44px;
+}
+
+.refresh-button {
+    min-height: 44px;
+    white-space: nowrap;
 }
 
 .task-state,
@@ -486,6 +500,15 @@ dd {
 
     dl {
         grid-template-columns: 1fr;
+    }
+
+    .refresh-button {
+        width: 44px;
+        padding-inline: 0;
+    }
+
+    .refresh-button :deep(.p-button-label) {
+        display: none;
     }
 }
 </style>
