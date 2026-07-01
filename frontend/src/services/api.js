@@ -1,4 +1,5 @@
 const API_BASE = '';
+let authRedirecting = false;
 
 async function request(path, options = {}) {
     const headers = new Headers(options.headers || {});
@@ -19,10 +20,29 @@ async function request(path, options = {}) {
         const error = new Error(message);
         error.status = response.status;
         error.payload = payload;
+        if (response.status === 401) handleUnauthorized(path);
         throw error;
     }
 
     return payload;
+}
+
+function handleUnauthorized(path) {
+    localStorage.removeItem('paperless_token');
+    localStorage.removeItem('paperless_user');
+    window.dispatchEvent(new CustomEvent('paperless:session-expired'));
+
+    if (authRedirecting || shouldSkipUnauthorizedRedirect(path)) return;
+    authRedirecting = true;
+
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const params = new URLSearchParams({ session: 'expired' });
+    if (!current.startsWith('/auth/login')) params.set('redirect', current);
+    window.location.replace(`/auth/login?${params.toString()}`);
+}
+
+function shouldSkipUnauthorizedRedirect(path) {
+    return path.startsWith('/api/auth/login') || path.startsWith('/api/auth/logout') || path.startsWith('/api/public/');
 }
 
 function withQuery(path, params = {}) {

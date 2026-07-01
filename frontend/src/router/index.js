@@ -147,24 +147,29 @@ const router = createRouter({
     ]
 });
 
+async function validateSession() {
+    if (!authStore.isAuthenticated()) return false;
+    if (authStore.sessionChecked) return true;
+    try {
+        await authStore.loadMe();
+        return true;
+    } catch {
+        authStore.clear();
+        return false;
+    }
+}
+
 router.beforeEach(async (to) => {
     if (to.name === 'public-signing') return true;
 
     if (to.meta.public) {
-        if (authStore.isAuthenticated()) return authStore.user?.role === 'user' ? { name: 'my-signing-tasks' } : { name: 'dashboard' };
+        if (await validateSession()) return authStore.user?.role === 'user' ? { name: 'my-signing-tasks' } : { name: 'dashboard' };
         return true;
     }
 
     if (!authStore.isAuthenticated()) return { name: 'login', query: { redirect: to.fullPath } };
 
-    if (!authStore.user) {
-        try {
-            await authStore.loadMe();
-        } catch {
-            authStore.clear();
-            return { name: 'login' };
-        }
-    }
+    if (!(await validateSession())) return { name: 'login', query: { redirect: to.fullPath, session: 'expired' } };
 
     if (to.name === 'dashboard' && authStore.user?.role === 'user') {
         return { name: 'my-signing-tasks' };
