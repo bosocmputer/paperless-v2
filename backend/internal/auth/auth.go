@@ -12,9 +12,14 @@ import (
 var ErrInvalidToken = errors.New("invalid token")
 
 type Claims struct {
-	DisplayName string `json:"name"`
-	Username    string `json:"username"`
-	Role        string `json:"role"`
+	DisplayName  string `json:"name"`
+	Username     string `json:"username"`
+	Role         string `json:"role"`
+	SMLProvider  string `json:"smlProvider"`
+	SMLDataGroup string `json:"smlDataGroup"`
+	SMLDataCode  string `json:"smlDataCode"`
+	SMLTenant    string `json:"smlTenant"`
+	AuthSource   string `json:"authSource"`
 	jwt.RegisteredClaims
 }
 
@@ -27,12 +32,17 @@ func CheckPassword(password, hash string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
-func IssueToken(secret string, ttl time.Duration, user models.User) (string, time.Time, error) {
+func IssueToken(secret string, ttl time.Duration, user models.User, session models.AuthSession) (string, time.Time, error) {
 	expiresAt := time.Now().Add(ttl)
 	claims := Claims{
-		DisplayName: user.DisplayName,
-		Username:    user.Username,
-		Role:        user.Role,
+		DisplayName:  user.DisplayName,
+		Username:     user.Username,
+		Role:         user.Role,
+		SMLProvider:  session.SMLProvider,
+		SMLDataGroup: session.SMLDataGroup,
+		SMLDataCode:  session.SMLDataCode,
+		SMLTenant:    session.SMLTenant,
+		AuthSource:   session.AuthSource,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   user.ID,
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

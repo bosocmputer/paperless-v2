@@ -4,8 +4,10 @@ import { LEGAL_NOTICE_DISPLAY_TEXT, LEGAL_NOTICE_TEXT, legalNoticeOverflowMessag
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
+import { useConfirm } from 'primevue/useconfirm';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+const confirm = useConfirm();
 
 const props = defineProps({
     pdfUrl: { type: String, default: '' },
@@ -13,15 +15,15 @@ const props = defineProps({
     configs: { type: Array, default: () => [] },
     modelValue: { type: Array, default: () => [] },
     legalNoticeBox: { type: Object, default: null },
+    legalNoticeBoxes: { type: Array, default: () => [] },
     presetTemplate: { type: Object, default: null },
     fullHeight: { type: Boolean, default: false }
 });
 
-const emit = defineEmits(['update:modelValue', 'update:legalNoticeBox', 'apply-preset', 'event', 'validation-change']);
+const emit = defineEmits(['update:modelValue', 'update:legalNoticeBox', 'update:legalNoticeBoxes', 'apply-preset', 'event', 'validation-change']);
 
 const canvasRef = ref(null);
 const viewportRef = ref(null);
-const legalNoticePreviewRef = ref(null);
 const pdfDoc = shallowRef(null);
 const renderTask = shallowRef(null);
 const renderSequence = ref(0);
@@ -34,17 +36,24 @@ const selectedBoxKey = ref('');
 let resizeObserver;
 let dragState = null;
 let fitTimer;
-const legalNoticeKey = 'legal_notice_box';
+const legalNoticeKeyPrefix = 'legal_notice_box_';
 const legalNoticeText = LEGAL_NOTICE_TEXT;
 const legalNoticePreviewText = LEGAL_NOTICE_DISPLAY_TEXT;
-const legalNoticeOverflow = ref(false);
+const legalNoticeOverflowKeys = ref(new Set());
+const legalNoticePreviewRefs = new Map();
 
 const boxes = computed(() => props.modelValue || []);
 const currentPageBoxes = computed(() => boxes.value.filter((box) => Number(box.pageNo || 1) === currentPage.value));
-const legalNotice = computed(() => props.legalNoticeBox || null);
-const currentPageLegalNotice = computed(() => (legalNotice.value && Number(legalNotice.value.pageNo || 1) === currentPage.value ? legalOverlayBox(legalNotice.value) : null));
+const legalNotices = computed(() => {
+    const boxes = Array.isArray(props.legalNoticeBoxes) && props.legalNoticeBoxes.length ? props.legalNoticeBoxes : props.legalNoticeBox ? [props.legalNoticeBox] : [];
+    return boxes.map((box) => withLegalNoticeKey(box));
+});
+const currentPageLegalNotices = computed(() => legalNotices.value.filter((box) => Number(box.pageNo || 1) === currentPage.value).map(legalOverlayBox));
 const selectedBox = computed(() => boxes.value.find((box) => box.clientKey === selectedBoxKey.value) || null);
-const selectedLegalNotice = computed(() => (selectedBoxKey.value === legalNoticeKey && legalNotice.value ? legalOverlayBox(legalNotice.value) : null));
+const selectedLegalNotice = computed(() => {
+    const box = legalNotices.value.find((item) => item.clientKey === selectedBoxKey.value);
+    return box ? legalOverlayBox(box) : null;
+});
 const selectedItem = computed(() => selectedLegalNotice.value || selectedBox.value);
 const selectedIsLegalNotice = computed(() => !!selectedLegalNotice.value);
 const selectedStep = computed(() => props.configs.find((step) => step.positionCode === selectedBox.value?.positionCode) || null);
@@ -54,35 +63,38 @@ const validationIssues = computed(() => {
     const issues = [];
     if (!props.pdfUrl) issues.push('อัปโหลด PDF ก่อน');
     if (boxes.value.length === 0) issues.push('ต้องวางกรอบอย่างน้อย 1 กรอบ');
-    if (!legalNotice.value) issues.push('ต้องวางกรอบข้อความกฎหมาย');
+    if (legalNotices.value.length === 0) issues.push('ต้องวางกรอบข้อความกฎหมาย');
     for (const box of boxes.value) {
         if (box.xRatio < 0 || box.yRatio < 0 || box.widthRatio <= 0 || box.heightRatio <= 0 || box.xRatio + box.widthRatio > 1 || box.yRatio + box.heightRatio > 1) {
             issues.push(`กรอบ ${box.label || box.positionCode} อยู่นอกหน้า PDF`);
         }
         if (box.pageNo < 1 || box.pageNo > props.pageCount) issues.push(`กรอบ ${box.label || box.positionCode} อยู่หน้าที่ไม่ถูกต้อง`);
     }
-    if (legalNotice.value) {
-        const box = legalNotice.value;
+    for (const box of legalNotices.value) {
         if (box.pageNo < 1 || box.pageNo > props.pageCount) issues.push('กรอบข้อความกฎหมายอยู่หน้าที่ไม่ถูกต้อง');
         if (box.xRatio < 0 || box.yRatio < 0 || box.widthRatio <= 0 || box.heightRatio <= 0 || box.xRatio + box.widthRatio > 1 || box.yRatio + box.heightRatio > 1) {
             issues.push('กรอบข้อความกฎหมายอยู่นอกหน้า PDF');
         }
         if (box.widthRatio < 0.2 || box.heightRatio < 0.035) issues.push('กรอบข้อความกฎหมายเล็กเกินไป');
-        if (legalNoticeOverflow.value) issues.push(legalNoticeOverflowMessage());
+        if (legalNoticeOverflowKeys.value.has(box.clientKey)) issues.push(legalNoticeOverflowMessage());
     }
     for (const step of props.configs) {
         const stepBoxes = boxes.value.filter((box) => box.positionCode === step.positionCode);
         if (stepBoxes.length === 0) continue;
-        if (step.conditionType === 1 && stepBoxes.length !== 1) issues.push(`${step.positionName} ต้องมี 1 กรอบ`);
-        if (step.conditionType === 3 && stepBoxes.length !== 1) issues.push(`${step.positionName} ต้องมี 1 กรอบบุคคลภายนอก`);
+        if (step.conditionType === 1 && stepBoxes.length < 1) issues.push(`${step.positionName} ต้องมีอย่างน้อย 1 กรอบ`);
+        if (step.conditionType === 3 && stepBoxes.length < 1) issues.push(`${step.positionName} ต้องมีอย่างน้อย 1 กรอบบุคคลภายนอก`);
         if (step.conditionType === 2) {
+            const required = new Set(stepUsers(step).map((user) => signerUsername(user)).filter(Boolean));
             const seen = new Set();
             for (const box of stepBoxes) {
                 const user = signerUsername(box.signerUser);
                 if (!user) issues.push(`${step.positionName} ต้องเลือก user ทุกกรอบ`);
-                if (user && seen.has(user)) issues.push(`${step.positionName} มี user ซ้ำ`);
+                if (user && !required.has(user)) issues.push(`${step.positionName} มี user ที่ไม่อยู่ใน Workflow`);
                 if (user) seen.add(user);
             }
+            required.forEach((user) => {
+                if (!seen.has(user)) issues.push(`${step.positionName} ต้องมีกรอบของ ${user}`);
+            });
         }
     }
     return [...new Set(issues)];
@@ -96,17 +108,12 @@ const stepRows = computed(() =>
         .map((step) => {
             const stepBoxes = boxes.value.filter((box) => box.positionCode === step.positionCode);
             const users = stepUsers(step);
-            const boxedUsers = new Set(stepBoxes.map((box) => signerUsername(box.signerUser)).filter(Boolean));
             let canAdd = !!props.pdfUrl;
             let addReason = '';
             if (!props.pdfUrl) addReason = 'ต้องอัปโหลด PDF ก่อน';
-            if (step.conditionType !== 2 && stepBoxes.length >= 1) {
+            if (step.conditionType === 2 && users.length === 0) {
                 canAdd = false;
-                addReason = 'มีกรอบครบแล้ว';
-            }
-            if (step.conditionType === 2 && users.every((user) => boxedUsers.has(signerUsername(user)))) {
-                canAdd = false;
-                addReason = 'เลือก user ครบแล้ว';
+                addReason = 'ยังไม่มี user ใน Workflow';
             }
             return {
                 ...step,
@@ -114,7 +121,7 @@ const stepRows = computed(() =>
                 users,
                 canAdd,
                 addReason,
-                statusLabel: stepBoxes.length > 0 ? `ใช้ ${stepBoxes.length} กรอบ` : 'ไม่อยู่ในงานเซ็น'
+                statusLabel: stepBoxes.length > 0 ? `ใช้ ${stepBoxes.length} กรอบ / ${countPagesWithBoxes(stepBoxes)} หน้า` : 'ไม่อยู่ในงานเซ็น'
             };
         })
 );
@@ -130,7 +137,7 @@ watch(
 watch(currentPage, renderPage);
 watch(zoom, renderPage);
 watch(validationIssues, (issues) => emit('validation-change', issues), { immediate: true });
-watch([currentPageLegalNotice, renderedSize, zoom], () => checkLegalNoticeOverflow(), { deep: true, immediate: true });
+watch([currentPageLegalNotices, renderedSize, zoom, selectedBoxKey], () => checkLegalNoticeOverflow(), { deep: true, immediate: true });
 
 onBeforeUnmount(async () => {
     clearTimeout(fitTimer);
@@ -221,11 +228,23 @@ function setZoom(value) {
 
 function applyPreset() {
     if (!canApplyPreset.value) return;
-    if (props.presetTemplate.sampleFile?.pageCount && props.pageCount && props.presetTemplate.sampleFile.pageCount !== props.pageCount) {
-        emit('event', 'preset_page_mismatch');
+    const hasExisting = boxes.value.length > 0 || legalNotices.value.length > 0;
+    if (hasExisting) {
+        confirm.require({
+            message: 'การใช้กรอบเริ่มต้นจะล้างกรอบที่วางอยู่ทั้งหมดและสร้างใหม่ตาม PDF ทุกหน้า ต้องการดำเนินการต่อหรือไม่?',
+            header: 'ใช้กรอบเริ่มต้น',
+            icon: 'pi pi-exclamation-triangle',
+            rejectProps: { label: 'ยกเลิก', severity: 'secondary', outlined: true },
+            acceptProps: { label: 'ใช้กรอบเริ่มต้น', severity: 'warn' },
+            accept: () => applyPresetNow()
+        });
         return;
     }
-    const next = (props.presetTemplate.boxes || []).map((box) => ({
+    applyPresetNow();
+}
+
+function applyPresetNow() {
+    const next = expandPresetBoxes(props.presetTemplate?.boxes || [], props.presetTemplate?.sampleFile?.pageCount, props.pageCount).map((box) => ({
         ...box,
         clientKey: makeKey(),
         pageNo: Number(box.pageNo || 1),
@@ -235,26 +254,28 @@ function applyPreset() {
         heightRatio: Number(box.heightRatio || 0.08)
     }));
     emitBoxes(next);
-    if (props.presetTemplate.legalNoticeBox) {
-        emitLegalNoticeBox({
-            ...props.presetTemplate.legalNoticeBox,
-            pageNo: Number(props.presetTemplate.legalNoticeBox.pageNo || 1),
-            xRatio: Number(props.presetTemplate.legalNoticeBox.xRatio || 0.2),
-            yRatio: Number(props.presetTemplate.legalNoticeBox.yRatio || 0.62),
-            widthRatio: Number(props.presetTemplate.legalNoticeBox.widthRatio || 0.6),
-            heightRatio: Number(props.presetTemplate.legalNoticeBox.heightRatio || 0.06),
-            label: props.presetTemplate.legalNoticeBox.label || 'ข้อความกฎหมาย',
-            source: 'preset'
-        });
-    }
-    selectedBoxKey.value = props.presetTemplate.legalNoticeBox ? legalNoticeKey : next[0]?.clientKey || '';
+    const noticePattern = props.presetTemplate?.legalNoticeBox ? [props.presetTemplate.legalNoticeBox] : [];
+    const legalNext = expandPresetBoxes(noticePattern, props.presetTemplate?.sampleFile?.pageCount, props.pageCount).map((box) => ({
+        ...box,
+        clientKey: makeLegalNoticeKey(),
+        pageNo: Number(box.pageNo || 1),
+        xRatio: Number(box.xRatio || 0.2),
+        yRatio: Number(box.yRatio || 0.62),
+        widthRatio: Number(box.widthRatio || 0.6),
+        heightRatio: Number(box.heightRatio || 0.06),
+        label: box.label || 'ข้อความกฎหมาย',
+        source: 'preset'
+    }));
+    emitLegalNoticeBoxes(legalNext);
+    selectedBoxKey.value = legalNext[0]?.clientKey || next[0]?.clientKey || '';
     emit('apply-preset', props.presetTemplate);
     emit('event', 'preset_applied');
 }
 
 function addLegalNoticeBox() {
-    if (!props.pdfUrl || legalNotice.value) return;
+    if (!props.pdfUrl) return;
     const box = {
+        clientKey: makeLegalNoticeKey(),
         pageNo: currentPage.value,
         xRatio: 0.2,
         yRatio: 0.62,
@@ -263,14 +284,15 @@ function addLegalNoticeBox() {
         label: 'ข้อความกฎหมาย',
         source: 'per_document'
     };
-    emitLegalNoticeBox(box);
-    selectedBoxKey.value = legalNoticeKey;
+    emitLegalNoticeBoxes([...legalNotices.value, box]);
+    selectedBoxKey.value = box.clientKey;
     emit('event', 'legal_notice_box_add');
 }
 
-function deleteLegalNoticeBox() {
-    emitLegalNoticeBox(null);
-    if (selectedBoxKey.value === legalNoticeKey) selectedBoxKey.value = '';
+function deleteLegalNoticeBox(box = selectedLegalNotice.value) {
+    if (!box) return;
+    emitLegalNoticeBoxes(legalNotices.value.filter((item) => item.clientKey !== box.clientKey));
+    if (selectedBoxKey.value === box.clientKey) selectedBoxKey.value = '';
     emit('event', 'legal_notice_box_delete');
 }
 
@@ -278,17 +300,20 @@ function addBox(step) {
     if (!props.pdfUrl) return;
     const users = stepUsers(step);
     const existing = boxes.value.filter((box) => box.positionCode === step.positionCode);
-    if (step.conditionType !== 2 && existing.length >= 1) return;
     let signerType = 'any';
     let signerUser = '';
     let signerSlot = nextSignerSlot(existing);
     if (step.conditionType === 2) {
         signerType = 'internal';
-        const used = new Set(existing.map((box) => signerUsername(box.signerUser)));
-        signerUser = users.find((user) => !used.has(signerUsername(user))) || users[0] || '';
+        const usedOnCurrentPage = new Set(existing.filter((box) => Number(box.pageNo || 1) === currentPage.value).map((box) => signerUsername(box.signerUser)));
+        signerUser = users.find((user) => !usedOnCurrentPage.has(signerUsername(user))) || users[0] || '';
         if (!signerUser) return;
+        signerSlot = signerSlotForUser(users, signerUser);
     } else if (step.conditionType === 3) {
         signerType = 'external';
+        signerSlot = 1;
+    } else {
+        signerSlot = 1;
     }
     const box = {
         clientKey: makeKey(),
@@ -320,8 +345,8 @@ function updateSelected(field, value) {
 }
 
 function updateBox(key, patch) {
-    if (key === legalNoticeKey) {
-        updateLegalNoticeBox(patch);
+    if (isLegalNoticeKey(key)) {
+        updateLegalNoticeBox(key, patch);
         return;
     }
     emitBoxes(boxes.value.map((box) => (box.clientKey === key ? { ...box, ...patch } : box)));
@@ -335,9 +360,15 @@ function emitLegalNoticeBox(next) {
     emit('update:legalNoticeBox', next);
 }
 
-function updateLegalNoticeBox(patch) {
-    if (!legalNotice.value) return;
-    emitLegalNoticeBox({ ...legalNotice.value, ...patch });
+function emitLegalNoticeBoxes(next) {
+    const normalized = (next || []).map((box) => withLegalNoticeKey(box));
+    emit('update:legalNoticeBoxes', normalized);
+    emitLegalNoticeBox(normalized[0] || null);
+}
+
+function updateLegalNoticeBox(key, patch) {
+    if (!isLegalNoticeKey(key)) return;
+    emitLegalNoticeBoxes(legalNotices.value.map((box) => (box.clientKey === key ? { ...box, ...patch } : box)));
 }
 
 function selectBox(box) {
@@ -345,16 +376,16 @@ function selectBox(box) {
     if (box.pageNo !== currentPage.value) currentPage.value = Number(box.pageNo || 1);
 }
 
-function selectLegalNoticeBox() {
-    if (!legalNotice.value) return;
-    selectedBoxKey.value = legalNoticeKey;
-    if (legalNotice.value.pageNo !== currentPage.value) currentPage.value = Number(legalNotice.value.pageNo || 1);
+function selectLegalNoticeBox(box = selectedLegalNotice.value || legalNotices.value[0]) {
+    if (!box) return;
+    selectedBoxKey.value = box.clientKey;
+    if (box.pageNo !== currentPage.value) currentPage.value = Number(box.pageNo || 1);
 }
 
 function legalOverlayBox(box) {
     return {
         ...box,
-        clientKey: legalNoticeKey,
+        clientKey: box.clientKey || makeLegalNoticeKey(),
         label: box.label || 'ข้อความกฎหมาย',
         boxType: 'legal_notice'
     };
@@ -378,17 +409,31 @@ function legalNoticeStyle(box) {
 
 async function checkLegalNoticeOverflow() {
     await nextTick();
-    const element = legalNoticePreviewRef.value;
-    if (!element || !currentPageLegalNotice.value) {
-        legalNoticeOverflow.value = false;
-        return;
+    const next = new Set();
+    for (const box of currentPageLegalNotices.value) {
+        const element = legalNoticePreviewRefs.get(box.clientKey);
+        if (!element) continue;
+        if (element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1) {
+            next.add(box.clientKey);
+        }
     }
-    legalNoticeOverflow.value = element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
+    legalNoticeOverflowKeys.value = next;
+}
+
+function setLegalNoticePreviewRef(key, element) {
+    if (!key) return;
+    if (element) legalNoticePreviewRefs.set(key, element);
+    else legalNoticePreviewRefs.delete(key);
+}
+
+function isLegalNoticeOverflow(key) {
+    return legalNoticeOverflowKeys.value.has(key);
 }
 
 function startPointer(event, box, mode) {
     if (!renderedSize.value.width || !renderedSize.value.height) return;
-    selectBox(box);
+    if (box.boxType === 'legal_notice') selectLegalNoticeBox(box);
+    else selectBox(box);
     dragState = {
         mode,
         key: box.clientKey,
@@ -434,6 +479,12 @@ function stepUsers(step) {
     return [step.user01, step.user02, step.user03].map((value) => String(value || '').trim()).filter(Boolean);
 }
 
+function signerSlotForUser(users, value) {
+    const username = signerUsername(value);
+    const index = users.findIndex((user) => signerUsername(user) === username);
+    return index >= 0 ? index + 1 : 1;
+}
+
 function signerUsername(value) {
     return String(value || '').split(':')[0].trim().toLowerCase();
 }
@@ -457,8 +508,48 @@ function conditionLabel(value) {
     return `เงื่อนไข ${value}`;
 }
 
+function expandPresetBoxes(sourceBoxes, samplePageCount, targetPageCount) {
+    const pages = Math.max(1, Number(targetPageCount || 1));
+    const samplePages = Number(samplePageCount || 0);
+    const mismatch = samplePages > 0 && pages > 0 && samplePages !== pages;
+    if (!mismatch) {
+        return (sourceBoxes || []).map((box) => ({ ...box, pageNo: clampPage(box.pageNo, pages) }));
+    }
+    const pattern = (sourceBoxes || []).filter((box) => Number(box.pageNo || 1) === 1);
+    const base = pattern.length ? pattern : sourceBoxes || [];
+    const out = [];
+    for (let pageNo = 1; pageNo <= pages; pageNo += 1) {
+        base.forEach((box) => out.push({ ...box, pageNo }));
+    }
+    return out;
+}
+
+function countPagesWithBoxes(items) {
+    return new Set((items || []).map((box) => Number(box.pageNo || 1))).size;
+}
+
+function clampPage(value, pageCount) {
+    return Math.min(Math.max(Number(value || 1), 1), Math.max(1, Number(pageCount || 1)));
+}
+
+function withLegalNoticeKey(box) {
+    if (!box) return { clientKey: makeLegalNoticeKey(), pageNo: 1 };
+    return {
+        ...box,
+        clientKey: box?.clientKey || makeLegalNoticeKey()
+    };
+}
+
+function isLegalNoticeKey(key) {
+    return String(key || '').startsWith(legalNoticeKeyPrefix);
+}
+
 function makeKey() {
     return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+}
+
+function makeLegalNoticeKey() {
+    return `${legalNoticeKeyPrefix}${makeKey()}`;
 }
 
 function clamp(value, min, max) {
@@ -491,17 +582,18 @@ defineExpose({ validationIssues, totalBoxes });
                 <div v-else class="pdf-page-shell" :class="{ rendering }">
                     <canvas ref="canvasRef"></canvas>
                     <button
-                        v-if="currentPageLegalNotice"
+                        v-for="legalBox in currentPageLegalNotices"
+                        :key="legalBox.clientKey"
                         type="button"
                         class="signature-layout-box legal-notice-layout-box"
-                        :class="{ selected: currentPageLegalNotice.clientKey === selectedBoxKey, overflow: legalNoticeOverflow }"
-                        :style="legalNoticeStyle(currentPageLegalNotice)"
-                        @click.stop="selectLegalNoticeBox"
-                        @pointerdown.stop="startPointer($event, currentPageLegalNotice, 'move')"
+                        :class="{ selected: legalBox.clientKey === selectedBoxKey, overflow: isLegalNoticeOverflow(legalBox.clientKey) }"
+                        :style="legalNoticeStyle(legalBox)"
+                        @click.stop="selectLegalNoticeBox(legalBox)"
+                        @pointerdown.stop="startPointer($event, legalBox, 'move')"
                     >
-                        <span ref="legalNoticePreviewRef" class="legal-notice-preview-text">{{ legalNoticePreviewText }}</span>
-                        <i class="pi pi-trash" @pointerdown.stop @click.stop="deleteLegalNoticeBox"></i>
-                        <b @pointerdown.stop="startPointer($event, currentPageLegalNotice, 'resize')"></b>
+                        <span :ref="(el) => setLegalNoticePreviewRef(legalBox.clientKey, el)" class="legal-notice-preview-text">{{ legalNoticePreviewText }}</span>
+                        <i class="pi pi-trash" @pointerdown.stop @click.stop="deleteLegalNoticeBox(legalBox)"></i>
+                        <b @pointerdown.stop="startPointer($event, legalBox, 'resize')"></b>
                     </button>
                     <button
                         v-for="box in currentPageBoxes"
@@ -547,21 +639,25 @@ defineExpose({ validationIssues, totalBoxes });
                 <div class="section-heading">
                     <div>
                         <div class="section-title">ข้อความกฎหมาย</div>
-                        <small>{{ legalNotice ? 'มีกรอบข้อความกฎหมายแล้ว' : 'ต้องวางก่อนส่งเซ็น' }}</small>
+                        <small>{{ legalNotices.length ? `${legalNotices.length} กรอบ / ${countPagesWithBoxes(legalNotices)} หน้า` : 'ต้องวางก่อนส่งเซ็น' }}</small>
                     </div>
-                    <Button v-if="!legalNotice" label="เพิ่มกรอบ" icon="pi pi-plus" size="small" :disabled="!props.pdfUrl" @click="addLegalNoticeBox" />
-                    <Button v-else label="เลือก" icon="pi pi-mouse-pointer" size="small" severity="secondary" outlined @click="selectLegalNoticeBox" />
+                    <Button label="เพิ่มกรอบ" icon="pi pi-plus" size="small" :disabled="!props.pdfUrl" @click="addLegalNoticeBox" />
                 </div>
-                <Message v-if="!legalNotice" severity="warn" class="mb-3">ต้องวางกรอบข้อความกฎหมายบน PDF ก่อนส่งเซ็น</Message>
-                <Message v-else-if="legalNoticeOverflow" severity="warn" class="mb-3">{{ legalNoticeOverflowMessage() }}</Message>
-                <Button v-if="legalNotice" label="ลบกรอบข้อความกฎหมาย" icon="pi pi-trash" severity="danger" outlined size="small" @click="deleteLegalNoticeBox" />
+                <Message v-if="!legalNotices.length" severity="warn" class="mb-3">ต้องวางกรอบข้อความกฎหมายบน PDF ก่อนส่งเซ็น</Message>
+                <Message v-else-if="legalNoticeOverflowKeys.size" severity="warn" class="mb-3">{{ legalNoticeOverflowMessage() }}</Message>
+                <div v-if="legalNotices.length" class="step-boxes">
+                    <button v-for="box in legalNotices" :key="box.clientKey" type="button" :class="{ selected: box.clientKey === selectedBoxKey }" @click="selectLegalNoticeBox(box)">
+                        หน้า {{ box.pageNo }} · {{ box.label || 'ข้อความกฎหมาย' }}
+                    </button>
+                </div>
+                <Button v-if="selectedIsLegalNotice" class="mt-3" label="ลบกรอบข้อความกฎหมาย" icon="pi pi-trash" severity="danger" outlined size="small" @click="deleteLegalNoticeBox()" />
             </div>
 
             <div class="inspector-section">
                 <div class="section-heading">
                     <div>
                         <div class="section-title">ขั้นตอนและกรอบ</div>
-                        <small>{{ totalBoxes }} กรอบที่จะสร้างงานเซ็น</small>
+                        <small>{{ totalBoxes }} กรอบลายเซ็น / {{ legalNotices.length }} กรอบข้อความกฎหมาย</small>
                     </div>
                     <Button label="ใช้กรอบเริ่มต้น" icon="pi pi-clone" severity="secondary" outlined size="small" :disabled="!canApplyPreset" @click="applyPreset" />
                 </div>

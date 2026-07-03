@@ -24,6 +24,10 @@ const props = defineProps({
 const fullPath = computed(() => (props.item.path ? (props.parentPath ? props.parentPath + props.item.path : props.item.path) : null));
 const isRouteActive = computed(() => {
     if (!props.item.to) return false;
+    if (props.item.menuKey) {
+        const activeMenuKey = route.meta.activeMenuKey || layoutState.activeMenuKey;
+        if (activeMenuKey) return activeMenuKey === props.item.menuKey;
+    }
     if (props.item.activeMatch) {
         return route.path === props.item.activeMatch || route.path.startsWith(`${props.item.activeMatch}/`);
     }

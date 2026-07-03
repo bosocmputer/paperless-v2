@@ -205,9 +205,7 @@ func (s *Server) getSignatureTemplateSamplePDF(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", template.SampleFile.OriginalName))
-	http.ServeFile(w, r, template.SampleFile.StoragePath)
+	serveInlinePDF(w, r, *template.SampleFile)
 }
 
 func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Request) {
@@ -553,6 +551,29 @@ func normalizeAndValidateLegalNoticeBox(box *models.LegalNoticeBoxRequest, maxPa
 		issues = append(issues, signatureIssue("legal_notice_box_too_small", "", "Legal notice box is too small to read."))
 	}
 	return &normalized, issues
+}
+
+func normalizeAndValidateLegalNoticeBoxes(boxes []models.LegalNoticeBoxRequest, legacyBox *models.LegalNoticeBoxRequest, maxPages int, required bool) ([]models.LegalNoticeBoxRequest, []models.SignatureValidationIssue) {
+	if len(boxes) == 0 && legacyBox != nil {
+		boxes = []models.LegalNoticeBoxRequest{*legacyBox}
+	}
+	if len(boxes) == 0 {
+		if required {
+			return nil, []models.SignatureValidationIssue{signatureIssue("legal_notice_box_required", "", "Place the legal notice box on the PDF before sending the document.")}
+		}
+		return nil, nil
+	}
+	normalized := make([]models.LegalNoticeBoxRequest, 0, len(boxes))
+	issues := []models.SignatureValidationIssue{}
+	for _, box := range boxes {
+		item := box
+		next, itemIssues := normalizeAndValidateLegalNoticeBox(&item, maxPages, true)
+		issues = append(issues, itemIssues...)
+		if next != nil {
+			normalized = append(normalized, *next)
+		}
+	}
+	return normalized, issues
 }
 
 func legalNoticeSnapshotFromBox(box models.LegalNoticeBoxRequest, source string) models.LegalNoticeSnapshot {

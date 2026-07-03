@@ -1,7 +1,8 @@
 <script setup>
 import { api } from '@/services/api';
 import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
-import DocumentFlowViewer from '@/views/signing/components/DocumentFlowViewer.vue';
+import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
+import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
@@ -17,20 +18,18 @@ const loading = ref(false);
 const searchQuery = ref('');
 const transitioningIds = ref(new Set());
 const flowDialog = ref(false);
-const flowLoading = ref(false);
-const flowError = ref('');
-const flowNotice = ref('');
-const flowGraph = ref(null);
 const flowDocument = ref(null);
-const flowRequestSeq = ref(0);
-const pdfDialog = ref(false);
-const pdfLoading = ref(false);
-const pdfUrl = ref('');
-const pdfTitle = ref('');
+const readonlyPdfDialog = ref(false);
+const readonlyPdfUrl = ref('');
+const readonlyPdfTitle = ref('');
+const externalSignerDialog = ref(false);
+const externalSignerDocument = ref(null);
+const tokenDialog = ref(false);
+const generatedToken = ref(null);
+const generatingExternalIds = ref(new Set());
+const copyFallbackVisible = ref(false);
+const copyFallbackValue = ref('');
 
-const flowCache = new Map();
-const flowSessionId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-const openedAt = Date.now();
 let searchTimer = null;
 
 const queue = computed(() => route.meta.queue || 'active');
@@ -66,13 +65,6 @@ const pageConfig = computed(() => {
 });
 const filteredDocuments = computed(() => documents.value);
 
-const flowHeader = computed(() => {
-    const doc = flowDocument.value;
-    if (!doc?.docNo) return 'Flow เอกสาร';
-    const party = doc.partyName || doc.partyCode || '';
-    return `${doc.docNo} ~ ${doc.docFormatCode || '-'}${party ? ` · ${party}` : ''}`;
-});
-
 onMounted(loadPage);
 
 watch(
@@ -105,7 +97,6 @@ watch(
 
 onBeforeUnmount(() => {
     clearTimeout(searchTimer);
-    clearPDFUrl();
 });
 
 async function loadPage() {
@@ -125,10 +116,11 @@ function openCreate() {
 }
 
 function openDetail(doc) {
-    router.push({ name: 'signing-document-detail', params: { id: doc.id } });
+    if (!doc?.id) return;
+    router.push({ name: 'signing-document-detail', params: { id: doc.id }, query: { from_queue: queue.value } });
 }
 
-async function openDocumentFlow(doc, options = {}) {
+function openDocumentFlow(doc, options = {}) {
     const docNo = String(doc?.docNo || doc?.doc_no || '').trim().toUpperCase();
     if (!docNo) return;
     const docFormatCode = String(doc?.docFormatCode || doc?.doc_format_code || '').trim().toUpperCase();
@@ -139,8 +131,6 @@ async function openDocumentFlow(doc, options = {}) {
         partyCode: doc?.partyCode || doc?.party_code || ''
     };
     flowDialog.value = true;
-    flowError.value = '';
-    flowNotice.value = '';
 
     if (options.syncQuery !== false) {
         const { flow_doc_no: _flowDocNo, flow_doc_format_code: _flowDocFormatCode, ...rest } = route.query;
@@ -153,127 +143,37 @@ async function openDocumentFlow(doc, options = {}) {
             }
         });
     }
-
-    await loadDocumentFlow({ docNo, docFormatCode }, { force: options.force === true });
-}
-
-async function loadDocumentFlow(doc = flowDocument.value, options = {}) {
-    const docNo = String(doc?.docNo || '').trim().toUpperCase();
-    if (!docNo) return;
-    const docFormatCode = String(doc?.docFormatCode || '').trim().toUpperCase();
-    const cacheKey = `${docFormatCode}:${docNo}`;
-    const requestSeq = flowRequestSeq.value + 1;
-    flowRequestSeq.value = requestSeq;
-    flowError.value = '';
-    flowNotice.value = '';
-
-    if (!options.force && flowCache.has(cacheKey)) {
-        flowGraph.value = flowCache.get(cacheKey);
-        flowLoading.value = false;
-        touchFlowCache(cacheKey, flowGraph.value);
-        recordFlowEvent('document_flow_cache_hit', { docFormatCode, nodeCount: flowGraph.value?.nodes?.length || 0 });
-        return;
-    }
-
-    flowLoading.value = true;
-    flowGraph.value = null;
-    recordFlowEvent('document_flow_search', { docFormatCode });
-
-    try {
-        const result = await api.getAdminDocumentFlow({ docNo, docFormatCode, depth: 3 });
-        if (requestSeq !== flowRequestSeq.value) return;
-        const graph = result.documentFlow;
-        flowGraph.value = graph;
-        touchFlowCache(cacheKey, graph);
-        recordFlowEvent('document_flow_load_success', { docFormatCode, nodeCount: graph?.nodes?.length || 0 });
-    } catch (err) {
-        if (requestSeq !== flowRequestSeq.value) return;
-        flowError.value = userFacingFlowError(err);
-        recordFlowEvent('document_flow_load_error', { docFormatCode, errorCode: err?.payload?.code || 'document_flow_load_error' });
-        toast.add({ severity: 'error', summary: 'โหลด Flow เอกสารไม่สำเร็จ', detail: flowError.value, life: 4000 });
-    } finally {
-        if (requestSeq === flowRequestSeq.value) flowLoading.value = false;
-    }
-}
-
-function touchFlowCache(key, value) {
-    if (flowCache.has(key)) flowCache.delete(key);
-    flowCache.set(key, value);
-    while (flowCache.size > 20) {
-        const oldestKey = flowCache.keys().next().value;
-        flowCache.delete(oldestKey);
-    }
 }
 
 function closeFlowDialog() {
     flowDialog.value = false;
-    flowError.value = '';
-    flowNotice.value = '';
     const { flow_doc_no: _flowDocNo, flow_doc_format_code: _flowDocFormatCode, ...rest } = route.query;
     if (_flowDocNo || _flowDocFormatCode) router.replace({ name: route.name, query: rest });
 }
 
-function openDocumentFlowFromRow(doc) {
-    if (!doc?.docNo) return;
-    const { flow_doc_no: _flowDocNo, flow_doc_format_code: _flowDocFormatCode, ...rest } = route.query;
-    router.replace({
-        name: route.name,
-        query: {
-            ...rest,
-            flow_doc_no: doc.docNo,
-            ...(doc.docFormatCode ? { flow_doc_format_code: doc.docFormatCode } : {})
-        }
-    });
-}
-
-async function previewFlowPDF(payload = {}) {
-    const node = payload.node || {};
-    const version = payload.version === 'final' ? 'final' : 'current';
-    const url = payload.url || (version === 'final' ? node.signedPdfUrl : node.currentPdfUrl);
-    const docNo = node.doc_no || 'เอกสารนี้';
-    if (!url) {
-        flowNotice.value = `${docNo} ยังไม่มี PDF ใน PaperLess`;
-        toast.add({ severity: 'info', summary: 'ยังไม่มี PDF ใน PaperLess', detail: flowNotice.value, life: 3000 });
+function setFlowDialogVisible(value) {
+    if (value) {
+        flowDialog.value = true;
         return;
     }
-
-    clearPDFUrl();
-    flowNotice.value = '';
-    pdfLoading.value = true;
-    pdfDialog.value = true;
-    pdfTitle.value = `${docNo} · ${version === 'final' ? 'PDF ที่เซ็นครบแล้ว' : 'PDF ล่าสุด'}`;
-    recordFlowEvent('document_flow_pdf_open', { docFormatCode: node.doc_format_code || flowDocument.value?.docFormatCode || '', nodeCount: flowGraph.value?.nodes?.length || 0 });
-
-    try {
-        const response = await fetch(url, { headers: api.authHeaders() });
-        if (!response.ok) throw new Error('โหลด PDF ไม่สำเร็จ');
-        const blob = await response.blob();
-        pdfUrl.value = URL.createObjectURL(blob);
-    } catch (err) {
-        pdfDialog.value = false;
-        toast.add({ severity: 'error', summary: 'เปิด PDF ไม่สำเร็จ', detail: err?.message || 'กรุณาลองใหม่', life: 3500 });
-    } finally {
-        pdfLoading.value = false;
-    }
+    closeFlowDialog();
 }
 
-async function previewDocumentPDF(doc, version = 'current') {
+function openDocumentFlowFromRow(doc) {
+    if (!doc?.docNo) return;
+    openDocumentFlow(doc);
+}
+
+function previewDocumentPDF(doc, version = 'current') {
     if (!doc?.id) return;
-    clearPDFUrl();
-    pdfLoading.value = true;
-    pdfDialog.value = true;
-    pdfTitle.value = `${doc.docNo || 'เอกสาร'} · ${version === 'final' ? 'PDF ที่เซ็นครบแล้ว' : 'PDF ล่าสุด'}`;
-    try {
-        const response = await fetch(api.signingDocumentPDFUrl(doc.id, version), { headers: api.authHeaders() });
-        if (!response.ok) throw new Error('โหลด PDF ไม่สำเร็จ');
-        const blob = await response.blob();
-        pdfUrl.value = URL.createObjectURL(blob);
-    } catch (err) {
-        pdfDialog.value = false;
-        toast.add({ severity: 'error', summary: 'เปิด PDF ไม่สำเร็จ', detail: err?.message || 'กรุณาลองใหม่', life: 3500 });
-    } finally {
-        pdfLoading.value = false;
+    const url = api.signingDocumentPDFUrlForDocument(doc, version);
+    if (!url) {
+        toast.add({ severity: 'info', summary: 'ยังไม่มี PDF', detail: `${doc.docNo || 'เอกสารนี้'} ยังไม่มีไฟล์ PDF`, life: 3000 });
+        return;
     }
+    readonlyPdfUrl.value = url;
+    readonlyPdfTitle.value = `${doc.docNo || 'เอกสาร'} · ${version === 'final' ? 'หลักฐานการลงนาม' : 'เอกสารเซ็นครบ'}`;
+    readonlyPdfDialog.value = true;
 }
 
 function confirmSend(doc) {
@@ -290,7 +190,7 @@ function confirmSend(doc) {
 function confirmAdminConfirm(doc) {
     confirm.require({
         header: 'ยืนยันเอกสาร',
-        message: `ต้องการยืนยัน ${doc.docNo} ใช่ไหม? ระบบจะสร้าง final PDF/evidence และ Lock SML`,
+        message: `ต้องการยืนยัน ${doc.docNo} ใช่ไหม? ระบบจะสร้าง final PDF/evidence ส่งรูปเข้า SML และ Lock SML`,
         icon: 'pi pi-check-circle',
         acceptLabel: 'ยืนยันเอกสาร',
         rejectLabel: 'ยกเลิก',
@@ -324,9 +224,9 @@ async function transitionDocument(doc, action) {
             toast.add({ severity: 'success', summary: 'ส่งเอกสารไปเซ็นแล้ว', life: 2500 });
         } else if (action === 'confirm') {
             toast.add({
-                severity: result?.finalOk && result?.lockOk ? 'success' : 'warn',
-                summary: result?.finalOk && result?.lockOk ? 'ยืนยันเอกสารสำเร็จ' : 'ยืนยันแล้วแต่ยังมีงานต้องตรวจสอบ',
-                detail: result?.finalOk ? (result?.lockOk ? '' : 'Lock SML ไม่สำเร็จ กรุณา retry') : 'สร้าง final PDF/evidence ไม่สำเร็จ กรุณา retry',
+                severity: confirmResultSeverity(result),
+                summary: confirmResultSummary(result),
+                detail: confirmResultDetail(result),
                 life: 4000
             });
         } else if (action === 'cancel') {
@@ -351,6 +251,17 @@ function isTransitioning(id) {
     return transitioningIds.value.has(id);
 }
 
+function setGeneratingExternal(id, active) {
+    const next = new Set(generatingExternalIds.value);
+    if (active) next.add(id);
+    else next.delete(id);
+    generatingExternalIds.value = next;
+}
+
+function isGeneratingExternal(id) {
+    return generatingExternalIds.value.has(id);
+}
+
 function makeIdempotencyKey(action, id) {
     return `${action}-${id}-${crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`}`;
 }
@@ -362,27 +273,25 @@ function actionErrorTitle(action) {
     return 'ดำเนินการไม่สำเร็จ';
 }
 
-function clearPDFUrl() {
-    if (pdfUrl.value) URL.revokeObjectURL(pdfUrl.value);
-    pdfUrl.value = '';
+function confirmResultSeverity(result = {}) {
+    return result.finalOk && result.imageOk && result.lockOk ? 'success' : 'warn';
 }
 
-function userFacingFlowError(err) {
-    const code = err?.payload?.code || '';
-    if (code === 'sml_document_not_found') return 'ไม่พบเลขเอกสารนี้ใน SML';
-    if (code === 'sml_unavailable' || code === 'sml_not_configured') return 'เชื่อมต่อ SML ไม่สำเร็จ กรุณาลองใหม่';
-    return err?.message || 'ไม่สามารถโหลด Flow เอกสารได้ กรุณาลองใหม่';
+function confirmResultSummary(result = {}) {
+    return result.finalOk && result.imageOk && result.lockOk ? 'ยืนยันเอกสารสำเร็จ' : 'ยืนยันแล้วแต่ยังมีงานต้องตรวจสอบ';
 }
 
-function recordFlowEvent(event, extra = {}) {
-    api.recordDocumentFlowEvent({
-        event,
-        sessionId: flowSessionId,
-        docFormatCode: extra.docFormatCode || flowDocument.value?.docFormatCode || '',
-        elapsedMs: Date.now() - openedAt,
-        nodeCount: extra.nodeCount || flowGraph.value?.nodes?.length || 0,
-        errorCode: extra.errorCode || ''
-    }).catch(() => {});
+function confirmResultDetail(result = {}) {
+    if (!result.finalOk) return 'สร้าง final PDF/evidence ไม่สำเร็จ กรุณา retry';
+    if (!result.imageOk) return 'ส่งรูปเอกสารเข้า SML ไม่สำเร็จ กรุณาเปิดเอกสารเพื่อ retry';
+    if (!result.lockOk) return ['Lock SML ไม่สำเร็จ กรุณาเปิดเอกสารเพื่อ retry', imageTruncatedDetail(result)].filter(Boolean).join(' · ');
+    return imageTruncatedDetail(result);
+}
+
+function imageTruncatedDetail(result = {}) {
+    const image = result.image || {};
+    if (!image.truncated) return '';
+    return `ส่งรูปเข้า SML เฉพาะ ${image.imageCount || 8} จาก ${image.totalPages || '-'} หน้าแรก`;
 }
 
 function documentLine(doc) {
@@ -391,6 +300,139 @@ function documentLine(doc) {
 
 function formatMoney(value) {
     return Number(value || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
+}
+
+function pendingSigners(doc) {
+    const list = Array.isArray(doc?.pendingSigners) ? doc.pendingSigners : [];
+    if (list.length > 0) return list;
+    return (doc?.signers || []).filter((signer) => signer.status === 'pending');
+}
+
+function pendingExternalSigners(doc) {
+    return pendingSigners(doc).filter((signer) => signer.signerType === 'external');
+}
+
+function canGenerateExternalFromList(doc) {
+    return doc?.status === 'in_progress' && pendingExternalSigners(doc).length > 0;
+}
+
+function isGeneratingExternalForDocument(doc) {
+    return pendingExternalSigners(doc).some((signer) => isGeneratingExternal(signer.id));
+}
+
+function waitingSummary(doc) {
+    if (doc?.status === 'in_progress') {
+        const signers = pendingSigners(doc);
+        if (signers.length === 0) return 'ยังไม่พบผู้เซ็นที่รอดำเนินการ';
+        const first = signerDisplayName(signers[0]);
+        return signers.length > 1 ? `รอ: ${first} +${signers.length - 1} คน` : `รอ: ${first}`;
+    }
+    if (doc?.status === 'pending_confirm') return 'เซ็นครบแล้ว รอผู้ดูแลยืนยัน';
+    if (doc?.status === 'completed_evidence_failed') return 'ต้องสร้าง PDF หลักฐานอีกครั้ง';
+    if (doc?.status === 'completed_image_failed') return 'ต้องส่งรูปเอกสารเข้า SML อีกครั้ง';
+    if (doc?.status === 'completed_lock_failed') return 'ต้อง Lock SML อีกครั้ง';
+    if (doc?.status === 'rejected') return 'workflow หยุดแล้ว';
+    return '';
+}
+
+function signerDisplayName(signer) {
+    const name = signer?.signerType === 'external' ? signer?.signerName || 'บุคคลภายนอก' : signer?.signerName || signer?.signerUser || 'ไม่ระบุผู้เซ็น';
+    const position = signer?.positionName || signer?.positionCode || '';
+    return position ? `${name} · ${position}` : name;
+}
+
+function signerTypeLabel(signer) {
+    return signer?.signerType === 'external' ? 'บุคคลภายนอก' : 'ผู้ใช้ระบบ';
+}
+
+function openExternalSignerFromRow(doc) {
+    const signers = pendingExternalSigners(doc);
+    if (signers.length === 0) return;
+    if (signers.length === 1) {
+        requestExternalToken(signers[0], doc);
+        return;
+    }
+    externalSignerDocument.value = doc;
+    externalSignerDialog.value = true;
+}
+
+function requestExternalToken(signer, doc = externalSignerDocument.value) {
+    if (!signer?.id) return;
+    if (!signer.externalTokenId) {
+        void generateExternalToken(signer, doc);
+        return;
+    }
+    confirm.require({
+        header: 'สร้างลิงก์ใหม่?',
+        message: 'ลิงก์และ OTP เดิมของผู้เซ็นภายนอกคนนี้จะใช้ไม่ได้ ต้องส่งลิงก์ใหม่ให้ลูกค้าอีกครั้ง',
+        icon: 'pi pi-exclamation-triangle',
+        rejectLabel: 'ยกเลิก',
+        acceptLabel: 'สร้างใหม่',
+        accept: () => generateExternalToken(signer, doc)
+    });
+}
+
+async function generateExternalToken(signer, doc) {
+    setGeneratingExternal(signer.id, true);
+    copyFallbackVisible.value = false;
+    copyFallbackValue.value = '';
+    try {
+        const result = await api.regenerateExternalToken(signer.id);
+        generatedToken.value = {
+            ...(result.external || {}),
+            docNo: doc?.docNo || '',
+            signerLabel: signerDisplayName(signer)
+        };
+        tokenDialog.value = true;
+        externalSignerDialog.value = false;
+        await loadPage();
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'สร้างลิงก์ภายนอกไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        setGeneratingExternal(signer.id, false);
+    }
+}
+
+async function copyText(value) {
+    const text = String(value || '');
+    if (!text) return;
+    copyFallbackVisible.value = false;
+    copyFallbackValue.value = '';
+    try {
+        await navigator.clipboard.writeText(text);
+        toast.add({ severity: 'success', summary: 'คัดลอกแล้ว', life: 1800 });
+        return;
+    } catch {
+        if (legacyCopy(text)) {
+            toast.add({ severity: 'success', summary: 'คัดลอกแล้ว', life: 1800 });
+            return;
+        }
+    }
+    copyFallbackValue.value = text;
+    copyFallbackVisible.value = true;
+    toast.add({ severity: 'warn', summary: 'คัดลอกอัตโนมัติไม่ได้', detail: 'กรุณาเลือกข้อความแล้วคัดลอกเอง', life: 4000 });
+}
+
+function legacyCopy(value) {
+    const textarea = window.document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-1000px';
+    textarea.style.opacity = '0';
+    window.document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        return window.document.execCommand('copy');
+    } catch {
+        return false;
+    } finally {
+        window.document.body.removeChild(textarea);
+    }
+}
+
+function selectInput(event) {
+    event?.target?.select?.();
 }
 </script>
 
@@ -432,9 +474,12 @@ function formatMoney(value) {
             <Column field="totalAmount" header="ยอดเงิน" sortable style="min-width: 10rem">
                 <template #body="{ data }">{{ formatMoney(data.totalAmount) }}</template>
             </Column>
-            <Column field="status" header="สถานะ" sortable style="min-width: 12rem">
+            <Column field="status" header="สถานะ" sortable style="min-width: 18rem">
                 <template #body="{ data }">
-                    <Tag :value="signingStatusLabel(data.status)" :severity="signingStatusSeverity(data.status)" />
+                    <div class="status-cell">
+                        <Tag :value="signingStatusLabel(data.status)" :severity="signingStatusSeverity(data.status)" />
+                        <small v-if="waitingSummary(data)" class="status-hint">{{ waitingSummary(data) }}</small>
+                    </div>
                 </template>
             </Column>
             <Column field="updatedAt" header="อัปเดตล่าสุด" sortable style="min-width: 14rem">
@@ -464,13 +509,23 @@ function formatMoney(value) {
                             @click="confirmAdminConfirm(data)"
                         />
                         <Button
+                            v-if="canGenerateExternalFromList(data)"
+                            icon="pi pi-key"
+                            rounded
+                            outlined
+                            severity="warn"
+                            aria-label="สร้างลิงก์ผู้เซ็นภายนอก"
+                            :loading="isGeneratingExternalForDocument(data)"
+                            @click="openExternalSignerFromRow(data)"
+                        />
+                        <Button
                             v-if="queue === 'history'"
                             icon="pi pi-file-pdf"
                             rounded
                             outlined
                             severity="secondary"
-                            aria-label="ดู PDF ที่เซ็นครบแล้ว"
-                            @click="previewDocumentPDF(data, 'final')"
+                            aria-label="ดูเอกสารเซ็นครบ"
+                            @click="previewDocumentPDF(data, 'current')"
                         />
                         <Button icon="pi pi-sitemap" rounded outlined severity="secondary" aria-label="ดู Flow เอกสาร" @click="openDocumentFlowFromRow(data)" />
                         <Button icon="pi pi-eye" rounded outlined severity="secondary" aria-label="ดูเอกสาร" @click="openDetail(data)" />
@@ -489,71 +544,138 @@ function formatMoney(value) {
             </Column>
         </DataTable>
 
-        <Dialog v-model:visible="flowDialog" modal :header="flowHeader" :style="{ width: 'min(70rem, 96vw)' }" @hide="closeFlowDialog">
-            <div class="flex flex-col gap-3">
-                <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                    <div class="min-w-0">
-                        <div class="font-semibold">Flow เอกสาร</div>
-                        <small class="text-muted-color">ดูความสัมพันธ์จาก SML และเปิด PDF ของเอกสารที่มีใน PaperLess</small>
-                    </div>
-                    <Button icon="pi pi-refresh" label="โหลดใหม่" severity="secondary" outlined :loading="flowLoading" @click="loadDocumentFlow(flowDocument, { force: true })" />
-                </div>
+        <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="(documentId) => openDetail({ id: documentId })" />
 
-                <Message v-if="flowNotice" severity="info">{{ flowNotice }}</Message>
-                <Message v-if="flowError" severity="error">
-                    {{ flowError }}
-                    <div class="mt-3">
-                        <Button size="small" label="ลองใหม่" icon="pi pi-refresh" severity="secondary" outlined @click="loadDocumentFlow(flowDocument, { force: true })" />
-                    </div>
-                </Message>
+        <ReadOnlyPdfDialog v-model:visible="readonlyPdfDialog" :url="readonlyPdfUrl" :title="readonlyPdfTitle" />
 
-                <div v-if="flowLoading && !flowGraph" class="flow-loading">
-                    <i class="pi pi-spin pi-spinner"></i>
-                    <span>กำลังโหลด Flow เอกสาร</span>
+        <Dialog v-model:visible="externalSignerDialog" modal header="ผู้เซ็นภายนอก" :style="{ width: 'min(42rem, 94vw)' }">
+            <div class="external-dialog">
+                <Message severity="info" class="m-0">เลือกผู้เซ็นภายนอกที่ต้องการสร้าง Link/OTP สำหรับ {{ externalSignerDocument?.docNo || 'เอกสารนี้' }}</Message>
+                <div class="external-list">
+                    <div v-for="signer in pendingExternalSigners(externalSignerDocument)" :key="signer.id" class="external-row">
+                        <span class="external-main">
+                            <strong>{{ signerDisplayName(signer) }}</strong>
+                            <small>{{ signerTypeLabel(signer) }}{{ signer.externalTokenId ? ' · มีลิงก์เดิมแล้ว' : ' · ยังไม่มีลิงก์' }}</small>
+                        </span>
+                        <Button
+                            label="สร้างลิงก์/OTP"
+                            icon="pi pi-key"
+                            severity="secondary"
+                            outlined
+                            :loading="isGeneratingExternal(signer.id)"
+                            @click="requestExternalToken(signer, externalSignerDocument)"
+                        />
+                    </div>
                 </div>
-                <DocumentFlowViewer
-                    v-else
-                    :graph="flowGraph"
-                    admin
-                    compact
-                    :show-table="false"
-                    @open-document="(documentId) => openDetail({ id: documentId })"
-                    @preview-pdf="previewFlowPDF"
-                />
             </div>
             <template #footer>
-                <Button label="ปิด" severity="secondary" outlined @click="flowDialog = false" />
+                <Button label="ปิด" severity="secondary" outlined @click="externalSignerDialog = false" />
             </template>
         </Dialog>
 
-        <Dialog v-model:visible="pdfDialog" modal :header="pdfTitle" :style="{ width: 'min(72rem, 96vw)' }" @hide="clearPDFUrl">
-            <div v-if="pdfLoading" class="flow-loading">
-                <i class="pi pi-spin pi-spinner"></i>
-                <span>กำลังโหลด PDF</span>
+        <Dialog v-model:visible="tokenDialog" modal header="ลิงก์ภายนอก / OTP" :style="{ width: 'min(42rem, 92vw)' }">
+            <div v-if="generatedToken" class="token-box">
+                <Message severity="success" class="m-0">
+                    สร้างลิงก์สำหรับ {{ generatedToken.signerLabel }}{{ generatedToken.docNo ? ` · ${generatedToken.docNo}` : '' }} แล้ว
+                </Message>
+                <Message v-if="copyFallbackVisible" severity="warn" class="m-0">
+                    คัดลอกอัตโนมัติไม่ได้ กรุณาเลือกข้อความด้านล่างแล้วคัดลอกเอง
+                </Message>
+                <label>Link</label>
+                <div class="copy-row">
+                    <InputText :modelValue="generatedToken.url" readonly class="w-full" @focus="selectInput" @click="selectInput" />
+                    <Button icon="pi pi-copy" rounded outlined aria-label="copy link" @click="copyText(generatedToken.url)" />
+                </div>
+                <label>OTP</label>
+                <div class="copy-row">
+                    <InputText :modelValue="generatedToken.otp" readonly class="w-full otp-text" @focus="selectInput" @click="selectInput" />
+                    <Button icon="pi pi-copy" rounded outlined aria-label="copy otp" @click="copyText(generatedToken.otp)" />
+                </div>
+                <Textarea v-if="copyFallbackVisible" :modelValue="copyFallbackValue" readonly rows="3" autoResize @focus="selectInput" @click="selectInput" />
+                <small class="text-muted-color">OTP หมดอายุ {{ formatThaiDateTime(generatedToken.expiresAt) }}</small>
             </div>
-            <iframe v-else-if="pdfUrl" :src="pdfUrl" class="pdf-frame" title="PDF preview"></iframe>
-            <template #footer>
-                <Button label="ปิด" severity="secondary" outlined @click="pdfDialog = false" />
-            </template>
         </Dialog>
     </div>
 </template>
 
 <style scoped>
-.flow-loading {
-    min-height: 10rem;
+.status-cell,
+.token-box,
+.external-dialog,
+.external-main {
+    min-width: 0;
     display: grid;
-    place-items: center;
-    align-content: center;
-    gap: 0.6rem;
-    color: var(--text-color-secondary);
-    text-align: center;
 }
 
-.pdf-frame {
-    width: 100%;
-    height: min(72vh, 52rem);
+.status-cell {
+    gap: 0.3rem;
+    align-items: start;
+}
+
+.status-hint,
+.external-main small {
+    color: var(--text-color-secondary);
+}
+
+.status-hint {
+    max-width: 18rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.external-dialog,
+.external-list,
+.token-box {
+    gap: 0.75rem;
+}
+
+.external-list {
+    display: grid;
+}
+
+.external-row {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
     border: 1px solid var(--surface-border);
     border-radius: 8px;
+    padding: 0.75rem;
+}
+
+.external-main {
+    gap: 0.15rem;
+}
+
+.external-main strong,
+.external-main small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.copy-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.otp-text {
+    font-size: 1.3rem;
+    font-weight: 700;
+    letter-spacing: 0;
+}
+
+@media (max-width: 640px) {
+    .external-row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .external-row :deep(.p-button) {
+        width: 100%;
+    }
 }
 </style>

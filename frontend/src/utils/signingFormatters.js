@@ -10,6 +10,7 @@ const statusText = {
     cancelled: 'ยกเลิก',
     completed: 'เสร็จสมบูรณ์',
     completed_evidence_failed: 'สร้าง PDF หลักฐานไม่สำเร็จ',
+    completed_image_failed: 'ส่งรูป SML ไม่สำเร็จ',
     completed_lock_failed: 'Lock SML ไม่สำเร็จ'
 };
 
@@ -25,6 +26,7 @@ const statusSeverity = {
     cancelled: 'secondary',
     completed: 'success',
     completed_evidence_failed: 'warn',
+    completed_image_failed: 'danger',
     completed_lock_failed: 'danger'
 };
 
@@ -60,6 +62,7 @@ export function formatThaiDateTime(value) {
 export function signingActionLabel(action) {
     const labels = {
         retry_final_pdf: 'สร้าง PDF อีกครั้ง',
+        retry_sml_images: 'ส่งรูป SML อีกครั้ง',
         retry_sml_lock: 'Lock SML อีกครั้ง',
         fit_width: 'พอดีกว้าง',
         movement_log: 'เหตุการณ์สำคัญ',

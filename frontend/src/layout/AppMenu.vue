@@ -1,5 +1,6 @@
 <script setup>
 import { authStore } from '@/stores/auth';
+import { SIGNING_DOCUMENT_MENU_KEYS } from '@/utils/signingQueue';
 import { computed } from 'vue';
 import AppMenuItem from './AppMenuItem.vue';
 
@@ -37,17 +38,20 @@ const model = computed(() => {
                     label: 'เอกสารเตรียมส่ง',
                     icon: 'pi pi-fw pi-file-plus',
                     to: '/signing/documents/drafts',
+                    menuKey: SIGNING_DOCUMENT_MENU_KEYS.draft,
                     activeMatch: '/signing/documents/drafts'
                 },
                 {
                     label: 'เอกสารรอเซ็น',
                     icon: 'pi pi-fw pi-send',
-                    to: '/signing/documents'
+                    to: '/signing/documents',
+                    menuKey: SIGNING_DOCUMENT_MENU_KEYS.active
                 },
                 {
                     label: 'ประวัติเอกสารเซ็น',
                     icon: 'pi pi-fw pi-history',
                     to: '/signing/documents/history',
+                    menuKey: SIGNING_DOCUMENT_MENU_KEYS.history,
                     activeMatch: '/signing/documents/history'
                 }
             ]
@@ -70,6 +74,16 @@ const model = computed(() => {
                     label: 'ผู้ใช้งาน',
                     icon: 'pi pi-fw pi-users',
                     to: '/admin/users'
+                },
+                {
+                    label: 'คู่มือการใช้งาน',
+                    icon: 'pi pi-fw pi-book',
+                    to: '/admin/guide'
+                },
+                {
+                    label: 'คู่มือผู้เซ็น',
+                    icon: 'pi pi-fw pi-info-circle',
+                    to: '/admin/user-guide'
                 }
             ]
         }

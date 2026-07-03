@@ -1,36 +1,28 @@
 <script setup>
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import { useLayout } from '@/layout/composables/layout';
 import { api } from '@/services/api';
 import { formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
+import { isSigningDocumentMenuKey, normalizeSigningDocumentQueue, signingDocumentMenuKeyForQueue, signingDocumentQueueForStatus } from '@/utils/signingQueue';
+import ContinuousPdfViewer from '@/views/signing/components/ContinuousPdfViewer.vue';
+import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
-import RelatedDocumentsPanel from '@/views/signing/components/RelatedDocumentsPanel.vue';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const route = useRoute();
 const router = useRouter();
 const confirm = useConfirm();
 const toast = useToast();
+const { layoutState } = useLayout();
 
 const document = ref(null);
 const loading = ref(false);
-const pdfUrl = ref('');
-const viewerRef = ref(null);
-const canvasRef = ref(null);
-const pdfDoc = shallowRef(null);
-const pdfLoading = ref(false);
-const pdfError = ref('');
-const currentPage = ref(1);
-const pageCount = ref(0);
-const zoom = ref(1);
-const fitWidthActive = ref(true);
 const retryingLock = ref(false);
 const retryingFinalPDF = ref(false);
+const retryingImages = ref(false);
 const printing = ref(false);
 const sending = ref(false);
 const confirmingDocument = ref(false);
@@ -38,9 +30,13 @@ const cancellingDocument = ref(false);
 const tokenDialog = ref(false);
 const generatedToken = ref(null);
 const activeTab = ref('progress');
-let renderSequence = 0;
-let renderTask = null;
-let resizeObserver = null;
+const flowDialog = ref(false);
+const flowDocument = ref(null);
+const evidenceDialog = ref(false);
+const evidencePdfUrl = ref('');
+const evidencePdfTitle = ref('');
+const copyFallbackVisible = ref(false);
+const copyFallbackValue = ref('');
 
 const importantEvents = computed(() =>
     (document.value?.events || [])
@@ -48,137 +44,68 @@ const importantEvents = computed(() =>
         .filter((event) => event.view)
 );
 const printEvents = computed(() => document.value?.printEvents || []);
-const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `${index + 1}/${pageCount.value}`, value: index + 1 })));
-const pdfMetaLabel = computed(() => (pageCount.value ? `หน้า ${currentPage.value} / ${pageCount.value} · ${Math.round(zoom.value * 100)}%` : 'ยังไม่มี PDF'));
+const pdfPreviewUrl = computed(() => (document.value?.id ? api.signingDocumentPDFUrlForDocument(document.value) : ''));
+const externalSigners = computed(() => (document.value?.signers || []).filter((signer) => signer.signerType === 'external'));
 const documentHeaderLine = computed(() => {
     const doc = document.value;
     if (!doc) return 'เอกสาร';
     return `${doc.docNo || 'เอกสาร'} ~ ${doc.docFormatCode || '-'} · ${doc.partyName || doc.partyCode || '-'}`;
 });
+const canViewEvidencePDF = computed(() => document.value?.status === 'completed' && Boolean(document.value?.finalFileId || document.value?.finalFile));
 const backRouteName = computed(() => {
     if (document.value?.status === 'draft') return 'signing-document-drafts';
     if (document.value?.status === 'completed') return 'signing-document-history';
     return 'signing-documents';
 });
 
+function currentDetailQueue() {
+    if (document.value?.status) return signingDocumentQueueForStatus(document.value.status);
+    return normalizeSigningDocumentQueue(route.query.from_queue) || 'active';
+}
+
+function syncActiveMenuFromRoute() {
+    layoutState.activeMenuKey = signingDocumentMenuKeyForQueue(normalizeSigningDocumentQueue(route.query.from_queue) || 'active');
+}
+
+function syncActiveMenuFromDocument() {
+    layoutState.activeMenuKey = signingDocumentMenuKeyForQueue(currentDetailQueue());
+}
+
+function clearActiveSigningMenu() {
+    if (isSigningDocumentMenuKey(layoutState.activeMenuKey)) layoutState.activeMenuKey = null;
+}
+
 onMounted(async () => {
-    await nextTick();
-    setupResizeObserver();
+    syncActiveMenuFromRoute();
     await loadPage();
 });
 onBeforeUnmount(() => {
-    cleanupPDF();
-    if (resizeObserver) resizeObserver.disconnect();
-    if (pdfUrl.value) URL.revokeObjectURL(pdfUrl.value);
+    clearActiveSigningMenu();
 });
 
-watch([currentPage, zoom], async () => {
-    if (pdfDoc.value) await renderCurrentPage();
-});
+watch(
+    () => route.params.id,
+    async (id, previousId) => {
+        if (!previousId || id === previousId) return;
+        activeTab.value = 'progress';
+        flowDialog.value = false;
+        flowDocument.value = null;
+        syncActiveMenuFromRoute();
+        await loadPage();
+    }
+);
 
 async function loadPage() {
     loading.value = true;
     try {
         const result = await api.getSigningDocument(route.params.id);
         document.value = result.document;
-        await loadPdf();
+        syncActiveMenuFromDocument();
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลดเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         loading.value = false;
     }
-}
-
-async function loadPdf() {
-    if (!document.value?.id) return;
-    cleanupPDF();
-    if (pdfUrl.value) URL.revokeObjectURL(pdfUrl.value);
-    pdfLoading.value = true;
-    pdfError.value = '';
-    try {
-        const response = await fetch(api.signingDocumentPDFUrl(document.value.id), { headers: api.authHeaders() });
-        if (!response.ok) throw new Error('โหลด PDF ไม่สำเร็จ');
-        const blob = await response.blob();
-        pdfUrl.value = URL.createObjectURL(blob);
-        const task = pdfjsLib.getDocument({ url: pdfUrl.value });
-        pdfDoc.value = await task.promise;
-        pageCount.value = pdfDoc.value.numPages;
-        currentPage.value = 1;
-        pdfLoading.value = false;
-        await nextTick();
-        await fitWidth();
-    } catch (err) {
-        pdfError.value = err?.message || 'โหลด PDF ไม่สำเร็จ';
-        throw err;
-    } finally {
-        pdfLoading.value = false;
-    }
-}
-
-function setupResizeObserver() {
-    if (!viewerRef.value || !window.ResizeObserver) return;
-    resizeObserver = new ResizeObserver(() => {
-        if (fitWidthActive.value) void fitWidth();
-    });
-    resizeObserver.observe(viewerRef.value);
-}
-
-async function fitWidth() {
-    if (!pdfDoc.value || !viewerRef.value) return;
-    fitWidthActive.value = true;
-    const page = await pdfDoc.value.getPage(currentPage.value);
-    const viewport = page.getViewport({ scale: 1 });
-    const available = Math.max(viewerRef.value.clientWidth - 32, 240);
-    zoom.value = clamp(available / viewport.width, 0.45, 2.25);
-    await renderCurrentPage();
-}
-
-function setZoom(value) {
-    fitWidthActive.value = false;
-    zoom.value = clamp(value, 0.45, 2.5);
-}
-
-async function renderCurrentPage() {
-    if (!pdfDoc.value || !canvasRef.value) return;
-    const sequence = ++renderSequence;
-    cancelRenderTask();
-    try {
-        const page = await pdfDoc.value.getPage(currentPage.value);
-        if (sequence !== renderSequence) return;
-        const viewport = page.getViewport({ scale: zoom.value });
-        const outputScale = Math.min(window.devicePixelRatio || 1, 2);
-        const canvas = canvasRef.value;
-        const context = canvas.getContext('2d');
-        canvas.width = Math.floor(viewport.width * outputScale);
-        canvas.height = Math.floor(viewport.height * outputScale);
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
-        context.setTransform(outputScale, 0, 0, outputScale, 0, 0);
-        renderTask = page.render({ canvasContext: context, viewport });
-        await renderTask.promise;
-    } catch (err) {
-        if (err?.name === 'RenderingCancelledException') return;
-        pdfError.value = err?.message || 'แสดง PDF ไม่สำเร็จ';
-    } finally {
-        if (sequence === renderSequence) renderTask = null;
-    }
-}
-
-function cancelRenderTask() {
-    if (!renderTask) return;
-    try {
-        renderTask.cancel();
-    } catch {
-        // PDF.js can throw if rendering finished at the same time.
-    }
-    renderTask = null;
-}
-
-function cleanupPDF() {
-    cancelRenderTask();
-    if (pdfDoc.value?.destroy) pdfDoc.value.destroy().catch(() => {});
-    pdfDoc.value = null;
-    pageCount.value = 0;
 }
 
 async function retryLock() {
@@ -194,14 +121,33 @@ async function retryLock() {
     }
 }
 
+async function retryImages() {
+    retryingImages.value = true;
+    try {
+        const result = await api.retrySigningDocumentImages(document.value.id);
+        toast.add({
+            severity: result.lockOk ? 'success' : 'warn',
+            summary: result.lockOk ? 'ส่งรูป SML และ Lock SML สำเร็จ' : 'ส่งรูป SML สำเร็จ แต่ Lock SML ยังไม่สำเร็จ',
+            detail: result.lockOk ? imageTruncatedDetail(result) : 'กรุณา retry Lock SML อีกครั้ง',
+            life: 4000
+        });
+        await loadPage();
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'ส่งรูป SML ไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        retryingImages.value = false;
+    }
+}
+
 async function retryFinalPDF() {
     retryingFinalPDF.value = true;
     try {
         const result = await api.retrySigningDocumentFinalPDF(document.value.id);
         toast.add({
-            severity: result.lockOk ? 'success' : 'warn',
-            summary: result.lockOk ? 'PDF หลักฐานและ Lock SML สำเร็จ' : 'PDF หลักฐานสำเร็จ แต่ Lock SML ยังไม่สำเร็จ',
-            life: 3200
+            severity: confirmResultSeverity(result),
+            summary: confirmResultSummary(result),
+            detail: confirmResultDetail(result),
+            life: 4000
         });
         await loadPage();
     } catch (err) {
@@ -209,6 +155,27 @@ async function retryFinalPDF() {
     } finally {
         retryingFinalPDF.value = false;
     }
+}
+
+function confirmResultSeverity(result = {}) {
+    return result.finalOk && result.imageOk && result.lockOk ? 'success' : 'warn';
+}
+
+function confirmResultSummary(result = {}) {
+    return result.finalOk && result.imageOk && result.lockOk ? 'ยืนยันเอกสารสำเร็จ' : 'ยืนยันแล้วแต่ยังมีงานต้องตรวจสอบ';
+}
+
+function confirmResultDetail(result = {}) {
+    if (!result.finalOk) return 'สร้าง final PDF/evidence ไม่สำเร็จ กรุณา retry';
+    if (!result.imageOk) return 'ส่งรูปเอกสารเข้า SML ไม่สำเร็จ กรุณา retry';
+    if (!result.lockOk) return ['Lock SML ไม่สำเร็จ กรุณา retry', imageTruncatedDetail(result)].filter(Boolean).join(' · ');
+    return imageTruncatedDetail(result);
+}
+
+function imageTruncatedDetail(result = {}) {
+    const image = result.image || {};
+    if (!image.truncated) return '';
+    return `ส่งรูปเข้า SML เฉพาะ ${image.imageCount || 8} จาก ${image.totalPages || '-'} หน้าแรก`;
 }
 
 function confirmSendDocument() {
@@ -239,7 +206,7 @@ async function sendDocument() {
 function confirmAdminConfirmDocument() {
     confirm.require({
         header: 'ยืนยันเอกสาร',
-        message: `ต้องการยืนยัน ${document.value?.docNo || 'เอกสารนี้'} ใช่ไหม? ระบบจะสร้าง final PDF/evidence และ Lock SML`,
+        message: `ต้องการยืนยัน ${document.value?.docNo || 'เอกสารนี้'} ใช่ไหม? ระบบจะสร้าง final PDF/evidence ส่งรูปเข้า SML และ Lock SML`,
         icon: 'pi pi-check-circle',
         acceptLabel: 'ยืนยันเอกสาร',
         rejectLabel: 'ยกเลิก',
@@ -253,9 +220,9 @@ async function adminConfirmDocument() {
     try {
         const result = await api.confirmSigningDocument(document.value.id, { idempotencyKey: makeTransitionKey('confirm') });
         toast.add({
-            severity: result.finalOk && result.lockOk ? 'success' : 'warn',
-            summary: result.finalOk && result.lockOk ? 'ยืนยันเอกสารสำเร็จ' : 'ยืนยันแล้วแต่ยังมีงานต้องตรวจสอบ',
-            detail: result.finalOk ? (result.lockOk ? '' : 'Lock SML ไม่สำเร็จ กรุณา retry') : 'สร้าง final PDF/evidence ไม่สำเร็จ กรุณา retry',
+            severity: confirmResultSeverity(result),
+            summary: confirmResultSummary(result),
+            detail: confirmResultDetail(result),
             life: 4000
         });
         await loadPage();
@@ -308,7 +275,7 @@ async function printOfficialCopy() {
             clientTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || ''
         });
         const fileUrl = result.fileUrl || api.signingDocumentPrintCopyPDFUrl(document.value.id, result.printCopyId);
-        const response = await fetch(fileUrl, { headers: api.authHeaders() });
+        const response = await fetch(fileUrl, { headers: api.authHeaders(), cache: 'no-store' });
         if (!response.ok) throw new Error('โหลดไฟล์พิมพ์ไม่สำเร็จ');
         const blob = await response.blob();
         const objectUrl = URL.createObjectURL(blob);
@@ -328,8 +295,20 @@ async function printOfficialCopy() {
     }
 }
 
+function previewEvidencePDF() {
+    if (!canViewEvidencePDF.value) {
+        toast.add({ severity: 'info', summary: 'ยังไม่มีหลักฐานการลงนาม', detail: 'เอกสารนี้ยังไม่มี final PDF สำหรับ audit', life: 3000 });
+        return;
+    }
+    evidencePdfUrl.value = api.signingDocumentPDFUrlForDocument(document.value, 'final');
+    evidencePdfTitle.value = `${document.value?.docNo || 'เอกสาร'} · หลักฐานการลงนาม`;
+    evidenceDialog.value = true;
+}
+
 async function generateExternal(signer) {
     try {
+        copyFallbackVisible.value = false;
+        copyFallbackValue.value = '';
         const result = await api.regenerateExternalToken(signer.id);
         generatedToken.value = result.external;
         tokenDialog.value = true;
@@ -337,6 +316,22 @@ async function generateExternal(signer) {
     } catch (err) {
         toast.add({ severity: 'error', summary: 'สร้าง public link ไม่สำเร็จ', detail: err.message, life: 4000 });
     }
+}
+
+function requestExternalToken(signer) {
+    if (!signer?.id) return;
+    if (!signer.externalTokenId) {
+        void generateExternal(signer);
+        return;
+    }
+    confirm.require({
+        header: 'สร้างลิงก์ใหม่?',
+        message: 'ลิงก์และ OTP เดิมของผู้เซ็นภายนอกคนนี้จะใช้ไม่ได้ ต้องส่งลิงก์ใหม่ให้ลูกค้าอีกครั้ง',
+        icon: 'pi pi-exclamation-triangle',
+        rejectLabel: 'ยกเลิก',
+        acceptLabel: 'สร้างใหม่',
+        accept: () => generateExternal(signer)
+    });
 }
 
 function getAdminDeviceId() {
@@ -350,8 +345,55 @@ function getAdminDeviceId() {
 }
 
 async function copy(value) {
-    await navigator.clipboard.writeText(value);
-    toast.add({ severity: 'success', summary: 'คัดลอกแล้ว', life: 1800 });
+    const text = String(value || '');
+    if (!text) return;
+    copyFallbackVisible.value = false;
+    copyFallbackValue.value = '';
+    try {
+        await navigator.clipboard.writeText(text);
+        toast.add({ severity: 'success', summary: 'คัดลอกแล้ว', life: 1800 });
+        return;
+    } catch {
+        if (legacyCopy(text)) {
+            toast.add({ severity: 'success', summary: 'คัดลอกแล้ว', life: 1800 });
+            return;
+        }
+    }
+    copyFallbackValue.value = text;
+    copyFallbackVisible.value = true;
+    toast.add({ severity: 'warn', summary: 'คัดลอกอัตโนมัติไม่ได้', detail: 'กรุณาเลือกข้อความแล้วคัดลอกเอง', life: 4000 });
+}
+
+function legacyCopy(value) {
+    const textarea = window.document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-1000px';
+    textarea.style.opacity = '0';
+    window.document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        return window.document.execCommand('copy');
+    } catch {
+        return false;
+    } finally {
+        window.document.body.removeChild(textarea);
+    }
+}
+
+function selectInput(event) {
+    event?.target?.select?.();
+}
+
+function signerLabel(signer) {
+    return signer?.signerName || signer?.signerUser || 'บุคคลภายนอก';
+}
+
+function externalTokenHint(signer) {
+    if (signer?.status === 'signed') return 'เซ็นแล้ว ไม่ต้องสร้างลิงก์ใหม่';
+    if (signer?.externalTokenId) return 'มีลิงก์เดิมอยู่แล้ว หากสร้างใหม่ลิงก์เดิมจะถูกยกเลิก';
+    return 'ยังไม่มีลิงก์สำหรับส่งให้ลูกค้า';
 }
 
 function printerLabel(value) {
@@ -364,38 +406,27 @@ function formatTimelineDate(value) {
     return formatThaiDateTime(value);
 }
 
-function loadRelatedDocuments() {
-    return api.getSigningDocumentRelatedDocuments(document.value.id);
-}
-
-function openRelatedDocument(documentId) {
-    if (!documentId || documentId === document.value?.id) return;
-    router.push({ name: 'signing-document-detail', params: { id: documentId } });
-}
-
 function openDocumentFlow(doc = document.value) {
     if (!doc?.docNo) return;
-    router.push({
-        name: backRouteName.value,
-        query: {
-            flow_doc_no: doc.docNo,
-            ...(doc.docFormatCode ? { flow_doc_format_code: doc.docFormatCode } : {})
-        }
-    });
+    flowDocument.value = {
+        docNo: doc.docNo,
+        docFormatCode: doc.docFormatCode,
+        partyName: doc.partyName,
+        partyCode: doc.partyCode
+    };
+    flowDialog.value = true;
 }
 
-function openRelatedFlow(payload) {
-    const node = payload?.node;
-    if (!node?.doc_no) {
-        openDocumentFlow();
-        return;
-    }
+function setFlowDialogVisible(value) {
+    flowDialog.value = value;
+}
+
+function openFlowDocument(documentId) {
+    if (!documentId || documentId === document.value?.id) return;
     router.push({
-        name: 'signing-documents',
-        query: {
-            flow_doc_no: node.doc_no,
-            ...(node.doc_format_code ? { flow_doc_format_code: node.doc_format_code } : {})
-        }
+        name: 'signing-document-detail',
+        params: { id: documentId },
+        query: { from_queue: currentDetailQueue() }
     });
 }
 
@@ -469,6 +500,18 @@ function movementEventView(event) {
             severity: 'danger',
             detail: 'ต้องสร้าง PDF อีกครั้งก่อน lock SML หรือพิมพ์เอกสาร'
         },
+        sml_images_success: {
+            title: 'ส่งรูป SML สำเร็จ',
+            icon: 'pi pi-images',
+            severity: 'success',
+            detail: metadata.truncated ? `ส่ง ${metadata.imageCount || 8} จาก ${metadata.totalPages || '-'} หน้าเข้า SML` : event.message || 'บันทึกรูปเอกสารเข้า SML แล้ว'
+        },
+        sml_images_failed: {
+            title: 'ส่งรูป SML ไม่สำเร็จ',
+            icon: 'pi pi-images',
+            severity: 'danger',
+            detail: 'ต้องส่งรูป SML อีกครั้งก่อน Lock SML หรือพิมพ์เอกสาร'
+        },
         sml_lock_success: {
             title: 'Lock SML สำเร็จ',
             icon: 'pi pi-lock',
@@ -497,9 +540,6 @@ function movementEventView(event) {
     return labels[action] || null;
 }
 
-function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-}
 </script>
 
 <template>
@@ -515,54 +555,56 @@ function clamp(value, min, max) {
             <Button v-if="document?.status === 'draft'" label="ยกเลิก" icon="pi pi-trash" severity="danger" outlined :loading="cancellingDocument" @click="confirmCancelDocument" />
             <Button v-if="document?.status === 'pending_confirm'" label="ยืนยันเอกสาร" icon="pi pi-check-circle" severity="success" :loading="confirmingDocument" @click="confirmAdminConfirmDocument" />
             <Button v-if="document?.status === 'completed_evidence_failed'" label="สร้าง PDF อีกครั้ง" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
+            <Button v-if="document?.status === 'completed_image_failed'" label="ส่งรูป SML อีกครั้ง" icon="pi pi-images" severity="danger" outlined :loading="retryingImages" @click="retryImages" />
             <Button v-if="document?.status === 'completed_lock_failed'" label="Lock SML อีกครั้ง" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
+            <Button v-if="canViewEvidencePDF" label="ดูหลักฐานการลงนาม" icon="pi pi-shield" severity="secondary" outlined @click="previewEvidencePDF" />
             <Button v-if="document?.status === 'completed'" label="พิมพ์เอกสาร" icon="pi pi-print" severity="primary" :loading="printing" @click="printOfficialCopy" />
             <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
         </div>
 
         <div class="detail-grid">
             <section class="pdf-panel">
-                <div class="pdf-toolbar">
-                    <div class="toolbar-group">
-                        <Select v-model="currentPage" :options="pageOptions" optionLabel="label" optionValue="value" :disabled="pageOptions.length === 0" class="page-select" />
-                        <Button icon="pi pi-search-minus" severity="secondary" outlined :disabled="!pdfDoc || zoom <= 0.45" aria-label="ซูมออก" @click="setZoom(zoom - 0.1)" />
-                        <span class="zoom-value">{{ Math.round(zoom * 100) }}%</span>
-                        <Button icon="pi pi-search-plus" severity="secondary" outlined :disabled="!pdfDoc || zoom >= 2.5" aria-label="ซูมเข้า" @click="setZoom(zoom + 0.1)" />
-                        <Button label="พอดีกว้าง" icon="pi pi-arrows-h" severity="secondary" outlined :disabled="!pdfDoc" @click="fitWidth" />
-                        <Button label="100%" severity="secondary" outlined :disabled="!pdfDoc" @click="setZoom(1)" />
-                    </div>
-                    <div class="toolbar-group right">
-                        <span class="pdf-meta">{{ pdfMetaLabel }}</span>
-                    </div>
-                </div>
-                <div ref="viewerRef" class="pdf-scroll">
-                    <div v-if="pdfLoading" class="empty-pdf">
-                        <i class="pi pi-spin pi-spinner"></i>
-                        <span>กำลังโหลด PDF...</span>
-                    </div>
-                    <Message v-else-if="pdfError" severity="error" class="pdf-error">
-                        {{ pdfError }}
-                        <div class="mt-3">
-                            <Button size="small" label="ลองใหม่" icon="pi pi-refresh" severity="secondary" outlined @click="loadPdf" />
-                        </div>
-                    </Message>
-                    <div v-else-if="pdfDoc" class="pdf-page-shell">
-                        <canvas ref="canvasRef" class="pdf-canvas"></canvas>
-                    </div>
-                    <div v-else class="empty-pdf">ยังไม่มี PDF</div>
-                </div>
+                <ContinuousPdfViewer :url="pdfPreviewUrl" :headers="api.authHeaders()" toolbar-label="เอกสาร" />
             </section>
 
             <aside class="side-panel">
                 <Tabs v-model:value="activeTab">
                     <TabList>
                         <Tab value="progress">ความคืบหน้า</Tab>
-                        <Tab value="related">เอกสารประกอบ</Tab>
                         <Tab value="print">พิมพ์</Tab>
                         <Tab value="events">เหตุการณ์</Tab>
                     </TabList>
                     <TabPanels>
                         <TabPanel value="progress">
+                            <div v-if="externalSigners.length" class="info-block external-signer-block">
+                                <div class="block-head">
+                                    <div>
+                                        <div class="block-title">ผู้เซ็นภายนอก</div>
+                                        <small>สร้างลิงก์/OTP สำหรับส่งให้ลูกค้าโดยตรง</small>
+                                    </div>
+                                    <Tag :value="`${externalSigners.length} คน`" severity="info" />
+                                </div>
+                                <div class="external-signer-list">
+                                    <div v-for="signer in externalSigners" :key="signer.id" class="external-signer-row">
+                                        <span class="external-signer-main">
+                                            <strong>{{ signerLabel(signer) }}</strong>
+                                            <small>{{ signer.positionName || signer.positionCode || 'ผู้เซ็นภายนอก' }}</small>
+                                            <small>{{ externalTokenHint(signer) }}</small>
+                                        </span>
+                                        <span class="external-signer-actions">
+                                            <Tag :value="signingStatusLabel(signer.status)" :severity="signingStatusSeverity(signer.status)" />
+                                            <Button
+                                                label="สร้างลิงก์/OTP"
+                                                icon="pi pi-key"
+                                                severity="secondary"
+                                                outlined
+                                                :disabled="document?.status !== 'in_progress' || signer.status === 'signed' || signer.status === 'skipped'"
+                                                @click="requestExternalToken(signer)"
+                                            />
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
                             <div class="info-block">
                                 <div class="block-head">
                                     <div>
@@ -571,21 +613,7 @@ function clamp(value, min, max) {
                                     </div>
                                     <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
                                 </div>
-                                <DocumentWorkflowTimeline :document="document" :show-external-actions="document?.status === 'in_progress'" @generate-external="generateExternal" />
-                            </div>
-                        </TabPanel>
-                        <TabPanel value="related">
-                            <div class="info-block">
-                                <div class="flex justify-end mb-3">
-                                    <Button label="เปิด Flow ในรายการเอกสาร" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
-                                </div>
-                                <RelatedDocumentsPanel
-                                    v-if="activeTab === 'related' && document?.id"
-                                    admin
-                                    :loader="loadRelatedDocuments"
-                                    @preview-pdf="openRelatedFlow"
-                                    @open-document="openRelatedDocument"
-                                />
+                                <DocumentWorkflowTimeline :document="document" :show-external-actions="false" @generate-external="requestExternalToken" />
                             </div>
                         </TabPanel>
                         <TabPanel value="print">
@@ -644,18 +672,25 @@ function clamp(value, min, max) {
         </div>
     </div>
 
+    <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="openFlowDocument" />
+    <ReadOnlyPdfDialog v-model:visible="evidenceDialog" :url="evidencePdfUrl" :title="evidencePdfTitle" />
+
     <Dialog v-model:visible="tokenDialog" modal header="ลิงก์ภายนอก / OTP" :style="{ width: 'min(42rem, 92vw)' }">
         <div v-if="generatedToken" class="token-box">
+            <Message v-if="copyFallbackVisible" severity="warn" class="m-0">
+                คัดลอกอัตโนมัติไม่ได้ กรุณาเลือกข้อความด้านล่างแล้วคัดลอกเอง
+            </Message>
             <label>Link</label>
             <div class="copy-row">
-                <InputText :modelValue="generatedToken.url" readonly class="w-full" />
+                <InputText :modelValue="generatedToken.url" readonly class="w-full" @focus="selectInput" @click="selectInput" />
                 <Button icon="pi pi-copy" rounded outlined aria-label="copy link" @click="copy(generatedToken.url)" />
             </div>
             <label>OTP</label>
             <div class="copy-row">
-                <InputText :modelValue="generatedToken.otp" readonly class="w-full otp-text" />
+                <InputText :modelValue="generatedToken.otp" readonly class="w-full otp-text" @focus="selectInput" @click="selectInput" />
                 <Button icon="pi pi-copy" rounded outlined aria-label="copy otp" @click="copy(generatedToken.otp)" />
             </div>
+            <Textarea v-if="copyFallbackVisible" :modelValue="copyFallbackValue" readonly rows="3" autoResize @focus="selectInput" @click="selectInput" />
             <small class="text-muted-color">OTP หมดอายุ {{ formatThaiDateTime(generatedToken.expiresAt) }}</small>
         </div>
     </Dialog>
@@ -807,6 +842,46 @@ function clamp(value, min, max) {
     justify-content: space-between;
     gap: 0.5rem;
 }
+.external-signer-block {
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--surface-border);
+}
+.external-signer-list {
+    display: grid;
+    gap: 0.55rem;
+}
+.external-signer-row {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 0.7rem 0.75rem;
+    background: color-mix(in srgb, var(--surface-ground) 42%, var(--surface-card));
+}
+.external-signer-main {
+    min-width: 0;
+    display: grid;
+    gap: 0.12rem;
+}
+.external-signer-main strong,
+.external-signer-main small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.external-signer-main small {
+    color: var(--text-color-secondary);
+}
+.external-signer-actions {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+}
 .print-list {
     display: grid;
     gap: 0.5rem;
@@ -922,6 +997,17 @@ function clamp(value, min, max) {
         min-width: 0;
         overflow-wrap: anywhere;
         font-size: 0.78rem;
+    }
+    .external-signer-row,
+    .external-signer-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+    .external-signer-actions {
+        width: 100%;
+    }
+    .external-signer-actions :deep(.p-button) {
+        width: 100%;
     }
 }
 </style>

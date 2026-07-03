@@ -1,14 +1,11 @@
 <script setup>
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import ContinuousPdfViewer from '@/views/signing/components/ContinuousPdfViewer.vue';
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
 import RelatedDocumentsPanel from '@/views/signing/components/RelatedDocumentsPanel.vue';
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const props = defineProps({
     document: { type: Object, default: null },
@@ -20,6 +17,7 @@ const props = defineProps({
     saving: { type: Boolean, default: false },
     identityLabel: { type: String, default: '' },
     publicMode: { type: Boolean, default: false },
+    externalSignOnly: { type: Boolean, default: false },
     onBack: { type: Function, default: null },
     onReload: { type: Function, default: null },
     onSign: { type: Function, default: null },
@@ -28,6 +26,7 @@ const props = defineProps({
     onRecordEvent: { type: Function, default: null },
     relatedLoader: { type: Function, default: null },
     readOnly: { type: Boolean, default: false },
+    historyFocus: { type: Boolean, default: false },
     readOnlyReason: { type: String, default: '' },
     openEventName: { type: String, default: '' },
     pdfOpenEventName: { type: String, default: '' }
@@ -35,17 +34,10 @@ const props = defineProps({
 
 const confirm = useConfirm();
 const toast = useToast();
-const viewerRef = ref(null);
-const pdfCanvas = ref(null);
 const signCanvas = ref(null);
-const pdfDoc = shallowRef(null);
 const currentPage = ref(1);
 const pageCount = ref(0);
-const zoom = ref(1);
-const fitWidthActive = ref(true);
-const pdfLoading = ref(false);
 const pdfReady = ref(false);
-const pdfError = ref('');
 const hasSignature = ref(false);
 const legalAccepted = ref(false);
 const rejectVisible = ref(false);
@@ -54,7 +46,7 @@ const attachmentNote = ref('');
 const uploadingAttachment = ref(false);
 const attachmentCount = ref(0);
 const localSaving = ref(false);
-const relatedVisible = ref(false);
+const flowDialogVisible = ref(false);
 const attachmentVisible = ref(false);
 const legalDialogVisible = ref(false);
 const pdfDialogVisible = ref(false);
@@ -65,9 +57,6 @@ const rejectIdempotencyKey = ref(newRequestKey());
 
 const sessionId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 const openedAt = Date.now();
-let renderSequence = 0;
-let renderTask = null;
-let resizeObserver = null;
 let signCtx = null;
 let drawing = false;
 let submitted = false;
@@ -78,8 +67,20 @@ const legalText = computed(() => props.legal?.text || 'ข้าพเจ้า�
 const taskStatus = computed(() => props.task?.status || '');
 const canInteract = computed(() => !props.readOnly && taskStatus.value === 'pending');
 const canConfirm = computed(() => canInteract.value && pdfReady.value && hasSignature.value && legalAccepted.value && !isBusy.value);
-const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `${index + 1}/${pageCount.value}`, value: index + 1 })));
+const allowFullPDF = computed(() => !props.externalSignOnly);
+const allowReject = computed(() => !props.externalSignOnly && !!props.onReject);
+const allowAttachments = computed(() => !props.externalSignOnly && !!props.onAttach);
+const allowRelatedDocuments = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.relatedLoader);
+const showReadOnlyPanel = computed(() => !props.externalSignOnly && !props.historyFocus);
 const statusView = computed(() => statusMeta(taskStatus.value));
+const signatureTitle = computed(() => ['ลายเซ็น', props.task?.positionName].filter(Boolean).join(' · '));
+const signerLine = computed(() => props.identityLabel || props.task?.signerName || props.task?.signerUser || '-');
+const historySummary = computed(() => {
+    const label = props.task?.positionName ? `ตำแหน่ง ${props.task.positionName}` : 'รายการเซ็นของคุณ';
+    if (taskStatus.value === 'rejected') return `${label} · คุณปฏิเสธเอกสารนี้แล้ว`;
+    if (taskStatus.value === 'signed') return `${label} · คุณเซ็นเอกสารนี้แล้ว`;
+    return `${label} · ${statusView.value.message}`;
+});
 const taskOpenEvent = computed(() => {
     if (props.openEventName) return props.openEventName;
     if (taskStatus.value === 'pending') return 'ready_task_open';
@@ -98,15 +99,11 @@ onMounted(async () => {
     window.addEventListener('beforeunload', handleBeforeUnload);
     await nextTick();
     setupSignatureCanvas();
-    setupResizeObserver();
-    if (props.pdfUrl) await loadPDF();
 });
 
 onBeforeUnmount(() => {
     window.removeEventListener('beforeunload', handleBeforeUnload);
-    cleanupPDF();
     cleanupPdfDialog();
-    if (resizeObserver) resizeObserver.disconnect();
 });
 
 onBeforeRouteLeave((_to, _from, next) => {
@@ -134,8 +131,10 @@ onBeforeRouteLeave((_to, _from, next) => {
 
 watch(
     () => props.pdfUrl,
-    async () => {
-        if (props.pdfUrl) await loadPDF();
+    (url) => {
+        pdfReady.value = false;
+        currentPage.value = 1;
+        pageCount.value = 0;
     }
 );
 
@@ -165,6 +164,7 @@ watch(
                 signIdempotencyKey.value = newRequestKey();
                 rejectIdempotencyKey.value = newRequestKey();
                 attachmentVisible.value = false;
+                flowDialogVisible.value = false;
                 legalDialogVisible.value = false;
                 pdfDialogVisible.value = false;
             }
@@ -173,103 +173,20 @@ watch(
     { immediate: true }
 );
 
-watch([currentPage, zoom], async () => {
-    if (pdfDoc.value) await renderCurrentPage();
-});
-
-function setupResizeObserver() {
-    if (!viewerRef.value || !window.ResizeObserver) return;
-    resizeObserver = new ResizeObserver(() => {
-        if (fitWidthActive.value) fitWidth();
-    });
-    resizeObserver.observe(viewerRef.value);
+function onPdfLoadSuccess(payload = {}) {
+    pdfReady.value = true;
+    pageCount.value = Number(payload.pageCount || 0);
+    currentPage.value = 1;
+    recordEvent('pdf_load_success');
 }
 
-async function loadPDF() {
-    cleanupPDF();
-    pdfLoading.value = true;
+function onPdfLoadError(err) {
     pdfReady.value = false;
-    pdfError.value = '';
-    try {
-        const loadingTask = pdfjsLib.getDocument({ url: props.pdfUrl, httpHeaders: props.pdfHeaders || {} });
-        pdfDoc.value = await loadingTask.promise;
-        pageCount.value = pdfDoc.value.numPages;
-        currentPage.value = 1;
-        await nextTick();
-        await fitWidth();
-        pdfReady.value = true;
-        recordEvent('pdf_load_success');
-    } catch (err) {
-        pdfError.value = err?.message || 'โหลด PDF ไม่สำเร็จ';
-        recordEvent('pdf_load_error', { errorCode: 'pdf_load_error' });
-    } finally {
-        pdfLoading.value = false;
-    }
+    recordEvent('pdf_load_error', { errorCode: err?.status || err?.name || 'pdf_load_error' });
 }
 
-async function fitWidth() {
-    if (!pdfDoc.value || !viewerRef.value) return;
-    fitWidthActive.value = true;
-    const page = await pdfDoc.value.getPage(currentPage.value);
-    const viewport = page.getViewport({ scale: 1 });
-    const available = Math.max(viewerRef.value.clientWidth - 32, 240);
-    zoom.value = clamp(available / viewport.width, 0.45, 2.25);
-    await renderCurrentPage();
-}
-
-async function renderCurrentPage() {
-    if (!pdfDoc.value || !pdfCanvas.value) return;
-    const sequence = ++renderSequence;
-    cancelRenderTask();
-    try {
-        const page = await pdfDoc.value.getPage(currentPage.value);
-        if (sequence !== renderSequence) return;
-        const viewport = page.getViewport({ scale: zoom.value });
-        const outputScale = Math.min(window.devicePixelRatio || 1, 2);
-        const canvas = pdfCanvas.value;
-        const context = canvas.getContext('2d');
-        canvas.width = Math.floor(viewport.width * outputScale);
-        canvas.height = Math.floor(viewport.height * outputScale);
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
-        context.setTransform(outputScale, 0, 0, outputScale, 0, 0);
-        renderTask = page.render({ canvasContext: context, viewport });
-        await renderTask.promise;
-    } catch (err) {
-        if (err?.name === 'RenderingCancelledException') return;
-        pdfError.value = err?.message || 'แสดง PDF ไม่สำเร็จ';
-        recordEvent('pdf_load_error', { errorCode: 'pdf_render_error' });
-    } finally {
-        if (sequence === renderSequence) renderTask = null;
-    }
-}
-
-function cancelRenderTask() {
-    if (!renderTask) return;
-    try {
-        renderTask.cancel();
-    } catch {
-        // PDF.js may throw if rendering already completed.
-    }
-    renderTask = null;
-}
-
-function cleanupPDF() {
-    cancelRenderTask();
-    if (pdfDoc.value?.destroy) pdfDoc.value.destroy().catch(() => {});
-    pdfDoc.value = null;
-    pageCount.value = 0;
-    pdfReady.value = false;
-}
-
-function zoomIn() {
-    fitWidthActive.value = false;
-    zoom.value = clamp(zoom.value + 0.15, 0.45, 2.5);
-}
-
-function zoomOut() {
-    fitWidthActive.value = false;
-    zoom.value = clamp(zoom.value - 0.15, 0.45, 2.5);
+function onPdfPageChange(pageNo) {
+    currentPage.value = Number(pageNo || 1);
 }
 
 function setupSignatureCanvas(force = false) {
@@ -327,8 +244,6 @@ function clearSignature(sendEvent = true) {
     if (!signCtx || !signCanvas.value) return;
     const rect = signCanvas.value.getBoundingClientRect();
     signCtx.clearRect(0, 0, rect.width, 188);
-    signCtx.fillStyle = '#ffffff';
-    signCtx.fillRect(0, 0, rect.width, 188);
     hasSignature.value = false;
     if (sendEvent) recordEvent('signature_cleared');
 }
@@ -415,12 +330,14 @@ async function uploadAttachment(event) {
 }
 
 async function fetchPdfBlob() {
-    const response = await fetch(props.pdfUrl, { headers: props.pdfHeaders || {} });
+    if (!props.pdfUrl) throw new Error('โหลด PDF ไม่สำเร็จ');
+    const response = await fetch(props.pdfUrl, { headers: props.pdfHeaders || {}, cache: 'no-store' });
     if (!response.ok) throw new Error('โหลด PDF ไม่สำเร็จ');
     return response.blob();
 }
 
 async function openFullPDF() {
+    if (!allowFullPDF.value) return;
     if (pdfDialogUrl.value) {
         pdfDialogVisible.value = true;
         return;
@@ -443,33 +360,6 @@ function cleanupPdfDialog() {
     if (pdfDialogUrl.value) URL.revokeObjectURL(pdfDialogUrl.value);
     pdfDialogUrl.value = '';
     pdfDialogLoading.value = false;
-}
-
-async function openPDF() {
-    try {
-        if (props.pdfOpenEventName) recordEvent(props.pdfOpenEventName);
-        const blob = await fetchPdfBlob();
-        const url = URL.createObjectURL(blob);
-        window.open(url, '_blank', 'noopener');
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (err) {
-        toast.add({ severity: 'error', summary: 'เปิด PDF ไม่สำเร็จ', detail: err.message, life: 3000 });
-    }
-}
-
-async function downloadPDF() {
-    try {
-        if (props.pdfOpenEventName) recordEvent(props.pdfOpenEventName);
-        const blob = await fetchPdfBlob();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `${props.document?.docNo || 'document'}.pdf`;
-        link.click();
-        URL.revokeObjectURL(url);
-    } catch (err) {
-        toast.add({ severity: 'error', summary: 'ดาวน์โหลด PDF ไม่สำเร็จ', detail: err.message, life: 3000 });
-    }
 }
 
 function recordEvent(event, extra = {}) {
@@ -505,9 +395,9 @@ function deviceId() {
     return value;
 }
 
-function toggleRelatedDocuments() {
-    relatedVisible.value = !relatedVisible.value;
-    if (relatedVisible.value) recordEvent('related_documents_open');
+function openFlowDialog() {
+    flowDialogVisible.value = true;
+    recordEvent('related_documents_open');
 }
 
 function statusMeta(status) {
@@ -527,17 +417,13 @@ function statusMeta(status) {
     }
 }
 
-function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-}
-
 function newRequestKey() {
     return crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 }
 </script>
 
 <template>
-    <section class="signing-workspace" :class="{ 'read-only-workspace': !canInteract }">
+    <section class="signing-workspace" :class="{ 'read-only-workspace': !canInteract, 'history-focus-workspace': historyFocus }">
         <div class="signing-header">
             <Button v-if="onBack" icon="pi pi-arrow-left" text rounded aria-label="กลับ" @click="onBack" />
             <div class="doc-title">
@@ -552,62 +438,45 @@ function newRequestKey() {
             <span>กำลังโหลดเอกสาร</span>
         </div>
 
-        <div v-else class="workspace-grid" :class="{ 'readonly-grid': !canInteract }">
+        <Message v-if="historyFocus && !loading" :severity="statusView.severity" class="history-summary">
+            {{ historySummary }}
+        </Message>
+
+        <div v-if="!loading" class="workspace-grid" :class="{ 'readonly-grid': !canInteract, 'history-focus-grid': historyFocus }">
             <section class="pdf-shell">
-                <div class="pdf-toolbar">
-                    <div class="toolbar-title">
-                        <strong>PDF</strong>
-                        <span v-if="pageCount">หน้า {{ currentPage }} จาก {{ pageCount }}</span>
-                    </div>
-                    <Select v-if="pageOptions.length > 1" v-model="currentPage" :options="pageOptions" optionLabel="label" optionValue="value" class="page-select" />
-                    <div class="toolbar-actions">
-                        <Button class="desktop-tool" icon="pi pi-minus" text rounded aria-label="ซูมออก" :disabled="!pdfDoc" @click="zoomOut" />
-                        <Button label="พอดีกว้าง" icon="pi pi-arrows-h" severity="secondary" text :disabled="!pdfDoc" @click="fitWidth" />
-                        <Button class="desktop-tool" icon="pi pi-plus" text rounded aria-label="ซูมเข้า" :disabled="!pdfDoc" @click="zoomIn" />
-                        <Button label="เต็มจอ" icon="pi pi-window-maximize" text :disabled="!pdfUrl" @click="openFullPDF" />
-                    </div>
-                </div>
-                <div ref="viewerRef" class="pdf-viewer">
-                    <div v-if="pdfLoading" class="pdf-state">
-                        <i class="pi pi-spin pi-spinner"></i>
-                        <span>กำลังแสดง PDF</span>
-                    </div>
-                    <Message v-else-if="pdfError" severity="error" class="pdf-error">
-                        {{ pdfError }}
-                        <div class="mt-3 flex gap-2">
-                            <Button size="small" label="ลองใหม่" icon="pi pi-refresh" severity="secondary" outlined @click="loadPDF" />
-                            <Button size="small" label="ดูเต็มจอ" icon="pi pi-window-maximize" @click="openFullPDF" />
-                        </div>
-                    </Message>
-                    <canvas v-show="!pdfLoading && !pdfError" ref="pdfCanvas" class="pdf-canvas"></canvas>
-                </div>
+                <ContinuousPdfViewer
+                    :url="pdfUrl"
+                    :headers="pdfHeaders"
+                    :allow-open-full="allowFullPDF"
+                    toolbar-label="PDF"
+                    @open-full="openFullPDF"
+                    @load-success="onPdfLoadSuccess"
+                    @load-error="onPdfLoadError"
+                    @page-change="onPdfPageChange"
+                />
             </section>
 
             <aside v-if="canInteract" class="sign-card">
-                <div class="signer-summary position-summary">
-                    <span><i class="pi pi-user-edit"></i> ตำแหน่งของคุณ</span>
-                    <strong>{{ task?.positionName || '-' }}</strong>
-                    <small>{{ identityLabel || task?.signerName || task?.signerUser || '-' }}</small>
-                    <Message :severity="canInteract ? 'info' : statusView.severity">{{ statusView.message }}</Message>
-                </div>
-
-                <div v-if="relatedLoader" class="related-section">
+                <div v-if="allowRelatedDocuments" class="related-section">
                     <Button
-                        :label="relatedVisible ? 'ซ่อนเอกสารประกอบ' : 'ดูเอกสารประกอบ'"
-                        :icon="relatedVisible ? 'pi pi-chevron-up' : 'pi pi-sitemap'"
+                        label="Flow เอกสาร"
+                        icon="pi pi-sitemap"
                         severity="secondary"
                         outlined
                         class="w-full"
-                        @click="toggleRelatedDocuments"
+                        @click="openFlowDialog"
                     />
-                    <RelatedDocumentsPanel v-if="relatedVisible" compact :loader="relatedLoader" :record-event="recordEvent" />
                 </div>
 
                 <div class="signature-block">
                     <div class="section-heading">
-                        <strong>ลายเซ็น</strong>
+                        <div class="signature-heading-text">
+                            <strong>{{ signatureTitle }}</strong>
+                            <small>{{ signerLine }}</small>
+                        </div>
                         <Button label="ล้าง" icon="pi pi-eraser" severity="secondary" outlined size="small" :disabled="!hasSignature || !canInteract" @click="clearSignature" />
                     </div>
+                    <Message severity="info" class="compact-status">{{ statusView.message }}</Message>
                     <canvas
                         ref="signCanvas"
                         class="signature-canvas"
@@ -620,7 +489,7 @@ function newRequestKey() {
                     ></canvas>
                 </div>
 
-                <div class="attachment-block">
+                <div v-if="allowAttachments" class="attachment-block">
                     <Button
                         :label="attachmentVisible ? `ซ่อนไฟล์อ้างอิง (${attachmentCount} ไฟล์)` : `แนบไฟล์อ้างอิง (${attachmentCount} ไฟล์)`"
                         :icon="attachmentVisible ? 'pi pi-chevron-up' : 'pi pi-paperclip'"
@@ -646,7 +515,7 @@ function newRequestKey() {
                 </div>
             </aside>
 
-            <aside v-else class="sign-card readonly-card">
+            <aside v-else-if="showReadOnlyPanel" class="sign-card readonly-card">
                 <div class="signer-summary position-summary">
                     <span><i class="pi pi-user-edit"></i> ตำแหน่งของคุณ</span>
                     <strong>{{ task?.positionName || '-' }}</strong>
@@ -661,29 +530,28 @@ function newRequestKey() {
                     <Tag :value="statusView.label" :severity="statusView.severity" />
                 </div>
                 <DocumentWorkflowTimeline :document="document" compact />
-                <div v-if="relatedLoader" class="related-section">
+                <div v-if="allowRelatedDocuments" class="related-section">
                     <Button
-                        :label="relatedVisible ? 'ซ่อนเอกสารประกอบ' : 'ดูเอกสารประกอบ'"
-                        :icon="relatedVisible ? 'pi pi-chevron-up' : 'pi pi-sitemap'"
+                        label="Flow เอกสาร"
+                        icon="pi pi-sitemap"
                         severity="secondary"
                         outlined
                         class="w-full"
-                        @click="toggleRelatedDocuments"
+                        @click="openFlowDialog"
                     />
-                    <RelatedDocumentsPanel v-if="relatedVisible" compact :loader="relatedLoader" :record-event="recordEvent" />
                 </div>
             </aside>
         </div>
 
         <div v-if="!loading && canInteract" class="sticky-actions">
             <Message v-if="primaryDisabledReason" severity="warn" class="sticky-reason">{{ primaryDisabledReason }}</Message>
-            <div class="sticky-buttons">
-                <Button label="ปฏิเสธ" icon="pi pi-times" severity="danger" outlined :disabled="!canInteract || isBusy" @click="rejectVisible = true" />
+            <div class="sticky-buttons" :class="{ 'single-action': !allowReject }">
+                <Button v-if="allowReject" label="ปฏิเสธ" icon="pi pi-times" severity="danger" outlined :disabled="!canInteract || isBusy" @click="rejectVisible = true" />
                 <Button label="ยืนยันเซ็น" icon="pi pi-check" :disabled="!canConfirm" :loading="isBusy" @click="confirmSign" />
             </div>
         </div>
 
-        <Dialog v-model:visible="rejectVisible" modal header="ปฏิเสธเอกสาร" :style="{ width: 'min(34rem, 94vw)' }">
+        <Dialog v-if="allowReject" v-model:visible="rejectVisible" modal header="ปฏิเสธเอกสาร" :style="{ width: 'min(34rem, 94vw)' }">
             <div class="grid gap-3">
                 <Message severity="warn">การปฏิเสธจะหยุด workflow ของเอกสารนี้ และไม่ lock SML</Message>
                 <label class="font-medium">เหตุผล</label>
@@ -711,7 +579,7 @@ function newRequestKey() {
             </template>
         </Dialog>
 
-        <Dialog v-model:visible="pdfDialogVisible" modal header="ดู PDF" class="pdf-dialog" :style="{ width: 'min(960px, 96vw)' }">
+        <Dialog v-if="allowFullPDF" v-model:visible="pdfDialogVisible" modal header="ดู PDF" class="pdf-dialog" :style="{ width: 'min(960px, 96vw)' }">
             <div class="pdf-dialog-body">
                 <div v-if="pdfDialogLoading" class="pdf-state">
                     <i class="pi pi-spin pi-spinner"></i>
@@ -719,6 +587,17 @@ function newRequestKey() {
                 </div>
                 <iframe v-else-if="pdfDialogUrl" :src="pdfDialogUrl" title="PDF" class="pdf-frame"></iframe>
             </div>
+        </Dialog>
+
+        <Dialog v-if="allowRelatedDocuments" v-model:visible="flowDialogVisible" modal header="Flow เอกสาร" class="flow-dialog" :style="{ width: 'min(58rem, 96vw)' }">
+            <RelatedDocumentsPanel
+                v-if="flowDialogVisible"
+                compact
+                title="Flow เอกสาร"
+                subtitle="ลำดับและความสัมพันธ์ของเอกสารจาก SML"
+                :loader="relatedLoader"
+                :record-event="recordEvent"
+            />
         </Dialog>
     </section>
 </template>
@@ -731,6 +610,10 @@ function newRequestKey() {
     gap: 0.55rem;
     padding: 0.65rem;
     padding-bottom: 6.75rem;
+}
+
+.history-focus-workspace {
+    padding-bottom: 0.65rem;
 }
 
 .signing-header {
@@ -795,6 +678,7 @@ function newRequestKey() {
     min-height: 0;
     display: flex;
     flex-direction: column;
+    padding: 0.65rem;
 }
 
 .pdf-toolbar {
@@ -912,6 +796,28 @@ function newRequestKey() {
     margin-bottom: 0.5rem;
 }
 
+.signature-heading-text {
+    min-width: 0;
+    display: grid;
+    gap: 0.15rem;
+    line-height: 1.2;
+}
+
+.signature-heading-text strong,
+.signature-heading-text small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.signature-heading-text small {
+    color: var(--text-color-secondary);
+}
+
+.compact-status {
+    margin: 0 0 0.55rem;
+}
+
 .readonly-heading {
     margin-bottom: 0;
 }
@@ -1008,8 +914,20 @@ function newRequestKey() {
     gap: 0.65rem;
 }
 
+.sticky-buttons.single-action {
+    grid-template-columns: 1fr;
+}
+
 .sticky-buttons :deep(.p-button) {
     min-height: 44px;
+}
+
+.history-summary {
+    margin: 0;
+}
+
+.history-focus-grid {
+    grid-template-columns: minmax(0, 1fr);
 }
 
 .legal-dialog-text {
@@ -1035,19 +953,38 @@ function newRequestKey() {
     padding-top: 0;
 }
 
+:global(.flow-dialog .p-dialog-content) {
+    padding-top: 0;
+}
+
 @media (max-width: 920px) {
     .signing-workspace {
-        padding: 0.55rem;
+        padding: 0;
         padding-bottom: 7.25rem;
+        gap: 0.55rem;
+    }
+
+    .signing-header,
+    .history-summary {
+        margin-inline: 0.55rem;
+    }
+
+    .signing-header {
+        margin-top: 0.55rem;
     }
 
     .workspace-grid {
         grid-template-columns: 1fr;
+        gap: 0.55rem;
     }
 
     .pdf-shell {
-        height: clamp(340px, 46dvh, 430px);
+        height: min(64dvh, 620px);
         min-height: 0;
+        border-right: 0;
+        border-left: 0;
+        border-radius: 0;
+        padding: 0.55rem;
     }
 
     .pdf-viewer {
@@ -1055,11 +992,16 @@ function newRequestKey() {
     }
 
     .sign-card {
+        margin-inline: 0.55rem;
         padding: 0.75rem;
     }
 
     .readonly-grid .sign-card {
         order: -1;
+    }
+
+    .history-focus-grid .pdf-shell {
+        height: min(72dvh, 640px);
     }
 }
 
@@ -1114,6 +1056,22 @@ function newRequestKey() {
 
     .signature-canvas {
         height: 168px;
+    }
+}
+
+@media (max-width: 640px) {
+    :global(.flow-dialog.p-dialog) {
+        width: 100vw !important;
+        max-width: 100vw !important;
+        height: 100dvh;
+        max-height: 100dvh;
+        margin: 0;
+        border-radius: 0;
+    }
+
+    :global(.flow-dialog .p-dialog-content) {
+        height: calc(100dvh - 4.5rem);
+        overflow: auto;
     }
 }
 </style>

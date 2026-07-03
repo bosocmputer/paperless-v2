@@ -1,6 +1,7 @@
 import AppLayout from '@/layout/AppLayout.vue';
 import SignerLayout from '@/layout/SignerLayout.vue';
 import { authStore } from '@/stores/auth';
+import { SIGNING_DOCUMENT_MENU_KEYS } from '@/utils/signingQueue';
 import { createRouter, createWebHistory } from 'vue-router';
 
 const router = createRouter({
@@ -26,6 +27,12 @@ const router = createRouter({
                     path: 'history',
                     name: 'my-signing-history',
                     component: () => import('@/views/signing/MySigningHistory.vue'),
+                    meta: { role: 'user' }
+                },
+                {
+                    path: 'guide',
+                    name: 'my-signing-guide',
+                    component: () => import('@/views/signing/UserGuide.vue'),
                     meta: { role: 'user' }
                 },
                 {
@@ -57,6 +64,18 @@ const router = createRouter({
                     meta: { role: 'admin' }
                 },
                 {
+                    path: '/admin/guide',
+                    name: 'admin-guide',
+                    component: () => import('@/views/admin/AdminGuide.vue'),
+                    meta: { role: 'admin' }
+                },
+                {
+                    path: '/admin/user-guide',
+                    name: 'admin-user-guide',
+                    component: () => import('@/views/signing/UserGuide.vue'),
+                    meta: { role: 'admin', guideAudience: 'admin' }
+                },
+                {
                     path: '/config/documents',
                     name: 'document-config',
                     component: () => import('@/views/config/DocumentConfig.vue'),
@@ -84,19 +103,19 @@ const router = createRouter({
                     path: '/signing/documents/drafts',
                     name: 'signing-document-drafts',
                     component: () => import('@/views/signing/SigningDocuments.vue'),
-                    meta: { role: 'admin', queue: 'draft' }
+                    meta: { role: 'admin', queue: 'draft', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.draft }
                 },
                 {
                     path: '/signing/documents',
                     name: 'signing-documents',
                     component: () => import('@/views/signing/SigningDocuments.vue'),
-                    meta: { role: 'admin', queue: 'active' }
+                    meta: { role: 'admin', queue: 'active', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.active }
                 },
                 {
                     path: '/signing/documents/history',
                     name: 'signing-document-history',
                     component: () => import('@/views/signing/SigningDocuments.vue'),
-                    meta: { role: 'admin', queue: 'history' }
+                    meta: { role: 'admin', queue: 'history', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.history }
                 },
                 {
                     path: '/document-flow',
@@ -113,7 +132,7 @@ const router = createRouter({
                     path: '/signing/documents/new',
                     name: 'signing-document-new',
                     component: () => import('@/views/signing/SigningDocumentCreate.vue'),
-                    meta: { role: 'admin' }
+                    meta: { role: 'admin', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.draft }
                 },
                 {
                     path: '/signing/documents/:id',

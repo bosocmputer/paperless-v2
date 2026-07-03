@@ -9,4 +9,4 @@ tmp/
 *.log
 backend/bin/
 frontend/.vite/
-
+audit-output/

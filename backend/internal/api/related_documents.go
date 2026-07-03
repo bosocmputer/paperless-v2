@@ -82,7 +82,7 @@ func (s *Server) getSigningDocumentRelatedDocuments(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
-	graph, ok := s.writeRelatedDocuments(w, r, document.DocFormatCode, document.DocNo, true)
+	graph, ok := s.writeRelatedDocuments(w, r.WithContext(store.WithSMLTenant(r.Context(), document.SMLTenant)), document.DocFormatCode, document.DocNo, true)
 	if !ok {
 		return
 	}
@@ -107,7 +107,7 @@ func (s *Server) getMySigningTaskRelatedDocuments(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
-	graph, ok := s.writeRelatedDocuments(w, r, document.DocFormatCode, document.DocNo, false)
+	graph, ok := s.writeRelatedDocuments(w, r.WithContext(store.WithSMLTenant(r.Context(), document.SMLTenant)), document.DocFormatCode, document.DocNo, false)
 	if !ok {
 		return
 	}
@@ -115,21 +115,11 @@ func (s *Server) getMySigningTaskRelatedDocuments(w http.ResponseWriter, r *http
 }
 
 func (s *Server) getPublicSigningRelatedDocuments(w http.ResponseWriter, r *http.Request) {
-	signer, ok := s.externalSignerFromRequest(w, r)
+	_, ok := s.externalSignerFromRequest(w, r)
 	if !ok {
 		return
 	}
-	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
-	if err != nil {
-		s.logger.Error("load public document for related documents failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
-		return
-	}
-	graph, ok := s.writeRelatedDocuments(w, r, document.DocFormatCode, document.DocNo, false)
-	if !ok {
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"relatedDocuments": graph})
+	externalSignOnlyForbidden(w)
 }
 
 func (s *Server) writeRelatedDocuments(w http.ResponseWriter, r *http.Request, docFormatCode, docNo string, admin bool) (models.SMLRelatedDocumentsGraph, bool) {
@@ -164,9 +154,8 @@ func (s *Server) writeRelatedDocuments(w http.ResponseWriter, r *http.Request, d
 }
 
 func (s *Server) fetchSMLRelatedDocuments(ctx context.Context, docFormatCode, docNo, depth string) (models.SMLRelatedDocumentsGraph, error) {
-	if strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessTenant) == "" {
+	tenant, ok := s.hasSMLAPIConfig(ctx)
+	if !ok {
 		return models.SMLRelatedDocumentsGraph{}, errSMLConfigMissing
 	}
 	endpoint, err := url.Parse(s.cfg.SMLPaperlessBaseURL + "/api/v1/documents/" + url.PathEscape(docNo) + "/related")
@@ -186,7 +175,7 @@ func (s *Server) fetchSMLRelatedDocuments(ctx context.Context, docFormatCode, do
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
-	req.Header.Set("X-Tenant", s.cfg.SMLPaperlessTenant)
+	req.Header.Set("X-Tenant", tenant)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -223,9 +212,9 @@ func (s *Server) enrichRelatedDocuments(ctx context.Context, graph models.SMLRel
 		ref.CanViewCurrentPDF = canOpen && ref.HasCurrentPDF
 		ref.CanViewSignedPDF = canOpen && ref.HasFinalPDF
 		if canOpen {
-			ref.CurrentPDFURL = fmt.Sprintf("/api/signing-documents/%s/pdf?version=current", ref.ID)
+			ref.CurrentPDFURL = signingDocumentPDFURL(ref.ID, "current", ref.UpdatedAt)
 			if ref.HasFinalPDF {
-				ref.SignedPDFURL = fmt.Sprintf("/api/signing-documents/%s/pdf?version=final", ref.ID)
+				ref.SignedPDFURL = signingDocumentPDFURL(ref.ID, "final", ref.UpdatedAt)
 			}
 		}
 		key := relatedReferenceKey(ref.DocFormatCode, ref.DocNo)

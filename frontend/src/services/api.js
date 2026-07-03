@@ -10,6 +10,7 @@ async function request(path, options = {}) {
     if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
 
     const response = await fetch(`${API_BASE}${path}`, {
+        cache: 'no-store',
         ...options,
         headers
     });
@@ -30,6 +31,7 @@ async function request(path, options = {}) {
 function handleUnauthorized(path) {
     localStorage.removeItem('paperless_token');
     localStorage.removeItem('paperless_user');
+    localStorage.removeItem('paperless_session');
     window.dispatchEvent(new CustomEvent('paperless:session-expired'));
 
     if (authRedirecting || shouldSkipUnauthorizedRedirect(path)) return;
@@ -56,6 +58,34 @@ function withQuery(path, params = {}) {
     return qs ? `${path}?${qs}` : path;
 }
 
+function withPDFCacheKey(url, cacheKey = '') {
+    if (!url || !cacheKey) return url;
+    if (/[?&]v=/.test(url)) return url;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}v=${encodeURIComponent(cacheKey)}`;
+}
+
+function signingDocumentPDFCacheKey(document = {}, version = 'current') {
+    if (!document) return '';
+    const final = version === 'final';
+    const file = final ? document.finalFile : document.currentFile;
+    return [
+        version || 'current',
+        final ? document.finalFileId : document.currentFileId,
+        file?.id,
+        file?.sha256,
+        document.currentVersion,
+        document.updatedAt,
+        file?.createdAt
+    ]
+        .filter(Boolean)
+        .join('-');
+}
+
+function signingTaskPDFCacheKey(task = {}, document = {}, version = 'current') {
+    return [signingDocumentPDFCacheKey(document, version), task?.id, task?.status, task?.signedAt, task?.rejectedAt].filter(Boolean).join('-');
+}
+
 function splitIdempotencyPayload(payload = {}) {
     const { idempotencyKey, ...body } = payload;
     const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
@@ -63,10 +93,10 @@ function splitIdempotencyPayload(payload = {}) {
 }
 
 export const api = {
-    login(username, password) {
+    login(username, password, databaseName = '', authSource = '') {
         return request('/api/auth/login', {
             method: 'POST',
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify({ username, password, databaseName, authSource })
         });
     },
     me() {
@@ -282,14 +312,30 @@ export const api = {
     getSigningDocumentRelatedDocuments(id, depth = 3) {
         return request(withQuery(`/api/signing-documents/${id}/related-documents`, { depth }));
     },
-    signingDocumentPDFUrl(id, version = 'current') {
-        return withQuery(`/api/signing-documents/${id}/pdf`, { version });
+    signingDocumentPDFCacheKey(document, version = 'current') {
+        return signingDocumentPDFCacheKey(document, version);
+    },
+    signingTaskPDFCacheKey(task, document, version = 'current') {
+        return signingTaskPDFCacheKey(task, document, version);
+    },
+    withPDFCacheKey(url, cacheKey) {
+        return withPDFCacheKey(url, cacheKey);
+    },
+    signingDocumentPDFUrl(id, version = 'current', cacheKey = '') {
+        return withQuery(`/api/signing-documents/${id}/pdf`, { version, v: cacheKey });
+    },
+    signingDocumentPDFUrlForDocument(document, version = 'current') {
+        if (!document?.id) return '';
+        return this.signingDocumentPDFUrl(document.id, version, signingDocumentPDFCacheKey(document, version));
     },
     retrySigningDocumentLock(id) {
         return request(`/api/signing-documents/${id}/retry-sml-lock`, { method: 'POST' });
     },
     retrySigningDocumentFinalPDF(id) {
         return request(`/api/signing-documents/${id}/retry-final-pdf`, { method: 'POST' });
+    },
+    retrySigningDocumentImages(id) {
+        return request(`/api/signing-documents/${id}/retry-sml-images`, { method: 'POST' });
     },
     createSigningDocumentPrintCopy(id, payload) {
         return request(`/api/signing-documents/${id}/print-copies`, {
@@ -327,8 +373,12 @@ export const api = {
     getMySigningHistory(taskId) {
         return request(`/api/my/signing-history/${taskId}`);
     },
-    mySigningHistoryPDFUrl(taskId, version = '') {
-        return withQuery(`/api/my/signing-history/${taskId}/pdf`, { version });
+    mySigningHistoryPDFUrl(taskId, version = '', cacheKey = '') {
+        return withQuery(`/api/my/signing-history/${taskId}/pdf`, { version, v: cacheKey });
+    },
+    mySigningHistoryPDFUrlForTask(task, document, version = '') {
+        if (!task?.id) return '';
+        return this.mySigningHistoryPDFUrl(task.id, version, signingTaskPDFCacheKey(task, document, version || 'current'));
     },
     getMySigningTaskRelatedDocuments(taskId, depth = 3) {
         return request(withQuery(`/api/my/signing-tasks/${taskId}/related-documents`, { depth }));
@@ -413,8 +463,8 @@ export const api = {
             body: form
         });
     },
-    publicSigningPDFUrl(token) {
-        return `/api/public/signing/${token}/pdf`;
+    publicSigningPDFUrl(token, cacheKey = '') {
+        return withPDFCacheKey(`/api/public/signing/${token}/pdf`, cacheKey);
     },
     authHeaders() {
         const token = localStorage.getItem('paperless_token');

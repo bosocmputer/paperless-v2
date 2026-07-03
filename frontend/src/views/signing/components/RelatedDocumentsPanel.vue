@@ -7,6 +7,8 @@ const props = defineProps({
     loader: { type: Function, default: null },
     admin: { type: Boolean, default: false },
     compact: { type: Boolean, default: false },
+    title: { type: String, default: 'เอกสารประกอบ' },
+    subtitle: { type: String, default: 'ข้อมูลความสัมพันธ์จาก SML' },
     recordEvent: { type: Function, default: null }
 });
 
@@ -49,8 +51,8 @@ function recordClick() {
     <div class="related-documents" :class="{ compact }">
         <div class="flex items-center justify-between gap-3 mb-3">
             <div class="min-w-0">
-                <div class="font-semibold">เอกสารประกอบ</div>
-                <small class="text-muted-color">ข้อมูลความสัมพันธ์จาก SML</small>
+                <div class="font-semibold">{{ title }}</div>
+                <small class="text-muted-color">{{ subtitle }}</small>
             </div>
             <Button icon="pi pi-refresh" rounded outlined severity="secondary" aria-label="โหลดเอกสารประกอบใหม่" :loading="loading" @click="load" />
         </div>

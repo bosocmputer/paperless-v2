@@ -7,11 +7,13 @@ import (
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/auth"
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
+	"github.com/bosocmputer/paperless-v2/backend/internal/store"
 )
 
 type contextKey string
 
 const userContextKey contextKey = "user"
+const sessionContextKey contextKey = "session"
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,14 +36,45 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		session := s.sessionFromClaims(claims)
 		ctx := context.WithValue(r.Context(), userContextKey, user)
+		ctx = context.WithValue(ctx, sessionContextKey, session)
+		ctx = store.WithSMLTenant(ctx, session.SMLTenant)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (s *Server) sessionFromClaims(claims auth.Claims) models.AuthSession {
+	session := models.AuthSession{
+		SMLProvider:  strings.TrimSpace(claims.SMLProvider),
+		SMLDataGroup: strings.TrimSpace(claims.SMLDataGroup),
+		SMLDataCode:  strings.TrimSpace(claims.SMLDataCode),
+		SMLTenant:    store.NormalizeSMLTenant(claims.SMLTenant),
+		AuthSource:   strings.TrimSpace(claims.AuthSource),
+	}
+	if session.SMLProvider == "" {
+		session.SMLProvider = s.cfg.SMLAuthProvider
+	}
+	if session.SMLDataGroup == "" {
+		session.SMLDataGroup = s.cfg.SMLAuthDataGroup
+	}
+	if session.SMLDataCode == "" {
+		session.SMLDataCode = strings.ToUpper(session.SMLTenant)
+	}
+	if session.AuthSource == "" {
+		session.AuthSource = "legacy"
+	}
+	return session
 }
 
 func currentUser(r *http.Request) (models.User, bool) {
 	user, ok := r.Context().Value(userContextKey).(models.User)
 	return user, ok
+}
+
+func currentSession(r *http.Request) (models.AuthSession, bool) {
+	session, ok := r.Context().Value(sessionContextKey).(models.AuthSession)
+	return session, ok
 }
 
 func (s *Server) requireAdmin(next http.Handler) http.Handler {

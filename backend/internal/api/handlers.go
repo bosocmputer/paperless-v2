@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/auth"
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
+	"github.com/bosocmputer/paperless-v2/backend/internal/store"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -38,15 +40,55 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing_credentials", "Username and password are required.")
 		return
 	}
+	req.DatabaseName = strings.TrimSpace(req.DatabaseName)
 
-	user, err := s.store.FindUserByUsername(r.Context(), req.Username)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !auth.CheckPassword(req.Password, user.PasswordHash)) {
+	smlResult, smlErr := s.verifySMLLogin(r.Context(), req.Username, req.Password, req.DatabaseName)
+	if smlErr == nil {
+		s.handleSMLLoginSuccess(w, r, req, smlResult)
+		return
+	}
+
+	if errors.Is(smlErr, errSMLAuthDatabaseDenied) {
+		writeError(w, http.StatusForbidden, "database_not_allowed", "Database is not allowed for this user.")
+		return
+	}
+
+	if s.cfg.LocalAuthFallback {
+		if ok := s.handleLocalFallbackLogin(w, r, req); ok {
+			return
+		}
+	}
+
+	if errors.Is(smlErr, errSMLAuthInvalidCredentials) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Username or password is incorrect.")
 		return
 	}
+	if errors.Is(smlErr, errSMLConfigMissing) {
+		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML PaperLess API is not configured.")
+		return
+	}
+	s.logger.Warn("SML login failed", "error", smlErr, "username", req.Username)
+	writeError(w, http.StatusBadGateway, "sml_login_failed", "Cannot verify SML login right now.")
+}
+
+func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, req models.LoginRequest, result smlAuthResult) {
+	if req.DatabaseName == "" {
+		writeJSON(w, http.StatusOK, models.LoginResponse{
+			DatabaseRequired: true,
+			Databases:        result.Databases,
+			AuthSource:       "sml",
+		})
+		return
+	}
+	if result.SelectedDatabase == nil {
+		writeError(w, http.StatusForbidden, "database_not_allowed", "Database is not allowed for this user.")
+		return
+	}
+
+	user, err := s.findOrProvisionSMLUser(r.Context(), req.Username, result)
 	if err != nil {
-		s.logger.Error("login lookup failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "login_failed", "Cannot login right now.")
+		s.logger.Error("provision SML user failed", "error", err, "username", req.Username)
+		writeError(w, http.StatusInternalServerError, "user_provision_failed", "Cannot prepare PaperLess user right now.")
 		return
 	}
 	if user.Status != "active" {
@@ -54,28 +96,143 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, expiresAt, err := auth.IssueToken(s.cfg.JWTSecret, s.cfg.JWTTTL, user)
+	session := models.AuthSession{
+		SMLProvider:  result.Provider,
+		SMLDataGroup: result.SelectedDatabase.DataGroup,
+		SMLDataCode:  result.SelectedDatabase.DataCode,
+		SMLTenant:    result.SelectedDatabase.Tenant,
+		AuthSource:   "sml",
+	}
+	if session.SMLProvider == "" {
+		session.SMLProvider = s.cfg.SMLAuthProvider
+	}
+	if session.SMLDataGroup == "" {
+		session.SMLDataGroup = result.DataGroup
+	}
+	token, expiresAt, err := auth.IssueToken(s.cfg.JWTSecret, s.cfg.JWTTTL, user, session)
 	if err != nil {
 		s.logger.Error("issue token failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "login_failed", "Cannot create session right now.")
 		return
 	}
 
-	if err := s.store.WriteAudit(r.Context(), user.ID, "auth.login", "user", user.ID, clientIP(r), r.UserAgent()); err != nil {
+	if err := s.store.WriteAuditWithMetadata(r.Context(), user.ID, "auth.sml_login", "user", user.ID, clientIP(r), r.UserAgent(), map[string]any{
+		"smlProvider":  session.SMLProvider,
+		"smlDataGroup": session.SMLDataGroup,
+		"smlDataCode":  session.SMLDataCode,
+		"smlTenant":    session.SMLTenant,
+	}); err != nil {
 		s.logger.Warn("write login audit failed", "error", err, "userID", user.ID)
 	}
 
 	writeJSON(w, http.StatusOK, models.LoginResponse{
-		Token:     token,
-		TokenType: "Bearer",
-		ExpiresAt: expiresAt,
-		User:      user,
+		Token:      token,
+		TokenType:  "Bearer",
+		ExpiresAt:  &expiresAt,
+		User:       &user,
+		Session:    &session,
+		AuthSource: "sml",
 	})
+}
+
+func (s *Server) findOrProvisionSMLUser(ctx context.Context, username string, result smlAuthResult) (models.User, error) {
+	user, err := s.store.FindUserByUsername(ctx, username)
+	if err == nil {
+		return user, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return models.User{}, err
+	}
+
+	role := "user"
+	if strings.EqualFold(strings.TrimSpace(username), "superadmin") || strings.EqualFold(strings.TrimSpace(result.UserCode), "superadmin") {
+		role = "admin"
+	}
+	displayName := strings.TrimSpace(result.UserName)
+	if displayName == "" {
+		displayName = username
+	}
+	created, err := s.store.CreateUser(ctx, models.CreateUserRequest{
+		DisplayName: displayName,
+		Username:    username,
+		Password:    randomLocalPassword(),
+		Role:        role,
+		Status:      "active",
+	})
+	if errors.Is(err, store.ErrUsernameTaken) {
+		return s.store.FindUserByUsername(ctx, username)
+	}
+	if err != nil {
+		return models.User{}, err
+	}
+	_ = s.store.WriteAuditWithMetadata(ctx, created.ID, "auth.user_auto_provisioned", "user", created.ID, "", "", map[string]any{
+		"source": "sml",
+		"role":   role,
+	})
+	return created, nil
+}
+
+func (s *Server) handleLocalFallbackLogin(w http.ResponseWriter, r *http.Request, req models.LoginRequest) bool {
+	user, err := s.store.FindUserByUsername(r.Context(), req.Username)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !auth.CheckPassword(req.Password, user.PasswordHash)) {
+		return false
+	}
+	if err != nil {
+		s.logger.Error("local fallback login lookup failed", "error", err)
+		return false
+	}
+	if user.Status != "active" {
+		writeError(w, http.StatusForbidden, "user_inactive", "User account is inactive.")
+		return true
+	}
+
+	databases := localFallbackDatabases(s.cfg.SMLPaperlessTenant, s.cfg.SMLAuthDataGroup)
+	if req.DatabaseName == "" {
+		writeJSON(w, http.StatusOK, models.LoginResponse{
+			DatabaseRequired: true,
+			Databases:        databases,
+			AuthSource:       "local_fallback",
+		})
+		return true
+	}
+	selected := normalizeSMLAuthDatabase(models.SMLAuthDatabase{DatabaseName: req.DatabaseName})
+	if selected.Tenant != databases[0].Tenant {
+		writeError(w, http.StatusForbidden, "database_not_allowed", "Local fallback can only use the default PaperLess tenant.")
+		return true
+	}
+	session := models.AuthSession{
+		SMLProvider:  s.cfg.SMLAuthProvider,
+		SMLDataGroup: databases[0].DataGroup,
+		SMLDataCode:  databases[0].DataCode,
+		SMLTenant:    databases[0].Tenant,
+		AuthSource:   "local_fallback",
+	}
+	token, expiresAt, err := auth.IssueToken(s.cfg.JWTSecret, s.cfg.JWTTTL, user, session)
+	if err != nil {
+		s.logger.Error("issue fallback token failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "login_failed", "Cannot create session right now.")
+		return true
+	}
+	if err := s.store.WriteAuditWithMetadata(r.Context(), user.ID, "auth.local_fallback_login", "user", user.ID, clientIP(r), r.UserAgent(), map[string]any{
+		"smlTenant": session.SMLTenant,
+	}); err != nil {
+		s.logger.Warn("write local fallback login audit failed", "error", err, "userID", user.ID)
+	}
+	writeJSON(w, http.StatusOK, models.LoginResponse{
+		Token:      token,
+		TokenType:  "Bearer",
+		ExpiresAt:  &expiresAt,
+		User:       &user,
+		Session:    &session,
+		AuthSource: "local_fallback",
+	})
+	return true
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r)
-	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+	session, _ := currentSession(r)
+	writeJSON(w, http.StatusOK, map[string]any{"user": user, "session": session})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -87,18 +244,26 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
+	setNoStoreHeaders(w)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func writeRawJSON(w http.ResponseWriter, status int, payload []byte) {
+	setNoStoreHeaders(w)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if len(payload) == 0 {
 		payload = []byte("{}")
 	}
 	_, _ = w.Write(payload)
+}
+
+func setNoStoreHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {

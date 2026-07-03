@@ -23,6 +23,7 @@ const emptyTotals = {
     rejected: 0,
     completed: 0,
     completedEvidenceFailed: 0,
+    completedImageFailed: 0,
     completedLockFailed: 0,
     cancelled: 0
 };
@@ -33,6 +34,7 @@ const emptyWorkflowSummary = {
     attentionDocuments: 0,
     completedDocuments: 0,
     evidenceFailed: 0,
+    imageFailed: 0,
     lockFailed: 0
 };
 const dashboard = ref({
@@ -65,7 +67,7 @@ const actionRows = computed(() => {
             currentPositionName: problemReason(doc.status),
             statusLabel: signingStatusLabel(doc.status),
             statusSeverity: signingStatusSeverity(doc.status),
-            helper: doc.status === 'pending_confirm' ? 'เซ็นครบแล้ว รอผู้ดูแลยืนยันเพื่อสร้างหลักฐานและ Lock SML' : 'เปิดเอกสารเพื่อลองสร้างหลักฐานหรือส่งสถานะกลับ SML อีกครั้ง',
+            helper: doc.status === 'pending_confirm' ? 'เซ็นครบแล้ว รอผู้ดูแลยืนยันเพื่อสร้างหลักฐานและ Lock SML' : 'เปิดเอกสารเพื่อลองสร้างหลักฐาน ส่งรูป หรือส่งสถานะกลับ SML อีกครั้ง',
             priority: 1
         });
     });
@@ -110,7 +112,7 @@ const metricCards = computed(() => [
         label: 'รอยืนยัน',
         value: workflowSummary.value.pendingConfirm || totals.value.pendingConfirm,
         helperStrong: `${workflowSummary.value.evidenceFailed} PDF`,
-        helper: `· ${workflowSummary.value.lockFailed} SML ต้องแก้`,
+        helper: `· ${workflowSummary.value.imageFailed + workflowSummary.value.lockFailed} SML ต้องแก้`,
         icon: 'pi pi-check-circle',
         accentClass: 'bg-linear-to-b from-orange-400 dark:from-orange-300 to-orange-600 dark:to-orange-500'
     },
@@ -176,6 +178,7 @@ function documentLine(doc) {
 function problemReason(status) {
     if (status === 'pending_confirm') return 'รอยืนยันเอกสาร';
     if (status === 'completed_evidence_failed') return 'สร้างไฟล์หลักฐานไม่สำเร็จ';
+    if (status === 'completed_image_failed') return 'ส่งรูปเอกสารเข้า SML ไม่สำเร็จ';
     if (status === 'completed_lock_failed') return 'ส่งสถานะกลับ SML ไม่สำเร็จ';
     return 'ต้องตรวจสอบ';
 }
@@ -293,6 +296,18 @@ function movementEventView(event) {
             icon: 'pi pi-file-excel',
             severity: 'danger',
             detail: 'ต้องสร้าง PDF อีกครั้งก่อนส่งสถานะกลับ SML หรือพิมพ์เอกสาร'
+        },
+        sml_images_success: {
+            title: 'ส่งรูป SML สำเร็จ',
+            icon: 'pi pi-images',
+            severity: 'success',
+            detail: metadata.truncated ? `ส่ง ${metadata.imageCount || 8} จาก ${metadata.totalPages || '-'} หน้าเข้า SML` : event.message || 'บันทึกรูปเอกสารเข้า SML แล้ว'
+        },
+        sml_images_failed: {
+            title: 'ส่งรูป SML ไม่สำเร็จ',
+            icon: 'pi pi-images',
+            severity: 'danger',
+            detail: 'ต้องส่งรูป SML อีกครั้งก่อน Lock SML หรือพิมพ์เอกสาร'
         },
         sml_lock_success: {
             title: 'ส่งสถานะกลับ SML สำเร็จ',

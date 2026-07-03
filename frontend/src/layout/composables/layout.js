@@ -16,6 +16,7 @@ const layoutState = reactive({
     sidebarExpanded: false,
     menuHoverActive: false,
     activeMenuItem: null,
+    activeMenuKey: null,
     activePath: null
 });
 

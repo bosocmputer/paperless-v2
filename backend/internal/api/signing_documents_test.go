@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 	"github.com/phpdave11/gofpdf"
@@ -130,6 +131,51 @@ func TestSanitizeRelatedDocumentsForSignerRemovesOpenIds(t *testing.T) {
 	}
 }
 
+func TestSigningDocumentPDFURLIncludesStableCacheKey(t *testing.T) {
+	updatedAt := time.Date(2026, 7, 1, 11, 9, 34, 305444000, time.FixedZone("ICT", 7*60*60))
+	got := signingDocumentPDFURL("doc-1", "current", updatedAt)
+	if !strings.HasPrefix(got, "/api/signing-documents/doc-1/pdf?version=current&v=") {
+		t.Fatalf("pdf url = %q, want cache-keyed current PDF URL", got)
+	}
+
+	withoutTimestamp := signingDocumentPDFURL("doc-1", "final", time.Time{})
+	if withoutTimestamp != "/api/signing-documents/doc-1/pdf?version=final" {
+		t.Fatalf("pdf url without timestamp = %q", withoutTimestamp)
+	}
+}
+
+func TestCanRetrySigningDocumentImagesStatusIncludesCompletedRepair(t *testing.T) {
+	for _, status := range []string{"completed_image_failed", "completed"} {
+		if !canRetrySigningDocumentImagesStatus(status) {
+			t.Fatalf("status %q should be retryable for SML image repair", status)
+		}
+	}
+	for _, status := range []string{"pending_confirm", "completed_lock_failed", "completed_evidence_failed", "draft"} {
+		if canRetrySigningDocumentImagesStatus(status) {
+			t.Fatalf("status %q should not be retryable for SML image repair", status)
+		}
+	}
+}
+
+func TestSelectSigningHistoryPDFFileDefaultsToCurrent(t *testing.T) {
+	current := &models.UploadedFile{ID: "current-file"}
+	final := &models.UploadedFile{ID: "final-file"}
+	document := models.SigningDocument{CurrentFile: current, FinalFile: final}
+
+	if got := selectSigningHistoryPDFFile(document, ""); got != current {
+		t.Fatalf("default history PDF = %#v, want current", got)
+	}
+	if got := selectSigningHistoryPDFFile(document, "current"); got != current {
+		t.Fatalf("current history PDF = %#v, want current", got)
+	}
+	if got := selectSigningHistoryPDFFile(document, "final"); got != final {
+		t.Fatalf("final history PDF = %#v, want final", got)
+	}
+	if got := selectSigningHistoryPDFFile(models.SigningDocument{CurrentFile: current}, "final"); got != nil {
+		t.Fatalf("explicit final without final file = %#v, want nil", got)
+	}
+}
+
 func TestNormalizeDocumentFlowEventMetadata(t *testing.T) {
 	metadata, err := normalizeDocumentFlowEventMetadata(documentFlowEventRequest{
 		Event:         "document_flow_load_success",
@@ -207,6 +253,85 @@ func TestSanitizeSigningDocumentForSignerRemovesSensitiveEvidence(t *testing.T) 
 	}
 	if sanitized.Events[0].IPAddress != "" || sanitized.Events[0].UserAgent != "" || sanitized.Events[0].Metadata != nil {
 		t.Fatalf("event sensitive fields were not cleared: %#v", sanitized.Events[0])
+	}
+}
+
+func TestSanitizeSigningDocumentForExternalKeepsOnlySignableDocumentContext(t *testing.T) {
+	document := models.SigningDocument{
+		DocNo:         "PO26060001",
+		DocFormatCode: "PO",
+		OriginalFile:  &models.UploadedFile{ID: "original", SHA256: "hash"},
+		CurrentFile:   &models.UploadedFile{ID: "current", SHA256: "hash"},
+		FinalFile:     &models.UploadedFile{ID: "final", SHA256: "hash"},
+		Signers: []models.SigningDocumentSigner{{
+			ID:              "signer-1",
+			SignatureFileID: "signature-file",
+			DeviceID:        "device-secret",
+			IPAddress:       "127.0.0.1",
+			UserAgent:       "browser",
+			ExternalTokenID: "token-id",
+			ExternalURL:     "https://secret.example",
+		}},
+		Events:      []models.SigningDocumentEvent{{ID: "event-1", IPAddress: "127.0.0.1", UserAgent: "browser", Metadata: map[string]any{"token": "secret"}}},
+		Attachments: []models.SigningDocumentAttachment{{ID: "attachment-1"}},
+		PrintEvents: []models.SigningDocumentPrintEvent{{ID: "print-1"}},
+	}
+
+	sanitized := sanitizeSigningDocumentForExternal(document)
+	if sanitized.DocNo != "PO26060001" || sanitized.DocFormatCode != "PO" {
+		t.Fatalf("document context should remain: %#v", sanitized)
+	}
+	if sanitized.OriginalFile != nil || sanitized.CurrentFile != nil || sanitized.FinalFile != nil {
+		t.Fatal("external document payload must not expose file metadata")
+	}
+	if sanitized.Signers != nil || sanitized.Events != nil {
+		t.Fatalf("external document payload must not expose workflow signers/events: %#v", sanitized)
+	}
+	if len(sanitized.Attachments) != 0 || len(sanitized.PrintEvents) != 0 {
+		t.Fatal("external document payload must not expose attachments or print events")
+	}
+}
+
+func TestTaskUnavailableCodeMapsExternalTerminalStates(t *testing.T) {
+	tests := map[string]string{
+		"signed":   "already_signed",
+		"rejected": "already_rejected",
+		"waiting":  "signing_task_not_turn",
+		"skipped":  "signing_task_skipped",
+		"pending":  "signing_task_unavailable",
+	}
+	for status, want := range tests {
+		if got := taskUnavailableCode(status); got != want {
+			t.Fatalf("taskUnavailableCode(%q) = %q, want %q", status, got, want)
+		}
+	}
+}
+
+func TestCurrentPDFNeedsSignatureTransparencyRefresh(t *testing.T) {
+	signedAt := time.Now()
+	document := models.SigningDocument{
+		Signers: []models.SigningDocumentSigner{{
+			ID:              "signer-1",
+			Status:          "signed",
+			SignatureFileID: "signature-file",
+			SignedAt:        &signedAt,
+		}},
+	}
+	if !currentPDFNeedsSignatureTransparencyRefresh(document) {
+		t.Fatal("signed document without transparency metadata should refresh")
+	}
+	document.Events = []models.SigningDocumentEvent{{
+		Action: "pdf_stamped",
+		Metadata: map[string]any{
+			"signatureTransparencyVersion": signatureTransparencyVersion,
+		},
+	}}
+	if currentPDFNeedsSignatureTransparencyRefresh(document) {
+		t.Fatal("document with current transparency metadata should not refresh")
+	}
+	document.Signers = nil
+	if currentPDFNeedsSignatureTransparencyRefresh(document) {
+		t.Fatal("document without signed signatures should not refresh")
 	}
 }
 
@@ -321,25 +446,58 @@ func TestValidateSigningDocumentLayoutAllowsPartialPositions(t *testing.T) {
 	boxes := []models.SignatureTemplateBoxRequest{
 		{PositionCode: "1", SignerType: "any", PageNo: 1, XRatio: 0.1, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
 		{PositionCode: "3", SignerType: "internal", SignerUser: "901", PageNo: 1, XRatio: 0.55, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+		{PositionCode: "3", SignerType: "internal", SignerUser: "902", PageNo: 1, XRatio: 0.75, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
 	}
 
-	normalized, selected, issues := validateSigningDocumentLayout(boxes, configs, 1)
+	normalized, selected, placements, issues := validateSigningDocumentLayout(boxes, configs, 1)
 	if len(issues) != 0 {
 		t.Fatalf("expected partial layout to be valid, got %#v", issues)
 	}
 	if len(selected) != 2 {
 		t.Fatalf("expected only boxed positions to be selected, got %d", len(selected))
 	}
-	if len(normalized) != 2 {
-		t.Fatalf("expected two normalized boxes, got %d", len(normalized))
+	if len(normalized) != 3 {
+		t.Fatalf("expected three task boxes, got %d", len(normalized))
+	}
+	if len(placements) != 3 {
+		t.Fatalf("expected three placements, got %d", len(placements))
 	}
 	if normalized[1].SignerUser != "901:นาย A" {
 		t.Fatalf("expected signer user to normalize to configured label, got %q", normalized[1].SignerUser)
 	}
 }
 
+func TestValidateSigningDocumentLayoutAllowsMultiplePlacementsWithoutDuplicateTasks(t *testing.T) {
+	configs := []models.DocumentConfigStep{
+		{PositionCode: "1", PositionName: "ผู้จัดทำ", User01: "001:น.ส X", ConditionType: 1, SequenceNo: 1},
+		{PositionCode: "2", PositionName: "ผู้อนุมัติ", User01: "901:นาย A", User02: "902:นาย B", ConditionType: 2, SequenceNo: 2},
+	}
+	boxes := []models.SignatureTemplateBoxRequest{
+		{PositionCode: "1", SignerType: "any", PageNo: 1, XRatio: 0.1, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+		{PositionCode: "1", SignerType: "any", PageNo: 2, XRatio: 0.1, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+		{PositionCode: "2", SignerType: "internal", SignerUser: "901", PageNo: 1, XRatio: 0.45, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+		{PositionCode: "2", SignerType: "internal", SignerUser: "901", PageNo: 2, XRatio: 0.45, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+		{PositionCode: "2", SignerType: "internal", SignerUser: "902", PageNo: 1, XRatio: 0.7, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+		{PositionCode: "2", SignerType: "internal", SignerUser: "902", PageNo: 2, XRatio: 0.7, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
+	}
+
+	taskBoxes, selected, placements, issues := validateSigningDocumentLayout(boxes, configs, 2)
+	if len(issues) != 0 {
+		t.Fatalf("expected multi-placement layout to be valid, got %#v", issues)
+	}
+	if len(selected) != 2 {
+		t.Fatalf("expected two selected workflow steps, got %d", len(selected))
+	}
+	if len(taskBoxes) != 3 {
+		t.Fatalf("expected one any task and two all-user tasks, got %d", len(taskBoxes))
+	}
+	if len(placements) != 6 {
+		t.Fatalf("expected all six stamp placements, got %d", len(placements))
+	}
+}
+
 func TestValidateSigningDocumentLayoutRejectsZeroBoxes(t *testing.T) {
-	_, _, issues := validateSigningDocumentLayout(nil, []models.DocumentConfigStep{
+	_, _, _, issues := validateSigningDocumentLayout(nil, []models.DocumentConfigStep{
 		{PositionCode: "1", PositionName: "ผู้จัดทำ", User01: "001:น.ส X", ConditionType: 1},
 	}, 1)
 	if !hasSignatureIssue(issues, "layout_box_required") {
@@ -379,6 +537,19 @@ func TestValidateLegalNoticeBoxRequiredAndBounds(t *testing.T) {
 	}
 }
 
+func TestValidateLegalNoticeBoxesAllowsMultiplePages(t *testing.T) {
+	boxes, issues := normalizeAndValidateLegalNoticeBoxes([]models.LegalNoticeBoxRequest{
+		{PageNo: 1, XRatio: 0.2, YRatio: 0.62, WidthRatio: 0.6, HeightRatio: 0.08},
+		{PageNo: 2, XRatio: 0.2, YRatio: 0.62, WidthRatio: 0.6, HeightRatio: 0.08},
+	}, nil, 2, true)
+	if len(issues) != 0 {
+		t.Fatalf("expected multiple legal notice boxes to be valid, got %#v", issues)
+	}
+	if len(boxes) != 2 {
+		t.Fatalf("expected two legal notice boxes, got %d", len(boxes))
+	}
+}
+
 func TestCurrentPDFNeedsLegalNoticeRefresh(t *testing.T) {
 	doc := models.SigningDocument{
 		OriginalFileID:      "file-original",
@@ -415,7 +586,7 @@ func TestCurrentPDFNeedsLegalNoticeRefresh(t *testing.T) {
 	}
 }
 
-func TestValidateSigningDocumentLayoutRejectsDuplicateConditionTwoUser(t *testing.T) {
+func TestValidateSigningDocumentLayoutRejectsMissingConditionTwoUser(t *testing.T) {
 	configs := []models.DocumentConfigStep{
 		{PositionCode: "3", PositionName: "ผู้อนุมัติ", User01: "901:นาย A", User02: "902:นาย B", ConditionType: 2},
 	}
@@ -424,8 +595,8 @@ func TestValidateSigningDocumentLayoutRejectsDuplicateConditionTwoUser(t *testin
 		{PositionCode: "3", SignerType: "internal", SignerUser: "901:นาย A", PageNo: 1, XRatio: 0.4, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08},
 	}
 
-	_, _, issues := validateSigningDocumentLayout(boxes, configs, 1)
-	if !hasSignatureIssue(issues, "condition_all_duplicate_user_box") {
-		t.Fatalf("expected duplicate user issue, got %#v", issues)
+	_, _, _, issues := validateSigningDocumentLayout(boxes, configs, 1)
+	if !hasSignatureIssue(issues, "condition_all_missing_user_box") {
+		t.Fatalf("expected missing user issue, got %#v", issues)
 	}
 }

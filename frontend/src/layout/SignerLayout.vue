@@ -6,8 +6,18 @@ import { useRoute, useRouter } from 'vue-router';
 const router = useRouter();
 const route = useRoute();
 
-const pageLabel = computed(() => (String(route.name || '').includes('history') ? 'ประวัติการเซ็น' : 'งานรอเซ็น'));
+const pageLabel = computed(() => {
+    const routeName = String(route.name || '');
+    if (routeName.includes('guide')) return 'คู่มือการใช้งาน';
+    if (routeName.includes('history')) return 'ประวัติการเซ็น';
+    return 'งานรอเซ็น';
+});
 const compactMode = computed(() => Boolean(route.meta.compactSignerLayout));
+const isGuideRoute = computed(() => String(route.name || '').includes('guide'));
+
+function openGuide() {
+    router.push({ name: 'my-signing-guide' });
+}
 
 async function logout() {
     await authStore.logout();
@@ -27,6 +37,15 @@ async function logout() {
             </button>
             <div class="signer-user">
                 <span>{{ authStore.user?.displayName || authStore.user?.username }}</span>
+                <Button
+                    icon="pi pi-info-circle"
+                    text
+                    rounded
+                    :class="{ 'guide-action-active': isGuideRoute }"
+                    aria-label="เปิดคู่มือการใช้งาน"
+                    title="คู่มือการใช้งาน"
+                    @click="openGuide"
+                />
                 <Button icon="pi pi-sign-out" text rounded aria-label="ออกจากระบบ" @click="logout" />
             </div>
         </header>
@@ -90,6 +109,13 @@ async function logout() {
     font-weight: 600;
 }
 
+.signer-nav-link span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .signer-nav-link:focus-visible,
 .brand:focus-visible {
     outline: 2px solid color-mix(in srgb, var(--primary-color) 45%, transparent);
@@ -145,10 +171,15 @@ async function logout() {
 }
 
 .signer-user span {
-    max-width: 42vw;
+    max-width: 36vw;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.guide-action-active {
+    color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 12%, transparent);
 }
 
 .signer-main {
@@ -174,6 +205,7 @@ async function logout() {
 
     .signer-nav-link {
         font-size: 0.92rem;
+        gap: 0.25rem;
     }
 
     .compact-signer-layout .brand-icon {

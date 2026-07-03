@@ -79,11 +79,11 @@ function previewPDF(node, version) {
 
 function previewBestPDF(node) {
     emit('node-click', node);
-    if (node.canViewSignedPdf || node.hasFinalPdf || node.signedPdfUrl) {
-        emit('preview-pdf', { node, version: 'final', url: node.signedPdfUrl });
+    if (node.canViewCurrentPdf || node.hasCurrentPdf || node.currentPdfUrl) {
+        emit('preview-pdf', { node, version: 'current', url: node.currentPdfUrl });
         return;
     }
-    emit('preview-pdf', { node, version: 'current', url: node.currentPdfUrl });
+    emit('preview-pdf', { node, version: 'final', url: node.signedPdfUrl });
 }
 </script>
 
@@ -150,8 +150,8 @@ function previewBestPDF(node) {
                         />
                         <Button
                             v-if="admin"
-                            label="ดู PDF ที่เซ็นครบแล้ว"
-                            icon="pi pi-check-circle"
+                            label="ดูหลักฐานการลงนาม"
+                            icon="pi pi-shield"
                             size="small"
                             :disabled="!item.canViewSignedPdf"
                             :severity="item.canViewSignedPdf ? 'success' : 'secondary'"
@@ -159,7 +159,7 @@ function previewBestPDF(node) {
                             @click="previewPDF(item, 'final')"
                         />
                     </div>
-                    <small v-if="admin && !item.canViewSignedPdf" class="text-muted-color block mt-2">ยังไม่มี PDF ที่เซ็นครบ</small>
+                    <small v-if="admin && !item.canViewSignedPdf" class="text-muted-color block mt-2">ยังไม่มีหลักฐานการลงนาม</small>
                 </div>
             </template>
         </Timeline>
@@ -189,7 +189,7 @@ function previewBestPDF(node) {
                 <template #body="{ data }">
                     <div class="flex gap-2 flex-wrap">
                         <Tag :value="data.hasCurrentPdf ? 'มี PDF ล่าสุด' : 'ไม่มี PDF'" :severity="data.hasCurrentPdf ? 'info' : 'secondary'" />
-                        <Tag :value="data.hasFinalPdf ? 'มี PDF เซ็นครบ' : 'ยังไม่เซ็นครบ'" :severity="data.hasFinalPdf ? 'success' : 'secondary'" />
+                        <Tag :value="data.hasFinalPdf ? 'มีหลักฐานการลงนาม' : 'ยังไม่มีหลักฐาน'" :severity="data.hasFinalPdf ? 'success' : 'secondary'" />
                     </div>
                 </template>
             </Column>
@@ -198,7 +198,7 @@ function previewBestPDF(node) {
                     <div class="flex gap-2 flex-wrap">
                         <Button icon="pi pi-info-circle" rounded outlined severity="secondary" aria-label="ดูข้อมูล SML" @click="openInfo(data)" />
                         <Button v-if="admin && data.canOpenPaperless" icon="pi pi-external-link" rounded outlined severity="secondary" aria-label="เปิด PaperLess" @click="openPaperless(data)" />
-                        <Button v-if="admin && data.canViewSignedPdf" icon="pi pi-check-circle" rounded outlined severity="success" aria-label="ดู PDF ที่เซ็นครบแล้ว" @click="previewPDF(data, 'final')" />
+                        <Button v-if="admin && data.canViewSignedPdf" icon="pi pi-shield" rounded outlined severity="success" aria-label="ดูหลักฐานการลงนาม" @click="previewPDF(data, 'final')" />
                     </div>
                 </template>
             </Column>

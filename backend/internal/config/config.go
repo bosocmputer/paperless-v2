@@ -22,6 +22,9 @@ type Config struct {
 	SMLPaperlessAPIKey  string
 	SMLPaperlessTenant  string
 	SMLPaperlessTimeout time.Duration
+	SMLAuthProvider     string
+	SMLAuthDataGroup    string
+	LocalAuthFallback   bool
 	FileStorageDir      string
 	MaxUploadMB         int64
 	MaxAttachmentMB     int64
@@ -33,7 +36,7 @@ type Config struct {
 
 func Load() (Config, error) {
 	cfg := Config{
-		AppName:     getenv("APP_NAME", "PaperLess V2"),
+		AppName:     getenv("APP_NAME", "PaperLess"),
 		Env:         getenv("APP_ENV", "development"),
 		Port:        getenv("APP_PORT", "8080"),
 		DatabaseURL: os.Getenv("DATABASE_URL"),
@@ -45,6 +48,9 @@ func Load() (Config, error) {
 		),
 		SMLPaperlessAPIKey: getenv("SML_PAPERLESS_API_KEY", ""),
 		SMLPaperlessTenant: strings.ToLower(getenv("SML_PAPERLESS_TENANT", "sml1_2026")),
+		SMLAuthProvider:    strings.ToLower(getenv("SML_AUTH_PROVIDER", "smlgoh")),
+		SMLAuthDataGroup:   strings.ToLower(getenv("SML_AUTH_DATAGROUP", "sml")),
+		LocalAuthFallback:  parseBool(getenv("PAPERLESS_LOCAL_AUTH_FALLBACK_ENABLED", "false")),
 		FileStorageDir:     getenv("FILE_STORAGE_DIR", "/app/uploads"),
 		PublicBaseURL:      strings.TrimRight(getenv("PUBLIC_BASE_URL", ""), "/"),
 		TelegramBotToken:   getenv("TELEGRAM_BOT_TOKEN", ""),
@@ -115,4 +121,13 @@ func splitCSV(value string) []string {
 		}
 	}
 	return out
+}
+
+func parseBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }

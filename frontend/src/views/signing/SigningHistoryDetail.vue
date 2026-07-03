@@ -15,7 +15,7 @@ const task = ref(null);
 const legal = ref(null);
 const loading = ref(false);
 
-const pdfUrl = computed(() => (task.value?.id ? api.mySigningHistoryPDFUrl(task.value.id) : ''));
+const pdfUrl = computed(() => api.mySigningHistoryPDFUrlForTask(task.value, document.value, 'current'));
 const identityLabel = computed(() => authStore.user?.displayName || authStore.user?.username || task.value?.signerName || task.value?.signerUser || '');
 const readOnlyReason = computed(() => {
     if (task.value?.status === 'rejected') return 'คุณปฏิเสธเอกสารนี้แล้ว หน้านี้เปิดดูย้อนหลังได้อย่างเดียว';
@@ -42,9 +42,6 @@ function recordEvent(payload) {
     api.recordMySigningTaskEvent(route.params.taskId, payload).catch(() => {});
 }
 
-function loadRelatedDocuments() {
-    return api.getMySigningTaskRelatedDocuments(route.params.taskId);
-}
 </script>
 
 <template>
@@ -59,8 +56,8 @@ function loadRelatedDocuments() {
         :on-back="() => router.push({ name: 'my-signing-history' })"
         :on-reload="loadHistory"
         :on-record-event="recordEvent"
-        :related-loader="loadRelatedDocuments"
         read-only
+        history-focus
         open-event-name="history_detail_open"
         pdf-open-event-name="history_pdf_open"
         :read-only-reason="readOnlyReason"

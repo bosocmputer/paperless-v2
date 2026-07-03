@@ -8,7 +8,7 @@ import (
 )
 
 func TestBuildSigningDocumentDuplicateCheckResultBlocksUnfinishedStatuses(t *testing.T) {
-	for _, status := range []string{"draft", "in_progress", "pending_confirm", "completed_evidence_failed", "completed_lock_failed"} {
+	for _, status := range []string{"draft", "in_progress", "pending_confirm", "completed_evidence_failed", "completed_image_failed", "completed_lock_failed"} {
 		t.Run(status, func(t *testing.T) {
 			result := buildSigningDocumentDuplicateCheckResult([]models.SigningDocumentReference{{
 				ID:            "doc-1",

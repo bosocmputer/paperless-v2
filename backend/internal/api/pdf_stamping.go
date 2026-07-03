@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,8 +17,10 @@ import (
 	"github.com/phpdave11/gofpdf/contrib/gofpdi"
 )
 
-//go:embed fonts/NotoSansThai-Regular.ttf
-var notoSansThaiRegular []byte
+//go:embed fonts/Sarabun-Regular.ttf
+var sarabunRegular []byte
+
+const evidenceFontFamily = "paperless-evidence"
 
 type finalEvidencePage struct {
 	Document            models.SigningDocument
@@ -50,7 +53,9 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		return fmt.Errorf("original pdf is missing")
 	}
 	signers := signedDocumentSigners(document.Signers)
-	if len(signers) == 0 && document.LegalNoticeSnapshot == nil {
+	legalNotices := documentLegalNotices(document)
+	signaturePlacements := documentSignaturePlacements(document)
+	if len(signers) == 0 && len(legalNotices) == 0 {
 		return nil
 	}
 	signatureFiles := map[string]models.UploadedFile{}
@@ -65,7 +70,7 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		signatureFiles[signer.SignatureFileID] = file
 	}
 
-	stamped, err := stampPDFWithSignaturesAndLegalNotice(document.OriginalFile.StoragePath, document.OriginalFile.PageCount, signers, signatureFiles, document.LegalNoticeSnapshot)
+	stamped, err := stampPDFWithSignaturePlacementsAndLegalNotices(document.OriginalFile.StoragePath, document.OriginalFile.PageCount, signers, signatureFiles, signaturePlacements, legalNotices, nil)
 	if err != nil {
 		return err
 	}
@@ -77,9 +82,9 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		signedContent := stamped
 		legalText := signingLegalText
 		legalTextVersion := signingLegalTextVersion
-		if document.LegalNoticeSnapshot != nil {
-			legalText = firstNonEmpty(document.LegalNoticeSnapshot.Text, signingLegalText)
-			legalTextVersion = firstNonEmpty(document.LegalNoticeSnapshot.TextVersion, signingLegalTextVersion)
+		if len(legalNotices) > 0 {
+			legalText = firstNonEmpty(legalNotices[0].Text, signingLegalText)
+			legalTextVersion = firstNonEmpty(legalNotices[0].TextVersion, signingLegalTextVersion)
 		}
 		evidence := finalEvidencePage{
 			Document:            document,
@@ -89,7 +94,7 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 			LegalText:           legalText,
 			LegalTextVersion:    legalTextVersion,
 		}
-		stamped, err = stampPDFWithSignaturesAndEvidence(document.OriginalFile.StoragePath, document.OriginalFile.PageCount, signers, signatureFiles, document.LegalNoticeSnapshot, evidence)
+		stamped, err = stampPDFWithSignaturePlacementsAndLegalNotices(document.OriginalFile.StoragePath, document.OriginalFile.PageCount, signers, signatureFiles, signaturePlacements, legalNotices, &evidence)
 		if err != nil {
 			return err
 		}
@@ -111,12 +116,13 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		return err
 	}
 	return s.store.AddSigningEvent(ctx, document.ID, "", "", action, message, "", "", map[string]any{
-		"fileId":                    uploaded.ID,
-		"fileSha256":                uploaded.SHA256,
-		"signatureCount":            len(signers),
-		"final":                     final,
-		"legalNoticeStamped":        document.LegalNoticeSnapshot != nil,
-		"legalNoticeDisplayVersion": legalNoticeDisplayVersion(document.LegalNoticeSnapshot),
+		"fileId":                       uploaded.ID,
+		"fileSha256":                   uploaded.SHA256,
+		"signatureCount":               len(signers),
+		"signatureTransparencyVersion": signatureTransparencyVersion,
+		"final":                        final,
+		"legalNoticeStamped":           len(legalNotices) > 0,
+		"legalNoticeDisplayVersion":    legalNoticesDisplayVersion(legalNotices),
 	})
 }
 
@@ -125,6 +131,113 @@ func legalNoticeDisplayVersion(notice *models.LegalNoticeSnapshot) string {
 		return ""
 	}
 	return signingLegalNoticePDFDisplayVersion
+}
+
+func legalNoticesDisplayVersion(notices []models.LegalNoticeSnapshot) string {
+	if len(notices) == 0 {
+		return ""
+	}
+	return signingLegalNoticePDFDisplayVersion
+}
+
+func documentLegalNotices(document models.SigningDocument) []models.LegalNoticeSnapshot {
+	if len(document.LegalNoticeBoxes) > 0 {
+		return document.LegalNoticeBoxes
+	}
+	if document.LegalNoticeSnapshot != nil {
+		return []models.LegalNoticeSnapshot{*document.LegalNoticeSnapshot}
+	}
+	return nil
+}
+
+func documentSignaturePlacements(document models.SigningDocument) []models.SignaturePlacementSnapshot {
+	if len(document.SignaturePlacements) > 0 {
+		return document.SignaturePlacements
+	}
+	placements := make([]models.SignaturePlacementSnapshot, 0, len(document.Signers))
+	for _, signer := range document.Signers {
+		placements = append(placements, models.SignaturePlacementSnapshot{
+			PositionCode:  signer.PositionCode,
+			PositionName:  signer.PositionName,
+			SequenceNo:    signer.SequenceNo,
+			ConditionType: signer.ConditionType,
+			SignerSlot:    signer.SignerSlot,
+			SignerType:    signer.SignerType,
+			SignerUser:    signer.SignerUser,
+			SignerName:    signer.SignerName,
+			PageNo:        signer.PageNo,
+			XRatio:        signer.XRatio,
+			YRatio:        signer.YRatio,
+			WidthRatio:    signer.WidthRatio,
+			HeightRatio:   signer.HeightRatio,
+			Label:         signer.Label,
+		})
+	}
+	return placements
+}
+
+func signingPlacementsForSigners(signers []models.SigningDocumentSigner, placements []models.SignaturePlacementSnapshot) []models.SigningDocumentSigner {
+	if len(signers) == 0 {
+		return nil
+	}
+	if len(placements) == 0 {
+		return signers
+	}
+	out := []models.SigningDocumentSigner{}
+	seen := map[string]bool{}
+	for _, signer := range signers {
+		matched := false
+		for _, placement := range placements {
+			if !signaturePlacementMatchesSigner(placement, signer) {
+				continue
+			}
+			stamp := signer
+			stamp.SignerSlot = placement.SignerSlot
+			stamp.PageNo = placement.PageNo
+			stamp.XRatio = placement.XRatio
+			stamp.YRatio = placement.YRatio
+			stamp.WidthRatio = placement.WidthRatio
+			stamp.HeightRatio = placement.HeightRatio
+			stamp.Label = placement.Label
+			key := signatureStampKey(stamp)
+			if seen[key] {
+				matched = true
+				continue
+			}
+			seen[key] = true
+			out = append(out, stamp)
+			matched = true
+		}
+		if !matched {
+			key := signatureStampKey(signer)
+			if !seen[key] {
+				seen[key] = true
+				out = append(out, signer)
+			}
+		}
+	}
+	return out
+}
+
+func signatureStampKey(signer models.SigningDocumentSigner) string {
+	return fmt.Sprintf("%s:%d:%.6f:%.6f:%.6f:%.6f", signer.SignatureFileID, signer.PageNo, signer.XRatio, signer.YRatio, signer.WidthRatio, signer.HeightRatio)
+}
+
+func signaturePlacementMatchesSigner(placement models.SignaturePlacementSnapshot, signer models.SigningDocumentSigner) bool {
+	if !strings.EqualFold(strings.TrimSpace(placement.PositionCode), strings.TrimSpace(signer.PositionCode)) {
+		return false
+	}
+	switch signer.ConditionType {
+	case 1:
+		return strings.EqualFold(strings.TrimSpace(placement.SignerType), "any") || placement.SignerSlot == signer.SignerSlot
+	case 2:
+		return strings.EqualFold(strings.TrimSpace(placement.SignerType), "internal") &&
+			strings.EqualFold(strings.TrimSpace(placement.SignerUser), strings.TrimSpace(signer.SignerUser))
+	case 3:
+		return strings.EqualFold(strings.TrimSpace(placement.SignerType), "external")
+	default:
+		return placement.SignerSlot == signer.SignerSlot
+	}
 }
 
 func stampPDFWithSignatures(sourcePath string, pageCount int, signers []models.SigningDocumentSigner, signatureFiles map[string]models.UploadedFile) ([]byte, error) {
@@ -140,31 +253,50 @@ func stampPDFWithSignaturesAndEvidence(sourcePath string, pageCount int, signers
 }
 
 func renderSignedPDF(sourcePath string, pageCount int, signers []models.SigningDocumentSigner, signatureFiles map[string]models.UploadedFile, legalNotice *models.LegalNoticeSnapshot, evidence *finalEvidencePage) ([]byte, error) {
+	legalNotices := []models.LegalNoticeSnapshot{}
+	if legalNotice != nil {
+		legalNotices = append(legalNotices, *legalNotice)
+	}
+	return stampPDFWithSignaturePlacementsAndLegalNotices(sourcePath, pageCount, signers, signatureFiles, nil, legalNotices, evidence)
+}
+
+func stampPDFWithSignaturePlacementsAndLegalNotices(sourcePath string, pageCount int, signers []models.SigningDocumentSigner, signatureFiles map[string]models.UploadedFile, placements []models.SignaturePlacementSnapshot, legalNotices []models.LegalNoticeSnapshot, evidence *finalEvidencePage) ([]byte, error) {
 	if pageCount <= 0 {
 		return nil, fmt.Errorf("pdf page count is missing")
 	}
+	normalizedSignatureFiles, cleanup, err := prepareSignatureFilesForPDF(signatureFiles)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
 	pdf := gofpdf.New("P", "pt", "A4", "")
 	pdf.SetMargins(0, 0, 0)
 	pdf.SetAutoPageBreak(false, 0)
 	pdf.SetCompression(true)
-	if legalNotice != nil || evidence != nil {
+	if len(legalNotices) > 0 || evidence != nil {
 		if err := setupEvidenceFont(pdf); err != nil {
 			return nil, err
 		}
 	}
 
 	importer := gofpdi.NewImporter()
+	stampSigners := signingPlacementsForSigners(signers, placements)
 	signersByPage := map[int][]models.SigningDocumentSigner{}
-	for _, signer := range signers {
+	for _, signer := range stampSigners {
 		signersByPage[signer.PageNo] = append(signersByPage[signer.PageNo], signer)
+	}
+	legalNoticesByPage := map[int][]models.LegalNoticeSnapshot{}
+	for _, notice := range legalNotices {
+		legalNoticesByPage[notice.PageNo] = append(legalNoticesByPage[notice.PageNo], notice)
 	}
 
 	if err := importPDFPages(pdf, importer, sourcePath, pageCount, func(pageNo int, size gofpdf.SizeType) {
-		if legalNotice != nil && legalNotice.PageNo == pageNo {
-			drawLegalNoticeBox(pdf, *legalNotice, size)
+		for _, notice := range legalNoticesByPage[pageNo] {
+			drawLegalNoticeBox(pdf, notice, size)
 		}
 		for _, signer := range signersByPage[pageNo] {
-			file := signatureFiles[signer.SignatureFileID]
+			file := normalizedSignatureFiles[signer.SignatureFileID]
 			if file.StoragePath == "" {
 				continue
 			}
@@ -186,6 +318,56 @@ func renderSignedPDF(sourcePath string, pageCount int, signers []models.SigningD
 		}
 	}
 	return outputPDF(pdf)
+}
+
+func prepareSignatureFilesForPDF(files map[string]models.UploadedFile) (map[string]models.UploadedFile, func(), error) {
+	if len(files) == 0 {
+		return map[string]models.UploadedFile{}, func() {}, nil
+	}
+	normalized := make(map[string]models.UploadedFile, len(files))
+	tempPaths := []string{}
+	cleanup := func() {
+		for _, path := range tempPaths {
+			_ = os.Remove(path)
+		}
+	}
+	for id, file := range files {
+		if strings.TrimSpace(file.StoragePath) == "" {
+			continue
+		}
+		data, err := os.ReadFile(file.StoragePath)
+		if err != nil {
+			cleanup()
+			return nil, func() {}, fmt.Errorf("read signature image: %w", err)
+		}
+		normalizedData, err := normalizeSignatureImage(data)
+		if err != nil {
+			cleanup()
+			return nil, func() {}, err
+		}
+		tempFile, err := os.CreateTemp("", "paperless-signature-*.png")
+		if err != nil {
+			cleanup()
+			return nil, func() {}, err
+		}
+		tempPath := tempFile.Name()
+		if _, err := tempFile.Write(normalizedData); err != nil {
+			_ = tempFile.Close()
+			_ = os.Remove(tempPath)
+			cleanup()
+			return nil, func() {}, err
+		}
+		if err := tempFile.Close(); err != nil {
+			_ = os.Remove(tempPath)
+			cleanup()
+			return nil, func() {}, err
+		}
+		tempPaths = append(tempPaths, tempPath)
+		file.StoragePath = tempPath
+		file.ContentType = "image/png"
+		normalized[id] = file
+	}
+	return normalized, cleanup, nil
 }
 
 func createPrintCopyPDF(sourcePath string, pageCount int, evidence printEvidencePage) ([]byte, error) {
@@ -247,7 +429,7 @@ func drawLegalNoticeBox(pdf *gofpdf.Fpdf, notice models.LegalNoticeSnapshot, siz
 	pdf.SetLineWidth(0.8)
 	pdf.Rect(x, y, w, h, "FD")
 	pdf.SetTextColor(17, 24, 39)
-	pdf.SetFont("noto-thai", "", fontSize)
+	pdf.SetFont(evidenceFontFamily, "", fontSize)
 	for _, line := range lines {
 		pdf.SetXY(x+padding, textY)
 		pdf.CellFormat(textWidth, lineHeight, line, "", 0, "C", false, 0, "")
@@ -271,7 +453,7 @@ func legalNoticeDisplayText(text string) string {
 func fitLegalNoticeText(pdf *gofpdf.Fpdf, text string, width, height float64) (float64, float64, []string) {
 	for fontSize := 11.0; fontSize >= 7.0; fontSize -= 0.5 {
 		lineHeight := fontSize * 1.45
-		pdf.SetFont("noto-thai", "", fontSize)
+		pdf.SetFont(evidenceFontFamily, "", fontSize)
 		lines := wrapLegalNoticeText(pdf, text, width)
 		if float64(len(lines))*lineHeight <= height {
 			return fontSize, lineHeight, lines
@@ -279,7 +461,7 @@ func fitLegalNoticeText(pdf *gofpdf.Fpdf, text string, width, height float64) (f
 	}
 	fontSize := 7.0
 	lineHeight := fontSize * 1.35
-	pdf.SetFont("noto-thai", "", fontSize)
+	pdf.SetFont(evidenceFontFamily, "", fontSize)
 	return fontSize, lineHeight, wrapLegalNoticeText(pdf, text, width)
 }
 
@@ -352,21 +534,20 @@ func addFinalEvidencePage(pdf *gofpdf.Fpdf, evidence finalEvidencePage) error {
 	pdf.AddPageFormat("P", gofpdf.SizeType{Wd: 595.28, Ht: 841.89})
 	drawEvidenceHeader(pdf, "หลักฐานการลงนามอิเล็กทรอนิกส์")
 	y := 92.0
-	y = drawParagraph(pdf, 48, y, 499, firstNonEmpty(evidence.LegalText, signingLegalText))
+	y = drawParagraph(pdf, 48, y, 499, legalNoticeDisplayText(firstNonEmpty(evidence.LegalText, signingLegalText)))
 	y += 12
 	rows := []evidenceRow{
 		{"เลขที่เอกสาร", evidence.Document.DocNo},
 		{"รูปแบบเอกสาร", evidence.Document.DocFormatCode},
-		{"PaperLess document id", evidence.Document.ID},
-		{"วันที่เอกสารเซ็นครบ", formatEvidenceTime(evidence.Document.CompletedAt)},
+		{"รหัสเอกสาร PaperLess", evidence.Document.ID},
+		{"วันที่เซ็นครบ", formatEvidenceTime(evidence.Document.CompletedAt)},
 		{"สร้างหลักฐานเมื่อ", formatEvidenceTime(&evidence.GeneratedAt)},
-		{"Legal text version", firstNonEmpty(evidence.LegalTextVersion, signingLegalTextVersion)},
-		{"Signed content SHA-256", evidence.SignedContentSHA256},
-		{"Final PDF SHA-256", "บันทึกในระบบหลังสร้างไฟล์ final สำเร็จ"},
+		{"รุ่นข้อความกฎหมาย", firstNonEmpty(evidence.LegalTextVersion, signingLegalTextVersion)},
+		{"SHA-256 เนื้อหาเอกสารที่เซ็น", evidence.SignedContentSHA256},
 	}
 	y = drawEvidenceRows(pdf, 48, y, rows)
 	y += 14
-	pdf.SetFont("noto-thai", "", 12)
+	pdf.SetFont(evidenceFontFamily, "", 12)
 	pdf.SetTextColor(31, 41, 55)
 	pdf.Text(48, y, "ผู้ลงนาม")
 	y += 12
@@ -380,10 +561,10 @@ func addFinalEvidencePage(pdf *gofpdf.Fpdf, evidence finalEvidencePage) error {
 			{"ตำแหน่ง", signer.PositionCode + " - " + signer.PositionName},
 			{"ผู้ลงนาม", signer.SignerName},
 			{"เวลาลงนาม", formatEvidenceTime(signer.SignedAt)},
-			{"IP", signer.IPAddress},
-			{"User agent", truncateEvidence(signer.UserAgent, 110)},
-			{"Device id hash", shortHash(signer.DeviceID)},
-			{"Legal accepted", "true"},
+			{"ไอพี", signer.IPAddress},
+			{"ข้อมูลเบราว์เซอร์", truncateEvidence(signer.UserAgent, 110)},
+			{"รหัสอุปกรณ์ (hash)", shortHash(signer.DeviceID)},
+			{"ยืนยันข้อความกฎหมาย", "ใช่"},
 		}
 		y = drawEvidenceRows(pdf, 48, y, rows)
 		y += 10
@@ -400,27 +581,27 @@ func addPrintEvidencePage(pdf *gofpdf.Fpdf, evidence printEvidencePage) error {
 	rows := []evidenceRow{
 		{"เลขที่เอกสาร", evidence.Document.DocNo},
 		{"รูปแบบเอกสาร", evidence.Document.DocFormatCode},
-		{"PaperLess document id", evidence.Document.ID},
-		{"เวลาพิมพ์", formatEvidenceTime(&evidence.PrintedAt)},
-		{"ผู้พิมพ์", evidence.PrintedBy},
+		{"รหัสเอกสาร PaperLess", evidence.Document.ID},
+		{"วันที่พิมพ์", formatEvidenceTime(&evidence.PrintedAt)},
+		{"ผู้สร้างไฟล์พิมพ์", evidence.PrintedBy},
 		{"ช่องทาง", evidence.Channel},
 		{"เครื่องพิมพ์", evidence.PrinterName},
-		{"Client timezone", evidence.ClientTimezone},
-		{"IP", evidence.IPAddress},
-		{"User agent", truncateEvidence(evidence.UserAgent, 110)},
-		{"Device id hash", evidence.DeviceIDHash},
-		{"Final PDF SHA-256", evidence.FinalFileSHA256},
+		{"เขตเวลาเครื่องผู้ใช้", evidence.ClientTimezone},
+		{"ไอพี", evidence.IPAddress},
+		{"ข้อมูลเบราว์เซอร์", truncateEvidence(evidence.UserAgent, 110)},
+		{"รหัสอุปกรณ์ (hash)", evidence.DeviceIDHash},
+		{"SHA-256 ไฟล์ final", evidence.FinalFileSHA256},
 	}
 	drawEvidenceRows(pdf, 48, 92, rows)
 	return nil
 }
 
 func setupEvidenceFont(pdf *gofpdf.Fpdf) error {
-	if len(notoSansThaiRegular) == 0 {
-		return fmt.Errorf("thai pdf font is missing")
+	if len(sarabunRegular) == 0 {
+		return fmt.Errorf("thai/latin pdf font is missing")
 	}
-	pdf.AddUTF8FontFromBytes("noto-thai", "", notoSansThaiRegular)
-	pdf.SetFont("noto-thai", "", 11)
+	pdf.AddUTF8FontFromBytes(evidenceFontFamily, "", sarabunRegular)
+	pdf.SetFont(evidenceFontFamily, "", 11)
 	return nil
 }
 
@@ -428,16 +609,16 @@ func drawEvidenceHeader(pdf *gofpdf.Fpdf, title string) {
 	pdf.SetFillColor(243, 244, 246)
 	pdf.Rect(0, 0, 595.28, 62, "F")
 	pdf.SetTextColor(17, 24, 39)
-	pdf.SetFont("noto-thai", "", 16)
+	pdf.SetFont(evidenceFontFamily, "", 16)
 	pdf.Text(48, 38, title)
-	pdf.SetFont("noto-thai", "", 9)
+	pdf.SetFont(evidenceFontFamily, "", 9)
 	pdf.SetTextColor(107, 114, 128)
-	pdf.Text(48, 54, "PaperLess evidence record")
+	pdf.Text(48, 54, "บันทึกหลักฐานโดยระบบ PaperLess")
 }
 
 func drawParagraph(pdf *gofpdf.Fpdf, x, y, width float64, text string) float64 {
 	pdf.SetXY(x, y)
-	pdf.SetFont("noto-thai", "", 11)
+	pdf.SetFont(evidenceFontFamily, "", 11)
 	pdf.SetTextColor(31, 41, 55)
 	pdf.MultiCell(width, 17, text, "1", "L", false)
 	_, nextY := pdf.GetXY()
@@ -464,10 +645,10 @@ func drawEvidenceRows(pdf *gofpdf.Fpdf, x, y float64, rows []evidenceRow) float6
 			value = "-"
 		}
 		pdf.SetXY(x, y)
-		pdf.SetFont("noto-thai", "", 9)
+		pdf.SetFont(evidenceFontFamily, "", 9)
 		pdf.SetTextColor(75, 85, 99)
 		pdf.CellFormat(keyWidth, lineHeight, row.key, "1", 0, "L", false, 0, "")
-		pdf.SetFont("noto-thai", "", 9)
+		pdf.SetFont(evidenceFontFamily, "", 9)
 		pdf.SetTextColor(17, 24, 39)
 		pdf.MultiCell(valueWidth, lineHeight, value, "1", "L", false)
 		_, y = pdf.GetXY()
@@ -515,7 +696,20 @@ func formatEvidenceTime(value *time.Time) string {
 	if value == nil || value.IsZero() {
 		return "-"
 	}
-	return value.Format(time.RFC3339)
+	loc, err := time.LoadLocation("Asia/Bangkok")
+	if err != nil {
+		loc = time.FixedZone("ICT", 7*60*60)
+	}
+	bangkok := value.In(loc)
+	return fmt.Sprintf(
+		"%02d/%02d/%04d %02d:%02d:%02d น. (Asia/Bangkok)",
+		bangkok.Day(),
+		bangkok.Month(),
+		bangkok.Year()+543,
+		bangkok.Hour(),
+		bangkok.Minute(),
+		bangkok.Second(),
+	)
 }
 
 func importedPageSize(importer *gofpdi.Importer, pageNo int) gofpdf.SizeType {

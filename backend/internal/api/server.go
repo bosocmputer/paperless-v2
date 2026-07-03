@@ -72,6 +72,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /api/signing-documents/{id}/confirm", s.requireAdmin(http.HandlerFunc(s.confirmSigningDocument)))
 	mux.Handle("POST /api/signing-documents/{id}/cancel", s.requireAdmin(http.HandlerFunc(s.cancelSigningDocument)))
 	mux.Handle("POST /api/signing-documents/{id}/retry-final-pdf", s.requireAdmin(http.HandlerFunc(s.retrySigningDocumentFinalPDF)))
+	mux.Handle("POST /api/signing-documents/{id}/retry-sml-images", s.requireAdmin(http.HandlerFunc(s.retrySigningDocumentImages)))
 	mux.Handle("POST /api/signing-documents/{id}/retry-sml-lock", s.requireAdmin(http.HandlerFunc(s.retrySigningDocumentLock)))
 	mux.Handle("POST /api/signing-documents/{id}/print-copies", s.requireAdmin(http.HandlerFunc(s.createSigningDocumentPrintCopy)))
 	mux.Handle("GET /api/signing-documents/{id}/print-copies/{printCopyId}/pdf", s.requireAdmin(http.HandlerFunc(s.getSigningDocumentPrintCopyPDF)))

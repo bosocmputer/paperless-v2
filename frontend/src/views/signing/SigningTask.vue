@@ -16,7 +16,7 @@ const legal = ref(null);
 const loading = ref(false);
 const saving = ref(false);
 
-const pdfUrl = computed(() => (document.value?.id ? api.signingDocumentPDFUrl(document.value.id) : ''));
+const pdfUrl = computed(() => api.signingDocumentPDFUrlForDocument(document.value));
 const identityLabel = computed(() => authStore.user?.displayName || authStore.user?.username || task.value?.signerName || task.value?.signerUser || '');
 
 onMounted(loadTask);

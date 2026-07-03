@@ -12,7 +12,7 @@ FROM alpine:3.21
 
 RUN addgroup -S app \
     && adduser -S app -G app \
-    && apk add --no-cache ca-certificates tzdata \
+    && apk add --no-cache ca-certificates poppler-utils tzdata \
     && mkdir -p /app/uploads \
     && chown -R app:app /app
 USER app

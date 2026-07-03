@@ -16,12 +16,16 @@ import (
 )
 
 type CreateSigningDocumentInput struct {
+	SMLDataGroup        string
+	SMLDataCode         string
 	ScreenCode          string
 	Format              models.SMLDocFormat
 	Candidate           models.SMLDocumentCandidate
 	SignatureTemplateID string
 	TemplateSnapshot    any
 	LegalNoticeSnapshot models.LegalNoticeSnapshot
+	LegalNoticeBoxes    []models.LegalNoticeSnapshot
+	SignaturePlacements []models.SignaturePlacementSnapshot
 	LayoutBoxes         []models.SignatureTemplateBoxRequest
 	Configs             []models.DocumentConfigStep
 	File                models.UploadedFile
@@ -74,6 +78,15 @@ type SigningDocumentDuplicateCheckResult struct {
 }
 
 func (s *Store) CreateSigningDocument(ctx context.Context, input CreateSigningDocumentInput) (models.SigningDocument, error) {
+	tenant := NormalizeSMLTenant(tenantFilterValue(ctx))
+	dataGroup := strings.TrimSpace(input.SMLDataGroup)
+	if dataGroup == "" {
+		dataGroup = "sml"
+	}
+	dataCode := strings.TrimSpace(input.SMLDataCode)
+	if dataCode == "" {
+		dataCode = strings.ToUpper(tenant)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return models.SigningDocument{}, err
@@ -92,6 +105,14 @@ func (s *Store) CreateSigningDocument(ctx context.Context, input CreateSigningDo
 	if err != nil {
 		return models.SigningDocument{}, err
 	}
+	legalNoticeBoxesSnapshot, err := json.Marshal(input.LegalNoticeBoxes)
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
+	signaturePlacementSnapshot, err := json.Marshal(input.SignaturePlacements)
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
 
 	if err := consumeSigningDocumentUpload(ctx, tx, input.File.ID, input.ActorID); err != nil {
 		return models.SigningDocument{}, err
@@ -106,16 +127,18 @@ func (s *Store) CreateSigningDocument(ctx context.Context, input CreateSigningDo
 	var documentID string
 	err = tx.QueryRow(ctx, `
 INSERT INTO signing_documents (
+    sml_tenant, sml_data_group, sml_data_code,
     screen_code, doc_format_code, doc_no, sml_table, trans_flag, party_code, party_name, party_type,
     doc_date, total_amount, sml_is_lock_record, status, current_version,
-    original_file_id, current_file_id, signature_template_id, config_snapshot, template_snapshot, legal_notice_snapshot, created_by
+    original_file_id, current_file_id, signature_template_id, config_snapshot, template_snapshot, legal_notice_snapshot,
+    signature_placement_snapshot, legal_notice_boxes_snapshot, created_by
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::date,$10,$11,'draft',1,$12,$13,$14,$15::jsonb,$16::jsonb,$17::jsonb,NULLIF($18,'')::uuid)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,'')::date,$13,$14,'draft',1,$15,$16,$17,$18::jsonb,$19::jsonb,$20::jsonb,$21::jsonb,$22::jsonb,NULLIF($23,'')::uuid)
 RETURNING id::text
-`, input.ScreenCode, input.Format.Code, input.Candidate.DocNo, input.Candidate.Table, input.Candidate.TransFlag,
+`, tenant, dataGroup, dataCode, input.ScreenCode, input.Format.Code, input.Candidate.DocNo, input.Candidate.Table, input.Candidate.TransFlag,
 		input.Candidate.PartyCode, input.Candidate.PartyName, input.Candidate.PartyType, input.Candidate.DocDate,
 		input.Candidate.TotalAmount, input.Candidate.IsLockRecord, input.File.ID, currentFileID, input.SignatureTemplateID,
-		string(configSnapshot), string(templateSnapshot), string(legalNoticeSnapshot), input.ActorID).Scan(&documentID)
+		string(configSnapshot), string(templateSnapshot), string(legalNoticeSnapshot), string(signaturePlacementSnapshot), string(legalNoticeBoxesSnapshot), input.ActorID).Scan(&documentID)
 	if err != nil {
 		if strings.Contains(err.Error(), "signing_documents_active_doc_unique_idx") {
 			return models.SigningDocument{}, ErrSigningDocumentDuplicate
@@ -240,7 +263,7 @@ func (s *Store) ListSigningDocuments(ctx context.Context, query SigningDocumentL
 		query.Size = 100
 	}
 
-	where, args := signingDocumentListWhere(query)
+	where, args := signingDocumentListWhere(ctx, query)
 	countSQL := `SELECT COUNT(*)::int FROM signing_documents d ` + where
 	var total int
 	if err := s.pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
@@ -260,6 +283,9 @@ LIMIT $%d OFFSET $%d
 	if err != nil {
 		return SigningDocumentListResult{}, err
 	}
+	if err := s.attachPendingSignersToDocuments(ctx, documents); err != nil {
+		return SigningDocumentListResult{}, err
+	}
 	return SigningDocumentListResult{
 		Documents: documents,
 		Page:      query.Page,
@@ -269,26 +295,72 @@ LIMIT $%d OFFSET $%d
 	}, nil
 }
 
+func (s *Store) attachPendingSignersToDocuments(ctx context.Context, documents []models.SigningDocument) error {
+	if len(documents) == 0 {
+		return nil
+	}
+	documentIDs := make([]string, 0, len(documents))
+	for _, doc := range documents {
+		if strings.TrimSpace(doc.ID) != "" {
+			documentIDs = append(documentIDs, doc.ID)
+		}
+	}
+	if len(documentIDs) == 0 {
+		return nil
+	}
+	rows, err := s.pool.Query(ctx, signingSignerSelect()+`
+WHERE sg.document_id::text = ANY($1::text[])
+  AND sg.status = 'pending'
+ORDER BY sg.document_id, sg.sequence_no, sg.position_code, sg.signer_slot, sg.signer_user
+`, documentIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byDocument := map[string][]models.SigningDocumentSigner{}
+	for rows.Next() {
+		item, err := scanSigningDocumentSigner(rows)
+		if err != nil {
+			return err
+		}
+		item.SignatureFileID = ""
+		item.RejectReason = ""
+		item.DeviceID = ""
+		item.IPAddress = ""
+		item.UserAgent = ""
+		byDocument[item.DocumentID] = append(byDocument[item.DocumentID], item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range documents {
+		documents[i].PendingSigners = byDocument[documents[i].ID]
+	}
+	return nil
+}
+
 func (s *Store) CheckSigningDocumentDuplicate(ctx context.Context, docFormatCode, docNo string) (SigningDocumentDuplicateCheckResult, error) {
 	docFormatCode = strings.ToUpper(strings.TrimSpace(docFormatCode))
 	docNo = strings.ToUpper(strings.TrimSpace(docNo))
 	if docFormatCode == "" || docNo == "" {
 		return buildSigningDocumentDuplicateCheckResult(nil), nil
 	}
+	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, `
 SELECT id::text, doc_no, doc_format_code, status,
        current_file_id IS NOT NULL AS has_current_pdf,
        final_file_id IS NOT NULL AS has_final_pdf,
        created_at, updated_at
 FROM signing_documents
-WHERE lower(doc_format_code) = lower($1)
-  AND doc_no = $2
+WHERE ($1 = '' OR sml_tenant = $1)
+  AND lower(doc_format_code) = lower($2)
+  AND doc_no = $3
 ORDER BY
-  CASE WHEN status IN ('draft', 'in_progress', 'pending_confirm', 'completed_evidence_failed', 'completed_lock_failed') THEN 0 ELSE 1 END,
+  CASE WHEN status IN ('draft', 'in_progress', 'pending_confirm', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed') THEN 0 ELSE 1 END,
   updated_at DESC,
   created_at DESC
 LIMIT 20
-`, docFormatCode, docNo)
+`, tenant, docFormatCode, docNo)
 	if err != nil {
 		return SigningDocumentDuplicateCheckResult{}, err
 	}
@@ -300,9 +372,13 @@ LIMIT 20
 	return buildSigningDocumentDuplicateCheckResult(refs), nil
 }
 
-func signingDocumentListWhere(query SigningDocumentListQuery) (string, []any) {
+func signingDocumentListWhere(ctx context.Context, query SigningDocumentListQuery) (string, []any) {
 	clauses := []string{}
 	args := []any{}
+	if tenant := tenantFilterValue(ctx); tenant != "" {
+		args = append(args, tenant)
+		clauses = append(clauses, fmt.Sprintf("d.sml_tenant = $%d", len(args)))
+	}
 
 	statuses := statusesForSigningDocumentQueue(query.Queue)
 	if len(statuses) > 0 {
@@ -331,7 +407,7 @@ func statusesForSigningDocumentQueue(queue string) []string {
 	case "draft":
 		return []string{"draft"}
 	case "active":
-		return []string{"in_progress", "pending_confirm", "completed_evidence_failed", "completed_lock_failed", "rejected"}
+		return []string{"in_progress", "pending_confirm", "completed_evidence_failed", "completed_image_failed", "completed_lock_failed", "rejected"}
 	case "history":
 		return []string{"completed"}
 	default:
@@ -365,7 +441,7 @@ func buildSigningDocumentDuplicateCheckResult(refs []models.SigningDocumentRefer
 
 func isBlockingSigningDocumentDuplicateStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "draft", "in_progress", "pending_confirm", "completed_evidence_failed", "completed_lock_failed":
+	case "draft", "in_progress", "pending_confirm", "completed_evidence_failed", "completed_image_failed", "completed_lock_failed":
 		return true
 	default:
 		return false
@@ -382,6 +458,8 @@ func signingDocumentDuplicateStatusLabel(status string) string {
 		return "รอยืนยัน"
 	case "completed_evidence_failed":
 		return "สร้าง PDF หลักฐานไม่สำเร็จ"
+	case "completed_image_failed":
+		return "ส่งรูปเอกสารเข้า SML ไม่สำเร็จ"
 	case "completed_lock_failed":
 		return "Lock SML ไม่สำเร็จ"
 	case "completed":
@@ -519,11 +597,13 @@ WHERE document_id = $1 AND status IN ('active', 'verified')
 
 func (s *Store) GetAdminDashboard(ctx context.Context) (models.AdminDashboard, error) {
 	var dashboard models.AdminDashboard
+	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, `
 SELECT status, COUNT(*)::int
 FROM signing_documents
+WHERE ($1 = '' OR sml_tenant = $1)
 GROUP BY status
-`)
+`, tenant)
 	if err != nil {
 		return dashboard, err
 	}
@@ -548,6 +628,8 @@ GROUP BY status
 			dashboard.Totals.Completed = count
 		case "completed_evidence_failed":
 			dashboard.Totals.CompletedEvidenceFailed = count
+		case "completed_image_failed":
+			dashboard.Totals.CompletedImageFailed = count
 		case "completed_lock_failed":
 			dashboard.Totals.CompletedLockFailed = count
 		case "cancelled":
@@ -560,21 +642,24 @@ GROUP BY status
 	dashboard.WorkflowSummary.CompletedDocuments = dashboard.Totals.Completed
 	dashboard.WorkflowSummary.PendingConfirm = dashboard.Totals.PendingConfirm
 	dashboard.WorkflowSummary.EvidenceFailed = dashboard.Totals.CompletedEvidenceFailed
+	dashboard.WorkflowSummary.ImageFailed = dashboard.Totals.CompletedImageFailed
 	dashboard.WorkflowSummary.LockFailed = dashboard.Totals.CompletedLockFailed
-	dashboard.WorkflowSummary.AttentionDocuments = dashboard.Totals.PendingConfirm + dashboard.Totals.CompletedEvidenceFailed + dashboard.Totals.CompletedLockFailed
+	dashboard.WorkflowSummary.AttentionDocuments = dashboard.Totals.PendingConfirm + dashboard.Totals.CompletedEvidenceFailed + dashboard.Totals.CompletedImageFailed + dashboard.Totals.CompletedLockFailed
 
 	needsAttention, err := s.listSigningDocumentsByQuery(ctx, `
-WHERE d.status IN ('pending_confirm', 'completed_evidence_failed', 'completed_lock_failed')
+WHERE (`+tenantSQLPredicate("d", tenant, 1)+`)
+  AND d.status IN ('pending_confirm', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed')
 ORDER BY d.updated_at DESC, d.created_at DESC
 LIMIT 5
-`)
+`, tenant)
 	if err != nil {
 		return dashboard, err
 	}
 	recent, err := s.listSigningDocumentsByQuery(ctx, `
+WHERE (`+tenantSQLPredicate("d", tenant, 1)+`)
 ORDER BY d.updated_at DESC, d.created_at DESC
 LIMIT 6
-`)
+`, tenant)
 	if err != nil {
 		return dashboard, err
 	}
@@ -601,17 +686,20 @@ LIMIT 6
 
 func (s *Store) getDashboardPendingSummary(ctx context.Context) (models.AdminDashboardWorkflowSummary, error) {
 	var summary models.AdminDashboardWorkflowSummary
+	tenant := tenantFilterValue(ctx)
 	err := s.pool.QueryRow(ctx, `
 SELECT COUNT(DISTINCT d.id)::int, COUNT(sg.id)::int
 FROM signing_documents d
 JOIN signing_document_signers sg ON sg.document_id = d.id
 WHERE d.status = 'in_progress'
   AND sg.status = 'pending'
-`).Scan(&summary.PendingDocuments, &summary.PendingSigners)
+  AND ($1 = '' OR d.sml_tenant = $1)
+`, tenant).Scan(&summary.PendingDocuments, &summary.PendingSigners)
 	return summary, err
 }
 
 func (s *Store) listDashboardPendingByPosition(ctx context.Context) ([]models.AdminDashboardPendingByPosition, error) {
+	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, `
 SELECT sg.position_code,
        sg.position_name,
@@ -622,10 +710,11 @@ FROM signing_documents d
 JOIN signing_document_signers sg ON sg.document_id = d.id
 WHERE d.status = 'in_progress'
   AND sg.status = 'pending'
+  AND ($1 = '' OR d.sml_tenant = $1)
 GROUP BY sg.position_code, sg.position_name, sg.condition_type
 ORDER BY MIN(sg.sequence_no), signer_count DESC, sg.position_code
 LIMIT 8
-`)
+`, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -642,6 +731,7 @@ LIMIT 8
 }
 
 func (s *Store) listDashboardPendingDocuments(ctx context.Context) ([]models.AdminDashboardPendingDocument, error) {
+	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, `
 SELECT d.id::text,
        d.doc_no,
@@ -655,10 +745,11 @@ FROM signing_documents d
 JOIN signing_document_signers sg ON sg.document_id = d.id
 WHERE d.status = 'in_progress'
   AND sg.status = 'pending'
+  AND ($1 = '' OR d.sml_tenant = $1)
 GROUP BY d.id, d.doc_no, d.doc_format_code, d.party_name, d.party_code, d.updated_at, d.created_at
 ORDER BY d.updated_at DESC, d.created_at DESC
 LIMIT 8
-`)
+`, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -682,6 +773,10 @@ func (s *Store) listSigningDocumentsByQuery(ctx context.Context, suffix string, 
 	return scanSigningDocumentRows(rows)
 }
 
+func tenantSQLPredicate(alias string, _ string, placeholder int) string {
+	return fmt.Sprintf("$%d = '' OR %s.sml_tenant = $%d", placeholder, alias, placeholder)
+}
+
 func scanSigningDocumentRows(rows pgx.Rows) ([]models.SigningDocument, error) {
 	defer rows.Close()
 	documents := []models.SigningDocument{}
@@ -696,7 +791,8 @@ func scanSigningDocumentRows(rows pgx.Rows) ([]models.SigningDocument, error) {
 }
 
 func (s *Store) FindSigningDocumentByID(ctx context.Context, id string) (models.SigningDocument, error) {
-	doc, err := scanSigningDocument(s.pool.QueryRow(ctx, signingDocumentSelect()+`WHERE d.id = $1`, id))
+	tenant := tenantFilterValue(ctx)
+	doc, err := scanSigningDocument(s.pool.QueryRow(ctx, signingDocumentSelect()+`WHERE d.id = $1 AND ($2 = '' OR d.sml_tenant = $2)`, id, tenant))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.SigningDocument{}, ErrSigningDocumentNotFound
 	}
@@ -746,6 +842,7 @@ func (s *Store) ListSigningDocumentReferencesByDocNos(ctx context.Context, docNo
 	if len(clean) == 0 {
 		return []models.SigningDocumentReference{}, nil
 	}
+	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, `
 SELECT id::text, doc_no, doc_format_code, status,
        current_file_id IS NOT NULL AS has_current_pdf,
@@ -753,8 +850,9 @@ SELECT id::text, doc_no, doc_format_code, status,
        created_at, updated_at
 FROM signing_documents
 WHERE doc_no = ANY($1)
+  AND ($2 = '' OR sml_tenant = $2)
 ORDER BY updated_at DESC
-`, clean)
+`, clean, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -775,6 +873,7 @@ func scanSigningDocumentReferenceRows(rows pgx.Rows) ([]models.SigningDocumentRe
 }
 
 func (s *Store) ListPendingSigningTasksForUser(ctx context.Context, username string) ([]models.SigningDocument, error) {
+	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, `
 SELECT DISTINCT d.id::text
 FROM signing_documents d
@@ -782,8 +881,9 @@ JOIN signing_document_signers sg ON sg.document_id = d.id
 WHERE d.status = 'in_progress'
   AND sg.status = 'pending'
   AND lower(sg.signer_user) = lower($1)
+  AND ($2 = '' OR d.sml_tenant = $2)
 ORDER BY d.id::text
-`, strings.TrimSpace(username))
+`, strings.TrimSpace(username), tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -877,6 +977,10 @@ WHERE lower(sg.signer_user) = lower($1)
   AND sg.status IN ('signed', 'rejected')
 `
 	args := []any{username}
+	if tenant := tenantFilterValue(ctx); tenant != "" {
+		args = append(args, tenant)
+		where += fmt.Sprintf("  AND d.sml_tenant = $%d\n", len(args))
+	}
 	if search != "" {
 		args = append(args, "%"+search+"%")
 		where += fmt.Sprintf(`
@@ -972,6 +1076,7 @@ func scanMySigningHistoryDocument(row rowScanner) (models.MySigningHistoryDocume
 }
 
 func (s *Store) countMySigningTasksByStatus(ctx context.Context, username, status string) (int, error) {
+	tenant := tenantFilterValue(ctx)
 	var count int
 	err := s.pool.QueryRow(ctx, `
 SELECT COUNT(sg.id)::int
@@ -980,12 +1085,14 @@ JOIN signing_document_signers sg ON sg.document_id = d.id
 WHERE d.status = 'in_progress'
   AND sg.status = $2
   AND lower(sg.signer_user) = lower($1)
-`, strings.TrimSpace(username), status).Scan(&count)
+  AND ($3 = '' OR d.sml_tenant = $3)
+`, strings.TrimSpace(username), status, tenant).Scan(&count)
 	return count, err
 }
 
 func (s *Store) listMySigningTaskDocumentsByStatus(ctx context.Context, username, status string, page, size int) ([]models.MySigningTaskDocument, bool, error) {
 	offset := (page - 1) * size
+	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, `
 SELECT d.id::text,
        d.doc_no,
@@ -1014,9 +1121,10 @@ JOIN signing_document_signers sg ON sg.document_id = d.id
 WHERE d.status = 'in_progress'
   AND sg.status = $2
   AND lower(sg.signer_user) = lower($1)
+  AND ($5 = '' OR d.sml_tenant = $5)
 ORDER BY d.updated_at DESC, d.created_at DESC, sg.sequence_no, sg.position_code, sg.signer_slot
 LIMIT $3 OFFSET $4
-`, strings.TrimSpace(username), status, size+1, offset)
+`, strings.TrimSpace(username), status, size+1, offset, tenant)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1192,7 +1300,11 @@ func mySigningBlockerSummary(blocker models.MySigningTaskBlocker) string {
 }
 
 func (s *Store) FindSigningTaskByID(ctx context.Context, taskID string) (models.SigningDocumentSigner, error) {
-	signer, err := scanSigningDocumentSigner(s.pool.QueryRow(ctx, signingSignerSelect()+`WHERE sg.id = $1`, taskID))
+	tenant := tenantFilterValue(ctx)
+	signer, err := scanSigningDocumentSigner(s.pool.QueryRow(ctx, signingSignerSelect()+`
+WHERE sg.id = $1
+  AND ($2 = '' OR EXISTS (SELECT 1 FROM signing_documents d WHERE d.id = sg.document_id AND d.sml_tenant = $2))
+`, taskID, tenant))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.SigningDocumentSigner{}, ErrSigningTaskNotFound
 	}
@@ -1251,6 +1363,20 @@ WHERE id = $1
 	return s.AddSigningEvent(ctx, documentID, "", "", "final_pdf_failed", "สร้าง Final PDF/evidence ไม่สำเร็จ", "", "", metadata)
 }
 
+func (s *Store) MarkDocumentImageResult(ctx context.Context, documentID string, ok bool, metadata map[string]any) error {
+	if !ok {
+		if _, err := s.pool.Exec(ctx, `
+UPDATE signing_documents
+SET status = 'completed_image_failed', updated_at = now()
+WHERE id = $1
+`, documentID); err != nil {
+			return err
+		}
+		return s.AddSigningEvent(ctx, documentID, "", "", "sml_images_failed", "ส่งรูปเอกสารเข้า SML ไม่สำเร็จ", "", "", metadata)
+	}
+	return s.AddSigningEvent(ctx, documentID, "", "", "sml_images_success", "ส่งรูปเอกสารเข้า SML สำเร็จ", "", "", metadata)
+}
+
 func (s *Store) UpdateSigningDocumentPDF(ctx context.Context, documentID string, file models.UploadedFile, final bool) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -1266,31 +1392,42 @@ func (s *Store) UpdateSigningDocumentPDF(ctx context.Context, documentID string,
 		return err
 	}
 	nextVersion := currentVersion + 1
-	if _, err := tx.Exec(ctx, `
-UPDATE signing_documents
-SET current_file_id = $2,
-    final_file_id = CASE WHEN $3 THEN $2 ELSE final_file_id END,
-    current_version = $4,
-    updated_at = now()
-WHERE id = $1
-`, documentID, file.ID, final, nextVersion); err != nil {
+	if _, err := tx.Exec(ctx, signingDocumentPDFUpdateStatement(final), documentID, file.ID, nextVersion); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO signing_document_versions (document_id, version_no, file_id, kind)
-VALUES ($1, $2, $3, 'current')
-`, documentID, nextVersion, file.ID); err != nil {
+VALUES ($1, $2, $3, $4)
+`, documentID, nextVersion, file.ID, signingDocumentPDFVersionKind(final)); err != nil {
 		return err
-	}
-	if final {
-		if _, err := tx.Exec(ctx, `
-INSERT INTO signing_document_versions (document_id, version_no, file_id, kind)
-VALUES ($1, $2, $3, 'final')
-`, documentID, nextVersion, file.ID); err != nil {
-			return err
-		}
 	}
 	return tx.Commit(ctx)
+}
+
+func signingDocumentPDFUpdateStatement(final bool) string {
+	if final {
+		return `
+UPDATE signing_documents
+SET final_file_id = $2,
+    current_version = $3,
+    updated_at = now()
+WHERE id = $1
+`
+	}
+	return `
+UPDATE signing_documents
+SET current_file_id = $2,
+    current_version = $3,
+    updated_at = now()
+WHERE id = $1
+`
+}
+
+func signingDocumentPDFVersionKind(final bool) string {
+	if final {
+		return "final"
+	}
+	return "current"
 }
 
 func (s *Store) AddSigningEvent(ctx context.Context, documentID, actorUserID, actorLabel, action, message, ipAddress, userAgent string, metadata map[string]any) error {
@@ -1306,6 +1443,7 @@ VALUES ($1, NULLIF($2,'')::uuid, $3, $4, NULLIF($5,'')::uuid)
 }
 
 func (s *Store) RegenerateExternalToken(ctx context.Context, signerID, tokenHash, otpHash, createdBy string, expiresAt time.Time) (string, error) {
+	tenant := tenantFilterValue(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -1317,7 +1455,8 @@ func (s *Store) RegenerateExternalToken(ctx context.Context, signerID, tokenHash
 SELECT document_id::text
 FROM signing_document_signers
 WHERE id = $1 AND signer_type = 'external'
-`, signerID).Scan(&documentID); err != nil {
+  AND ($2 = '' OR EXISTS (SELECT 1 FROM signing_documents d WHERE d.id = signing_document_signers.document_id AND d.sml_tenant = $2))
+`, signerID, tenant).Scan(&documentID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrSigningTaskNotFound
 		}
@@ -1601,7 +1740,12 @@ func (s *Store) signTask(ctx context.Context, taskID, username, signatureFileID,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	signer, err := scanSigningDocumentSigner(tx.QueryRow(ctx, signingSignerSelect()+`WHERE sg.id = $1 FOR UPDATE OF sg`, taskID))
+	tenant := tenantFilterValue(ctx)
+	signer, err := scanSigningDocumentSigner(tx.QueryRow(ctx, signingSignerSelect()+`
+WHERE sg.id = $1
+  AND ($2 = '' OR EXISTS (SELECT 1 FROM signing_documents d WHERE d.id = sg.document_id AND d.sml_tenant = $2))
+FOR UPDATE OF sg
+`, taskID, tenant))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SignTaskResult{}, ErrSigningTaskNotFound
 	}
@@ -1662,7 +1806,12 @@ func (s *Store) rejectTask(ctx context.Context, taskID, username, reason, device
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	signer, err := scanSigningDocumentSigner(tx.QueryRow(ctx, signingSignerSelect()+`WHERE sg.id = $1 FOR UPDATE OF sg`, taskID))
+	tenant := tenantFilterValue(ctx)
+	signer, err := scanSigningDocumentSigner(tx.QueryRow(ctx, signingSignerSelect()+`
+WHERE sg.id = $1
+  AND ($2 = '' OR EXISTS (SELECT 1 FROM signing_documents d WHERE d.id = sg.document_id AND d.sml_tenant = $2))
+FOR UPDATE OF sg
+`, taskID, tenant))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrSigningTaskNotFound
 	}
@@ -1884,12 +2033,14 @@ func splitSignerUser(value string) (string, string) {
 
 func signingDocumentSelect() string {
 	return `
-SELECT d.id::text, d.screen_code, d.doc_format_code, d.doc_no, d.sml_table, d.trans_flag,
+SELECT d.id::text, d.sml_tenant, d.sml_data_group, d.sml_data_code,
+       d.screen_code, d.doc_format_code, d.doc_no, d.sml_table, d.trans_flag,
        d.party_code, d.party_name, d.party_type, COALESCE(d.doc_date::text,''), d.total_amount,
        d.sml_is_lock_record, d.status, d.current_version,
        COALESCE(d.original_file_id::text,''), COALESCE(d.current_file_id::text,''), COALESCE(d.final_file_id::text,''),
        COALESCE(d.signature_template_id::text,''), COALESCE(d.created_by::text,''),
        d.created_at, d.updated_at, d.completed_at, d.locked_at, COALESCE(d.legal_notice_snapshot, '{}'::jsonb)::text,
+       COALESCE(d.signature_placement_snapshot, '[]'::jsonb)::text, COALESCE(d.legal_notice_boxes_snapshot, '[]'::jsonb)::text,
        COALESCE(of.id::text,''), COALESCE(of.original_name,''), COALESCE(of.stored_name,''), COALESCE(of.storage_path,''), COALESCE(of.content_type,''), COALESCE(of.size_bytes,0), COALESCE(of.page_count,0), COALESCE(of.sha256,''), COALESCE(of.created_by::text,''), of.created_at,
        COALESCE(cf.id::text,''), COALESCE(cf.original_name,''), COALESCE(cf.stored_name,''), COALESCE(cf.storage_path,''), COALESCE(cf.content_type,''), COALESCE(cf.size_bytes,0), COALESCE(cf.page_count,0), COALESCE(cf.sha256,''), COALESCE(cf.created_by::text,''), cf.created_at,
        COALESCE(ff.id::text,''), COALESCE(ff.original_name,''), COALESCE(ff.stored_name,''), COALESCE(ff.storage_path,''), COALESCE(ff.content_type,''), COALESCE(ff.size_bytes,0), COALESCE(ff.page_count,0), COALESCE(ff.sha256,''), COALESCE(ff.created_by::text,''), ff.created_at
@@ -1914,15 +2065,16 @@ FROM signing_document_signers sg
 func scanSigningDocument(row rowScanner) (models.SigningDocument, error) {
 	var doc models.SigningDocument
 	var completedAt, lockedAt sql.NullTime
-	var legalNoticeRaw string
+	var legalNoticeRaw, signaturePlacementsRaw, legalNoticeBoxesRaw string
 	var original, current, final models.UploadedFile
 	var originalCreated, currentCreated, finalCreated sql.NullTime
 	err := row.Scan(
-		&doc.ID, &doc.ScreenCode, &doc.DocFormatCode, &doc.DocNo, &doc.SMLTable, &doc.TransFlag,
+		&doc.ID, &doc.SMLTenant, &doc.SMLDataGroup, &doc.SMLDataCode,
+		&doc.ScreenCode, &doc.DocFormatCode, &doc.DocNo, &doc.SMLTable, &doc.TransFlag,
 		&doc.PartyCode, &doc.PartyName, &doc.PartyType, &doc.DocDate, &doc.TotalAmount,
 		&doc.SMLIsLockRecord, &doc.Status, &doc.CurrentVersion,
 		&doc.OriginalFileID, &doc.CurrentFileID, &doc.FinalFileID, &doc.SignatureTemplateID, &doc.CreatedBy,
-		&doc.CreatedAt, &doc.UpdatedAt, &completedAt, &lockedAt, &legalNoticeRaw,
+		&doc.CreatedAt, &doc.UpdatedAt, &completedAt, &lockedAt, &legalNoticeRaw, &signaturePlacementsRaw, &legalNoticeBoxesRaw,
 		&original.ID, &original.OriginalName, &original.StoredName, &original.StoragePath, &original.ContentType, &original.SizeBytes, &original.PageCount, &original.SHA256, &original.CreatedBy, &originalCreated,
 		&current.ID, &current.OriginalName, &current.StoredName, &current.StoragePath, &current.ContentType, &current.SizeBytes, &current.PageCount, &current.SHA256, &current.CreatedBy, &currentCreated,
 		&final.ID, &final.OriginalName, &final.StoredName, &final.StoragePath, &final.ContentType, &final.SizeBytes, &final.PageCount, &final.SHA256, &final.CreatedBy, &finalCreated,
@@ -1937,6 +2089,8 @@ func scanSigningDocument(row rowScanner) (models.SigningDocument, error) {
 		doc.LockedAt = &lockedAt.Time
 	}
 	doc.LegalNoticeSnapshot = parseLegalNoticeSnapshot(legalNoticeRaw)
+	doc.SignaturePlacements = parseSignaturePlacementSnapshots(signaturePlacementsRaw)
+	doc.LegalNoticeBoxes = parseLegalNoticeSnapshots(legalNoticeBoxesRaw)
 	if original.ID != "" {
 		if originalCreated.Valid {
 			original.CreatedAt = originalCreated.Time

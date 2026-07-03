@@ -50,6 +50,7 @@ type SMLScreenCode struct {
 
 type DocumentConfigStep struct {
 	ID            string    `json:"id"`
+	SMLTenant     string    `json:"smlTenant"`
 	ScreenCode    string    `json:"screenCode"`
 	DocFormatCode string    `json:"docFormatCode"`
 	PositionCode  string    `json:"positionCode"`
@@ -134,6 +135,7 @@ type UploadedFile struct {
 
 type SignatureTemplate struct {
 	ID             string                 `json:"id"`
+	SMLTenant      string                 `json:"smlTenant"`
 	ScreenCode     string                 `json:"screenCode"`
 	DocFormatCode  string                 `json:"docFormatCode"`
 	Version        int                    `json:"version"`
@@ -209,6 +211,23 @@ type LegalNoticeSnapshot struct {
 	WidthRatio  float64 `json:"widthRatio"`
 	HeightRatio float64 `json:"heightRatio"`
 	Label       string  `json:"label"`
+}
+
+type SignaturePlacementSnapshot struct {
+	PositionCode  string  `json:"positionCode"`
+	PositionName  string  `json:"positionName"`
+	SequenceNo    float64 `json:"sequenceNo"`
+	ConditionType int     `json:"conditionType"`
+	SignerSlot    int     `json:"signerSlot"`
+	SignerType    string  `json:"signerType"`
+	SignerUser    string  `json:"signerUser"`
+	SignerName    string  `json:"signerName"`
+	PageNo        int     `json:"pageNo"`
+	XRatio        float64 `json:"xRatio"`
+	YRatio        float64 `json:"yRatio"`
+	WidthRatio    float64 `json:"widthRatio"`
+	HeightRatio   float64 `json:"heightRatio"`
+	Label         string  `json:"label"`
 }
 
 type SaveSignatureBoxesRequest struct {
@@ -317,38 +336,44 @@ type SigningDocumentReference struct {
 }
 
 type SigningDocument struct {
-	ID                  string                      `json:"id"`
-	ScreenCode          string                      `json:"screenCode"`
-	DocFormatCode       string                      `json:"docFormatCode"`
-	DocNo               string                      `json:"docNo"`
-	SMLTable            string                      `json:"smlTable"`
-	TransFlag           int                         `json:"transFlag"`
-	PartyCode           string                      `json:"partyCode"`
-	PartyName           string                      `json:"partyName"`
-	PartyType           string                      `json:"partyType"`
-	DocDate             string                      `json:"docDate"`
-	TotalAmount         float64                     `json:"totalAmount"`
-	SMLIsLockRecord     int                         `json:"smlIsLockRecord"`
-	Status              string                      `json:"status"`
-	CurrentVersion      int                         `json:"currentVersion"`
-	OriginalFileID      string                      `json:"originalFileId"`
-	CurrentFileID       string                      `json:"currentFileId"`
-	FinalFileID         string                      `json:"finalFileId"`
-	SignatureTemplateID string                      `json:"signatureTemplateId"`
-	CreatedBy           string                      `json:"createdBy"`
-	CreatedAt           time.Time                   `json:"createdAt"`
-	UpdatedAt           time.Time                   `json:"updatedAt"`
-	CompletedAt         *time.Time                  `json:"completedAt,omitempty"`
-	LockedAt            *time.Time                  `json:"lockedAt,omitempty"`
-	LegalNoticeSnapshot *LegalNoticeSnapshot        `json:"legalNoticeSnapshot,omitempty"`
-	OriginalFile        *UploadedFile               `json:"originalFile,omitempty"`
-	CurrentFile         *UploadedFile               `json:"currentFile,omitempty"`
-	FinalFile           *UploadedFile               `json:"finalFile,omitempty"`
-	Steps               []SigningDocumentStep       `json:"steps,omitempty"`
-	Signers             []SigningDocumentSigner     `json:"signers,omitempty"`
-	Events              []SigningDocumentEvent      `json:"events,omitempty"`
-	Attachments         []SigningDocumentAttachment `json:"attachments,omitempty"`
-	PrintEvents         []SigningDocumentPrintEvent `json:"printEvents,omitempty"`
+	ID                  string                       `json:"id"`
+	SMLTenant           string                       `json:"smlTenant"`
+	SMLDataGroup        string                       `json:"smlDataGroup"`
+	SMLDataCode         string                       `json:"smlDataCode"`
+	ScreenCode          string                       `json:"screenCode"`
+	DocFormatCode       string                       `json:"docFormatCode"`
+	DocNo               string                       `json:"docNo"`
+	SMLTable            string                       `json:"smlTable"`
+	TransFlag           int                          `json:"transFlag"`
+	PartyCode           string                       `json:"partyCode"`
+	PartyName           string                       `json:"partyName"`
+	PartyType           string                       `json:"partyType"`
+	DocDate             string                       `json:"docDate"`
+	TotalAmount         float64                      `json:"totalAmount"`
+	SMLIsLockRecord     int                          `json:"smlIsLockRecord"`
+	Status              string                       `json:"status"`
+	CurrentVersion      int                          `json:"currentVersion"`
+	OriginalFileID      string                       `json:"originalFileId"`
+	CurrentFileID       string                       `json:"currentFileId"`
+	FinalFileID         string                       `json:"finalFileId"`
+	SignatureTemplateID string                       `json:"signatureTemplateId"`
+	CreatedBy           string                       `json:"createdBy"`
+	CreatedAt           time.Time                    `json:"createdAt"`
+	UpdatedAt           time.Time                    `json:"updatedAt"`
+	CompletedAt         *time.Time                   `json:"completedAt,omitempty"`
+	LockedAt            *time.Time                   `json:"lockedAt,omitempty"`
+	LegalNoticeSnapshot *LegalNoticeSnapshot         `json:"legalNoticeSnapshot,omitempty"`
+	LegalNoticeBoxes    []LegalNoticeSnapshot        `json:"legalNoticeBoxes,omitempty"`
+	SignaturePlacements []SignaturePlacementSnapshot `json:"signaturePlacements,omitempty"`
+	OriginalFile        *UploadedFile                `json:"originalFile,omitempty"`
+	CurrentFile         *UploadedFile                `json:"currentFile,omitempty"`
+	FinalFile           *UploadedFile                `json:"finalFile,omitempty"`
+	Steps               []SigningDocumentStep        `json:"steps,omitempty"`
+	Signers             []SigningDocumentSigner      `json:"signers,omitempty"`
+	PendingSigners      []SigningDocumentSigner      `json:"pendingSigners,omitempty"`
+	Events              []SigningDocumentEvent       `json:"events,omitempty"`
+	Attachments         []SigningDocumentAttachment  `json:"attachments,omitempty"`
+	PrintEvents         []SigningDocumentPrintEvent  `json:"printEvents,omitempty"`
 }
 
 type AdminDashboard struct {
@@ -368,6 +393,7 @@ type SigningDocumentTotals struct {
 	Rejected                int `json:"rejected"`
 	Completed               int `json:"completed"`
 	CompletedEvidenceFailed int `json:"completedEvidenceFailed"`
+	CompletedImageFailed    int `json:"completedImageFailed"`
 	CompletedLockFailed     int `json:"completedLockFailed"`
 	Cancelled               int `json:"cancelled"`
 }
@@ -379,6 +405,7 @@ type AdminDashboardWorkflowSummary struct {
 	AttentionDocuments int `json:"attentionDocuments"`
 	CompletedDocuments int `json:"completedDocuments"`
 	EvidenceFailed     int `json:"evidenceFailed"`
+	ImageFailed        int `json:"imageFailed"`
 	LockFailed         int `json:"lockFailed"`
 }
 
@@ -633,15 +660,37 @@ type RegenerateExternalTokenResponse struct {
 }
 
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	DatabaseName string `json:"databaseName"`
+	AuthSource   string `json:"authSource"`
 }
 
 type LoginResponse struct {
-	Token     string    `json:"token"`
-	TokenType string    `json:"tokenType"`
-	ExpiresAt time.Time `json:"expiresAt"`
-	User      User      `json:"user"`
+	Token            string            `json:"token,omitempty"`
+	TokenType        string            `json:"tokenType,omitempty"`
+	ExpiresAt        *time.Time        `json:"expiresAt,omitempty"`
+	User             *User             `json:"user,omitempty"`
+	Session          *AuthSession      `json:"session,omitempty"`
+	DatabaseRequired bool              `json:"databaseRequired,omitempty"`
+	Databases        []SMLAuthDatabase `json:"databases,omitempty"`
+	AuthSource       string            `json:"authSource,omitempty"`
+}
+
+type AuthSession struct {
+	SMLProvider  string `json:"smlProvider"`
+	SMLDataGroup string `json:"smlDataGroup"`
+	SMLDataCode  string `json:"smlDataCode"`
+	SMLTenant    string `json:"smlTenant"`
+	AuthSource   string `json:"authSource"`
+}
+
+type SMLAuthDatabase struct {
+	DataGroup    string `json:"dataGroup"`
+	DataCode     string `json:"dataCode"`
+	DataName     string `json:"dataName"`
+	DatabaseName string `json:"databaseName"`
+	Tenant       string `json:"tenant"`
 }
 
 type APIError struct {

@@ -21,6 +21,36 @@ type Store struct {
 	pool *pgxpool.Pool
 }
 
+type smlTenantContextKey struct{}
+
+const DefaultSMLTenant = "sml1_2026"
+
+func NormalizeSMLTenant(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "-", "_")
+	if value == "" {
+		return DefaultSMLTenant
+	}
+	return value
+}
+
+func WithSMLTenant(ctx context.Context, tenant string) context.Context {
+	return context.WithValue(ctx, smlTenantContextKey{}, NormalizeSMLTenant(tenant))
+}
+
+func SMLTenantFromContext(ctx context.Context) (string, bool) {
+	value, ok := ctx.Value(smlTenantContextKey{}).(string)
+	value = NormalizeSMLTenant(value)
+	return value, ok
+}
+
+func tenantFilterValue(ctx context.Context) string {
+	if tenant, ok := SMLTenantFromContext(ctx); ok {
+		return tenant
+	}
+	return ""
+}
+
 var (
 	ErrUsernameTaken                  = errors.New("username already exists")
 	ErrUserNotFound                   = errors.New("user not found")
@@ -101,6 +131,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 CREATE TABLE IF NOT EXISTS document_config_steps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sml_tenant TEXT NOT NULL DEFAULT 'sml1_2026',
     screen_code TEXT NOT NULL,
     doc_format_code TEXT NOT NULL,
     position_code TEXT NOT NULL,
@@ -115,17 +146,24 @@ CREATE TABLE IF NOT EXISTS document_config_steps (
 );
 
 ALTER TABLE document_config_steps
+ADD COLUMN IF NOT EXISTS sml_tenant TEXT NOT NULL DEFAULT 'sml1_2026';
+
+ALTER TABLE document_config_steps
 DROP CONSTRAINT IF EXISTS document_config_steps_screen_code_check;
 
 ALTER TABLE document_config_steps
 ADD CONSTRAINT document_config_steps_screen_code_check
 CHECK (screen_code <> '' AND length(screen_code) <= 40);
 
-CREATE UNIQUE INDEX IF NOT EXISTS document_config_steps_unique_position_idx
-ON document_config_steps (screen_code, lower(doc_format_code), lower(position_code));
+DROP INDEX IF EXISTS document_config_steps_unique_position_idx;
 
-CREATE INDEX IF NOT EXISTS document_config_steps_lookup_idx
-ON document_config_steps (screen_code, lower(doc_format_code), sequence_no);
+CREATE UNIQUE INDEX document_config_steps_unique_position_idx
+ON document_config_steps (sml_tenant, screen_code, lower(doc_format_code), lower(position_code));
+
+DROP INDEX IF EXISTS document_config_steps_lookup_idx;
+
+CREATE INDEX document_config_steps_lookup_idx
+ON document_config_steps (sml_tenant, screen_code, lower(doc_format_code), sequence_no);
 
 CREATE TABLE IF NOT EXISTS uploaded_files (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -158,6 +196,7 @@ WHERE consumed_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS signature_templates (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sml_tenant TEXT NOT NULL DEFAULT 'sml1_2026',
     screen_code TEXT NOT NULL,
     doc_format_code TEXT NOT NULL,
     version INTEGER NOT NULL CHECK (version > 0),
@@ -173,18 +212,27 @@ CREATE TABLE IF NOT EXISTS signature_templates (
 );
 
 ALTER TABLE signature_templates
+ADD COLUMN IF NOT EXISTS sml_tenant TEXT NOT NULL DEFAULT 'sml1_2026';
+
+ALTER TABLE signature_templates
 ADD COLUMN IF NOT EXISTS legal_notice_box JSONB NOT NULL DEFAULT '{}'::jsonb;
 
-CREATE UNIQUE INDEX IF NOT EXISTS signature_templates_active_unique_idx
-ON signature_templates (screen_code, lower(doc_format_code))
+DROP INDEX IF EXISTS signature_templates_active_unique_idx;
+
+CREATE UNIQUE INDEX signature_templates_active_unique_idx
+ON signature_templates (sml_tenant, screen_code, lower(doc_format_code))
 WHERE status = 'active';
 
-CREATE UNIQUE INDEX IF NOT EXISTS signature_templates_draft_unique_idx
-ON signature_templates (screen_code, lower(doc_format_code))
+DROP INDEX IF EXISTS signature_templates_draft_unique_idx;
+
+CREATE UNIQUE INDEX signature_templates_draft_unique_idx
+ON signature_templates (sml_tenant, screen_code, lower(doc_format_code))
 WHERE status = 'draft';
 
-CREATE INDEX IF NOT EXISTS signature_templates_lookup_idx
-ON signature_templates (screen_code, lower(doc_format_code), status, version DESC);
+DROP INDEX IF EXISTS signature_templates_lookup_idx;
+
+CREATE INDEX signature_templates_lookup_idx
+ON signature_templates (sml_tenant, screen_code, lower(doc_format_code), status, version DESC);
 
 CREATE TABLE IF NOT EXISTS signature_template_boxes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -214,6 +262,9 @@ ON signature_template_boxes (template_id, page_no, lower(position_code), signer_
 
 CREATE TABLE IF NOT EXISTS signing_documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sml_tenant TEXT NOT NULL DEFAULT 'sml1_2026',
+    sml_data_group TEXT NOT NULL DEFAULT 'sml',
+    sml_data_code TEXT NOT NULL DEFAULT 'SML1_2026',
     screen_code TEXT NOT NULL,
     doc_format_code TEXT NOT NULL,
     doc_no TEXT NOT NULL,
@@ -225,7 +276,7 @@ CREATE TABLE IF NOT EXISTS signing_documents (
     doc_date DATE,
     total_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
     sml_is_lock_record INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'rejected', 'completed', 'completed_evidence_failed', 'completed_lock_failed', 'cancelled')),
+    status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'rejected', 'completed', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'cancelled')),
     current_version INTEGER NOT NULL DEFAULT 1 CHECK (current_version > 0),
     original_file_id UUID REFERENCES uploaded_files(id),
     current_file_id UUID REFERENCES uploaded_files(id),
@@ -234,6 +285,8 @@ CREATE TABLE IF NOT EXISTS signing_documents (
     config_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
     template_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
     legal_notice_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    signature_placement_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+    legal_notice_boxes_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -242,28 +295,45 @@ CREATE TABLE IF NOT EXISTS signing_documents (
 );
 
 ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS sml_tenant TEXT NOT NULL DEFAULT 'sml1_2026';
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS sml_data_group TEXT NOT NULL DEFAULT 'sml';
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS sml_data_code TEXT NOT NULL DEFAULT 'SML1_2026';
+
+ALTER TABLE signing_documents
 ADD COLUMN IF NOT EXISTS legal_notice_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS signature_placement_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS legal_notice_boxes_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 ALTER TABLE signing_documents
 DROP CONSTRAINT IF EXISTS signing_documents_status_check;
 
 ALTER TABLE signing_documents
 ADD CONSTRAINT signing_documents_status_check
-CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'rejected', 'completed', 'completed_evidence_failed', 'completed_lock_failed', 'cancelled'));
+CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'rejected', 'completed', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'cancelled'));
 
 DROP INDEX IF EXISTS signing_documents_active_doc_unique_idx;
 
 CREATE UNIQUE INDEX signing_documents_active_doc_unique_idx
-ON signing_documents (lower(doc_format_code), doc_no)
-WHERE status IN ('draft', 'in_progress', 'pending_confirm', 'completed_evidence_failed', 'completed_lock_failed');
+ON signing_documents (sml_tenant, lower(doc_format_code), doc_no)
+WHERE status IN ('draft', 'in_progress', 'pending_confirm', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed');
 
 DROP INDEX IF EXISTS signing_documents_search_idx;
 
 CREATE INDEX signing_documents_search_idx
-ON signing_documents (lower(doc_no), lower(doc_format_code), updated_at DESC);
+ON signing_documents (sml_tenant, lower(doc_no), lower(doc_format_code), updated_at DESC);
 
-CREATE INDEX IF NOT EXISTS signing_documents_duplicate_lookup_idx
-ON signing_documents (lower(doc_format_code), doc_no, updated_at DESC);
+DROP INDEX IF EXISTS signing_documents_duplicate_lookup_idx;
+
+CREATE INDEX signing_documents_duplicate_lookup_idx
+ON signing_documents (sml_tenant, lower(doc_format_code), doc_no, updated_at DESC);
 
 CREATE INDEX IF NOT EXISTS signing_documents_status_idx
 ON signing_documents (status, updated_at DESC);
@@ -671,14 +741,16 @@ WHERE scope = $1 AND key = $2 AND response_status = 0 AND COALESCE(actor_user_id
 }
 
 func (s *Store) ListDocumentConfigSteps(ctx context.Context, screenCode, docFormatCode string) ([]models.DocumentConfigStep, error) {
+	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, `
-SELECT id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+SELECT id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
        sequence_no, condition_type, created_at, updated_at
 FROM document_config_steps
-WHERE ($1 = '' OR screen_code = $1)
-  AND ($2 = '' OR lower(doc_format_code) = lower($2))
+WHERE ($1 = '' OR sml_tenant = $1)
+  AND ($2 = '' OR screen_code = $2)
+  AND ($3 = '' OR lower(doc_format_code) = lower($3))
 ORDER BY screen_code, lower(doc_format_code), sequence_no, position_code
-`, screenCode, docFormatCode)
+`, tenant, screenCode, docFormatCode)
 	if err != nil {
 		return nil, err
 	}
@@ -696,12 +768,14 @@ ORDER BY screen_code, lower(doc_format_code), sequence_no, position_code
 }
 
 func (s *Store) FindDocumentConfigStepByID(ctx context.Context, id string) (models.DocumentConfigStep, error) {
+	tenant := tenantFilterValue(ctx)
 	step, err := scanDocumentConfigStep(s.pool.QueryRow(ctx, `
-SELECT id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+SELECT id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
        sequence_no, condition_type, created_at, updated_at
 FROM document_config_steps
 WHERE id = $1
-`, id))
+  AND ($2 = '' OR sml_tenant = $2)
+`, id, tenant))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.DocumentConfigStep{}, ErrDocumentConfigNotFound
 	}
@@ -710,7 +784,7 @@ WHERE id = $1
 
 func (s *Store) ListDocumentConfigUserReferences(ctx context.Context, username string) ([]models.DocumentConfigStep, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+SELECT id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
        sequence_no, condition_type, created_at, updated_at
 FROM document_config_steps
 WHERE lower(split_part(user01, ':', 1)) = lower($1)
@@ -735,15 +809,16 @@ ORDER BY screen_code, lower(doc_format_code), sequence_no, position_code
 }
 
 func (s *Store) CreateDocumentConfigStep(ctx context.Context, req models.DocumentConfigStepRequest) (models.DocumentConfigStep, error) {
+	tenant := NormalizeSMLTenant(tenantFilterValue(ctx))
 	step, err := scanDocumentConfigStep(s.pool.QueryRow(ctx, `
 INSERT INTO document_config_steps (
-    screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+    sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
     sequence_no, condition_type
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
           sequence_no, condition_type, created_at, updated_at
-`, req.ScreenCode, req.DocFormatCode, req.PositionCode, req.PositionName, req.User01, req.User02, req.User03, req.SequenceNo, req.ConditionType))
+`, tenant, req.ScreenCode, req.DocFormatCode, req.PositionCode, req.PositionName, req.User01, req.User02, req.User03, req.SequenceNo, req.ConditionType))
 	if err != nil {
 		if strings.Contains(err.Error(), "document_config_steps_unique_position_idx") {
 			return models.DocumentConfigStep{}, ErrDocumentConfigDuplicate
@@ -754,22 +829,25 @@ RETURNING id::text, screen_code, doc_format_code, position_code, position_name, 
 }
 
 func (s *Store) UpdateDocumentConfigStep(ctx context.Context, id string, req models.DocumentConfigStepRequest) (models.DocumentConfigStep, error) {
+	tenant := NormalizeSMLTenant(tenantFilterValue(ctx))
 	step, err := scanDocumentConfigStep(s.pool.QueryRow(ctx, `
 UPDATE document_config_steps
-SET screen_code = $1,
-    doc_format_code = $2,
-    position_code = $3,
-    position_name = $4,
-    user01 = $5,
-    user02 = $6,
-    user03 = $7,
-    sequence_no = $8,
-    condition_type = $9,
+SET sml_tenant = $1,
+    screen_code = $2,
+    doc_format_code = $3,
+    position_code = $4,
+    position_name = $5,
+    user01 = $6,
+    user02 = $7,
+    user03 = $8,
+    sequence_no = $9,
+    condition_type = $10,
     updated_at = now()
-WHERE id = $10
-RETURNING id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+WHERE id = $11
+  AND ($12 = '' OR sml_tenant = $12)
+RETURNING id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
           sequence_no, condition_type, created_at, updated_at
-`, req.ScreenCode, req.DocFormatCode, req.PositionCode, req.PositionName, req.User01, req.User02, req.User03, req.SequenceNo, req.ConditionType, id))
+`, tenant, req.ScreenCode, req.DocFormatCode, req.PositionCode, req.PositionName, req.User01, req.User02, req.User03, req.SequenceNo, req.ConditionType, id, tenantFilterValue(ctx)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.DocumentConfigStep{}, ErrDocumentConfigNotFound
 	}
@@ -783,7 +861,8 @@ RETURNING id::text, screen_code, doc_format_code, position_code, position_name, 
 }
 
 func (s *Store) DeleteDocumentConfigStep(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM document_config_steps WHERE id = $1`, id)
+	tenant := tenantFilterValue(ctx)
+	tag, err := s.pool.Exec(ctx, `DELETE FROM document_config_steps WHERE id = $1 AND ($2 = '' OR sml_tenant = $2)`, id, tenant)
 	if err != nil {
 		return err
 	}
@@ -794,30 +873,34 @@ func (s *Store) DeleteDocumentConfigStep(ctx context.Context, id string) error {
 }
 
 func (s *Store) CountSignatureTemplateBoxesForConfig(ctx context.Context, screenCode, docFormatCode, positionCode string) (int, error) {
+	tenant := tenantFilterValue(ctx)
 	var count int
 	err := s.pool.QueryRow(ctx, `
 SELECT count(*)
 FROM signature_template_boxes b
 JOIN signature_templates t ON t.id = b.template_id
 WHERE t.status IN ('draft', 'active')
-  AND t.screen_code = $1
-  AND lower(t.doc_format_code) = lower($2)
-  AND lower(b.position_code) = lower($3)
-`, screenCode, docFormatCode, positionCode).Scan(&count)
+  AND ($1 = '' OR t.sml_tenant = $1)
+  AND t.screen_code = $2
+  AND lower(t.doc_format_code) = lower($3)
+  AND lower(b.position_code) = lower($4)
+`, tenant, screenCode, docFormatCode, positionCode).Scan(&count)
 	return count, err
 }
 
 func (s *Store) ListSignatureTemplateBoxPositionCounts(ctx context.Context, screenCode, docFormatCode string) (map[string]int, error) {
+	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, `
 SELECT b.position_code, count(*)
 FROM signature_template_boxes b
 JOIN signature_templates t ON t.id = b.template_id
 WHERE t.status IN ('draft', 'active')
-  AND t.screen_code = $1
-  AND lower(t.doc_format_code) = lower($2)
+  AND ($1 = '' OR t.sml_tenant = $1)
+  AND t.screen_code = $2
+  AND lower(t.doc_format_code) = lower($3)
 GROUP BY b.position_code
 ORDER BY lower(b.position_code)
-`, screenCode, docFormatCode)
+`, tenant, screenCode, docFormatCode)
 	if err != nil {
 		return nil, err
 	}
@@ -836,13 +919,14 @@ ORDER BY lower(b.position_code)
 }
 
 func (s *Store) ReplaceDocumentConfigWorkflow(ctx context.Context, screenCode, docFormatCode, expectedRevision string, steps []models.DocumentConfigStepRequest) ([]models.DocumentConfigStep, error) {
+	tenant := NormalizeSMLTenant(tenantFilterValue(ctx))
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, screenCode, strings.ToLower(docFormatCode)); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, tenant+":"+screenCode, strings.ToLower(docFormatCode)); err != nil {
 		return nil, err
 	}
 
@@ -856,20 +940,21 @@ func (s *Store) ReplaceDocumentConfigWorkflow(ctx context.Context, screenCode, d
 
 	if _, err := tx.Exec(ctx, `
 DELETE FROM document_config_steps
-WHERE screen_code = $1
-  AND lower(doc_format_code) = lower($2)
-`, screenCode, docFormatCode); err != nil {
+WHERE sml_tenant = $1
+  AND screen_code = $2
+  AND lower(doc_format_code) = lower($3)
+`, tenant, screenCode, docFormatCode); err != nil {
 		return nil, err
 	}
 
 	for _, step := range steps {
 		if _, err := tx.Exec(ctx, `
 INSERT INTO document_config_steps (
-    screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+    sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
     sequence_no, condition_type
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-`, screenCode, docFormatCode, step.PositionCode, step.PositionName, step.User01, step.User02, step.User03, step.SequenceNo, step.ConditionType); err != nil {
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+`, tenant, screenCode, docFormatCode, step.PositionCode, step.PositionName, step.User01, step.User02, step.User03, step.SequenceNo, step.ConditionType); err != nil {
 			if strings.Contains(err.Error(), "document_config_steps_unique_position_idx") {
 				return nil, ErrDocumentConfigDuplicate
 			}
@@ -888,17 +973,19 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 }
 
 func listDocumentConfigStepsTx(ctx context.Context, tx pgx.Tx, screenCode, docFormatCode string, forUpdate bool) ([]models.DocumentConfigStep, error) {
+	tenant := tenantFilterValue(ctx)
 	query := `
-SELECT id::text, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
+SELECT id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
        sequence_no, condition_type, created_at, updated_at
 FROM document_config_steps
-WHERE screen_code = $1
-  AND lower(doc_format_code) = lower($2)
+WHERE ($1 = '' OR sml_tenant = $1)
+  AND screen_code = $2
+  AND lower(doc_format_code) = lower($3)
 ORDER BY sequence_no, position_code`
 	if forUpdate {
 		query += ` FOR UPDATE`
 	}
-	rows, err := tx.Query(ctx, query, screenCode, docFormatCode)
+	rows, err := tx.Query(ctx, query, tenant, screenCode, docFormatCode)
 	if err != nil {
 		return nil, err
 	}
@@ -921,9 +1008,10 @@ func ComputeDocumentConfigWorkflowRevision(steps []models.DocumentConfigStep) st
 	for _, step := range steps {
 		_, _ = fmt.Fprintf(
 			hash,
-			"%s|%s|%s|%s|%s|%s|%s|%s|%.8f|%d|%s\n",
+			"%s|%s|%s|%s|%s|%s|%s|%s|%s|%.8f|%d|%s\n",
 			step.ID,
 			step.ScreenCode,
+			step.SMLTenant,
 			strings.ToUpper(step.DocFormatCode),
 			strings.ToLower(step.PositionCode),
 			step.PositionName,
@@ -1006,8 +1094,9 @@ RETURNING f.storage_path
 }
 
 func (s *Store) GetSignatureTemplateState(ctx context.Context, screenCode, docFormatCode string) (*models.SignatureTemplate, *models.SignatureTemplate, error) {
+	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, `
-SELECT t.id::text, t.screen_code, t.doc_format_code, t.version, t.status, COALESCE(t.sample_file_id::text, ''),
+SELECT t.id::text, t.sml_tenant, t.screen_code, t.doc_format_code, t.version, t.status, COALESCE(t.sample_file_id::text, ''),
        t.revision, COALESCE(t.created_by::text, ''), COALESCE(t.published_by::text, ''),
        t.created_at, t.updated_at, t.published_at, COALESCE(t.legal_notice_box, '{}'::jsonb)::text,
        COALESCE(f.id::text, ''), COALESCE(f.original_name, ''), COALESCE(f.stored_name, ''), COALESCE(f.storage_path, ''),
@@ -1015,11 +1104,12 @@ SELECT t.id::text, t.screen_code, t.doc_format_code, t.version, t.status, COALES
        COALESCE(f.sha256, ''), COALESCE(f.created_by::text, ''), f.created_at
 FROM signature_templates t
 LEFT JOIN uploaded_files f ON f.id = t.sample_file_id
-WHERE t.screen_code = $1
-  AND lower(t.doc_format_code) = lower($2)
+WHERE ($1 = '' OR t.sml_tenant = $1)
+  AND t.screen_code = $2
+  AND lower(t.doc_format_code) = lower($3)
   AND t.status IN ('draft', 'active')
 ORDER BY CASE t.status WHEN 'draft' THEN 0 ELSE 1 END, t.version DESC
-`, screenCode, docFormatCode)
+`, tenant, screenCode, docFormatCode)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1050,8 +1140,9 @@ ORDER BY CASE t.status WHEN 'draft' THEN 0 ELSE 1 END, t.version DESC
 }
 
 func (s *Store) FindSignatureTemplateByID(ctx context.Context, id string) (models.SignatureTemplate, error) {
+	tenant := tenantFilterValue(ctx)
 	template, err := scanSignatureTemplateWithFile(s.pool.QueryRow(ctx, `
-SELECT t.id::text, t.screen_code, t.doc_format_code, t.version, t.status, COALESCE(t.sample_file_id::text, ''),
+SELECT t.id::text, t.sml_tenant, t.screen_code, t.doc_format_code, t.version, t.status, COALESCE(t.sample_file_id::text, ''),
        t.revision, COALESCE(t.created_by::text, ''), COALESCE(t.published_by::text, ''),
        t.created_at, t.updated_at, t.published_at, COALESCE(t.legal_notice_box, '{}'::jsonb)::text,
        COALESCE(f.id::text, ''), COALESCE(f.original_name, ''), COALESCE(f.stored_name, ''), COALESCE(f.storage_path, ''),
@@ -1060,7 +1151,8 @@ SELECT t.id::text, t.screen_code, t.doc_format_code, t.version, t.status, COALES
 FROM signature_templates t
 LEFT JOIN uploaded_files f ON f.id = t.sample_file_id
 WHERE t.id = $1
-`, id))
+  AND ($2 = '' OR t.sml_tenant = $2)
+`, id, tenant))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.SignatureTemplate{}, ErrSignatureTemplateNotFound
 	}
@@ -1076,6 +1168,7 @@ WHERE t.id = $1
 }
 
 func (s *Store) UpsertActiveSignatureTemplateSample(ctx context.Context, screenCode, docFormatCode, uploadedFileID, actorUserID string) (models.SignatureTemplate, error) {
+	tenant := NormalizeSMLTenant(tenantFilterValue(ctx))
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return models.SignatureTemplate{}, err
@@ -1086,32 +1179,32 @@ func (s *Store) UpsertActiveSignatureTemplateSample(ctx context.Context, screenC
 	err = tx.QueryRow(ctx, `
 SELECT id::text
 FROM signature_templates
-WHERE screen_code = $1 AND lower(doc_format_code) = lower($2) AND status = 'active'
-`, screenCode, docFormatCode).Scan(&templateID)
+WHERE sml_tenant = $1 AND screen_code = $2 AND lower(doc_format_code) = lower($3) AND status = 'active'
+`, tenant, screenCode, docFormatCode).Scan(&templateID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.QueryRow(ctx, `
 WITH existing_draft AS (
     SELECT id
     FROM signature_templates
-    WHERE screen_code = $1 AND lower(doc_format_code) = lower($2) AND status = 'draft'
+    WHERE sml_tenant = $1 AND screen_code = $2 AND lower(doc_format_code) = lower($3) AND status = 'draft'
     ORDER BY version DESC
     LIMIT 1
 ),
 updated_draft AS (
     UPDATE signature_templates
     SET status = 'active',
-        sample_file_id = $3,
+        sample_file_id = $4,
         legal_notice_box = '{}'::jsonb,
         revision = revision + 1,
-        published_by = NULLIF($4, '')::uuid,
+        published_by = NULLIF($5, '')::uuid,
         published_at = now(),
         updated_at = now()
     WHERE id = (SELECT id FROM existing_draft)
     RETURNING id::text
 ),
 created AS (
-    INSERT INTO signature_templates (screen_code, doc_format_code, version, status, sample_file_id, created_by, published_by, published_at)
-    SELECT $1, $2, 1, 'active', $3, NULLIF($4, '')::uuid, NULLIF($4, '')::uuid, now()
+    INSERT INTO signature_templates (sml_tenant, screen_code, doc_format_code, version, status, sample_file_id, created_by, published_by, published_at)
+    SELECT $1, $2, $3, 1, 'active', $4, NULLIF($5, '')::uuid, NULLIF($5, '')::uuid, now()
     WHERE NOT EXISTS (SELECT 1 FROM updated_draft)
     RETURNING id::text
 )
@@ -1119,7 +1212,7 @@ SELECT id FROM updated_draft
 UNION ALL
 SELECT id FROM created
 LIMIT 1
-`, screenCode, docFormatCode, uploadedFileID, actorUserID).Scan(&templateID); err != nil {
+`, tenant, screenCode, docFormatCode, uploadedFileID, actorUserID).Scan(&templateID); err != nil {
 			return models.SignatureTemplate{}, err
 		}
 	} else if err != nil {
@@ -1148,11 +1241,12 @@ WHERE id = $3 AND status = 'active'
 
 	if _, err := tx.Exec(ctx, `
 DELETE FROM signature_templates
-WHERE screen_code = $1
-  AND lower(doc_format_code) = lower($2)
+WHERE sml_tenant = $1
+  AND screen_code = $2
+  AND lower(doc_format_code) = lower($3)
   AND status = 'draft'
-  AND id <> $3
-`, screenCode, docFormatCode, templateID); err != nil {
+  AND id <> $4
+`, tenant, screenCode, docFormatCode, templateID); err != nil {
 		return models.SignatureTemplate{}, err
 	}
 
@@ -1187,6 +1281,7 @@ ORDER BY page_no, lower(position_code), signer_slot
 }
 
 func (s *Store) ReplaceSignatureTemplateBoxes(ctx context.Context, templateID string, revision int, boxes []models.SignatureTemplateBoxRequest, legalNoticeBox *models.LegalNoticeBoxRequest) (models.SignatureTemplate, error) {
+	tenant := tenantFilterValue(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return models.SignatureTemplate{}, err
@@ -1195,7 +1290,7 @@ func (s *Store) ReplaceSignatureTemplateBoxes(ctx context.Context, templateID st
 
 	var status string
 	var currentRevision int
-	if err := tx.QueryRow(ctx, `SELECT status, revision FROM signature_templates WHERE id = $1`, templateID).Scan(&status, &currentRevision); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT status, revision FROM signature_templates WHERE id = $1 AND ($2 = '' OR sml_tenant = $2)`, templateID, tenant).Scan(&status, &currentRevision); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.SignatureTemplate{}, ErrSignatureTemplateNotFound
 		}
@@ -1243,18 +1338,20 @@ WHERE id = $1
 }
 
 func (s *Store) PublishSignatureTemplate(ctx context.Context, templateID, actorUserID string) (models.SignatureTemplate, error) {
+	tenant := tenantFilterValue(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return models.SignatureTemplate{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var screenCode, docFormatCode, status string
+	var templateTenant, screenCode, docFormatCode, status string
 	if err := tx.QueryRow(ctx, `
-SELECT screen_code, doc_format_code, status
+SELECT sml_tenant, screen_code, doc_format_code, status
 FROM signature_templates
 WHERE id = $1
-`, templateID).Scan(&screenCode, &docFormatCode, &status); err != nil {
+  AND ($2 = '' OR sml_tenant = $2)
+`, templateID, tenant).Scan(&templateTenant, &screenCode, &docFormatCode, &status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.SignatureTemplate{}, ErrSignatureTemplateNotFound
 		}
@@ -1270,7 +1367,8 @@ SET status = 'archived', updated_at = now()
 WHERE screen_code = $1
   AND lower(doc_format_code) = lower($2)
   AND status = 'active'
-`, screenCode, docFormatCode); err != nil {
+  AND sml_tenant = $3
+`, screenCode, docFormatCode, templateTenant); err != nil {
 		return models.SignatureTemplate{}, err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -1313,6 +1411,7 @@ func scanDocumentConfigStep(row rowScanner) (models.DocumentConfigStep, error) {
 	var step models.DocumentConfigStep
 	err := row.Scan(
 		&step.ID,
+		&step.SMLTenant,
 		&step.ScreenCode,
 		&step.DocFormatCode,
 		&step.PositionCode,
@@ -1355,6 +1454,7 @@ func scanSignatureTemplateWithFile(row rowScanner) (models.SignatureTemplate, er
 	var fileCreatedAt sql.NullTime
 	err := row.Scan(
 		&template.ID,
+		&template.SMLTenant,
 		&template.ScreenCode,
 		&template.DocFormatCode,
 		&template.Version,
@@ -1452,6 +1552,44 @@ func parseLegalNoticeSnapshot(raw string) *models.LegalNoticeSnapshot {
 		return nil
 	}
 	return &snapshot
+}
+
+func parseLegalNoticeSnapshots(raw string) []models.LegalNoticeSnapshot {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" || raw == "null" {
+		return nil
+	}
+	var snapshots []models.LegalNoticeSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshots); err != nil {
+		return nil
+	}
+	out := make([]models.LegalNoticeSnapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if snapshot.Text == "" || snapshot.PageNo <= 0 || snapshot.WidthRatio <= 0 || snapshot.HeightRatio <= 0 {
+			continue
+		}
+		out = append(out, snapshot)
+	}
+	return out
+}
+
+func parseSignaturePlacementSnapshots(raw string) []models.SignaturePlacementSnapshot {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" || raw == "null" {
+		return nil
+	}
+	var snapshots []models.SignaturePlacementSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshots); err != nil {
+		return nil
+	}
+	out := make([]models.SignaturePlacementSnapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if strings.TrimSpace(snapshot.PositionCode) == "" || snapshot.PageNo <= 0 || snapshot.WidthRatio <= 0 || snapshot.HeightRatio <= 0 {
+			continue
+		}
+		out = append(out, snapshot)
+	}
+	return out
 }
 
 func scanSignatureTemplateBox(row rowScanner) (models.SignatureTemplateBox, error) {

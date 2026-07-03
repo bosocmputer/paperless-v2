@@ -1,6 +1,7 @@
 <script setup>
 import { api } from '@/services/api';
 import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
+import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -20,7 +21,6 @@ const documents = ref([]);
 const selectedNode = ref(null);
 const detailVisible = ref(false);
 const pdfDialog = ref(false);
-const pdfLoading = ref(false);
 const pdfUrl = ref('');
 const pdfTitle = ref('');
 
@@ -58,7 +58,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-    clearPDFUrl();
+    clearPDFPreview();
 });
 
 function normalizeInputs() {
@@ -160,7 +160,7 @@ function smlSeverity(node) {
 }
 
 function currentPdfLabel(node) {
-    if (node.hasFinalPdf) return 'มี PDF ที่เซ็นครบ';
+    if (node.hasFinalPdf) return 'มีหลักฐานการลงนาม';
     if (node.hasCurrentPdf) return 'มี PDF ล่าสุด';
     return 'ยังไม่มี PDF';
 }
@@ -180,7 +180,7 @@ function documentLine(doc) {
 }
 
 function documentPdfLabel(doc) {
-    if (doc.finalFileId) return 'มี PDF ที่เซ็นครบ';
+    if (doc.finalFileId) return 'มีหลักฐานการลงนาม';
     if (doc.currentFileId) return 'มี PDF ล่าสุด';
     return 'ยังไม่มี PDF';
 }
@@ -229,33 +229,22 @@ function startUpload(node) {
     });
 }
 
-async function previewPDF(node, version) {
-    const url = version === 'final' ? node.signedPdfUrl : node.currentPdfUrl;
+function previewPDF(node, version) {
+    const rawUrl = version === 'final' ? node.signedPdfUrl : node.currentPdfUrl;
+    const url = api.withPDFCacheKey(rawUrl, api.signingDocumentPDFCacheKey(node, version));
     if (!url) {
-        toast.add({ severity: 'warn', summary: 'ยังไม่มี PDF', detail: version === 'final' ? 'เอกสารยังไม่มี PDF ที่เซ็นครบ' : 'เอกสารยังไม่มี PDF ล่าสุด', life: 3000 });
+        toast.add({ severity: 'warn', summary: 'ยังไม่มี PDF', detail: version === 'final' ? 'เอกสารยังไม่มีหลักฐานการลงนาม' : 'เอกสารยังไม่มี PDF ล่าสุด', life: 3000 });
         return;
     }
     recordEvent('document_flow_pdf_open', { nodeCount: nodes.value.length, docFormatCode: node?.doc_format_code || docFormatCode.value });
-    clearPDFUrl();
-    pdfLoading.value = true;
+    pdfUrl.value = url;
+    pdfTitle.value = `${node?.doc_no || 'เอกสาร'} · ${version === 'final' ? 'หลักฐานการลงนาม' : 'PDF ล่าสุด'}`;
     pdfDialog.value = true;
-    pdfTitle.value = `${node?.doc_no || 'เอกสาร'} · ${version === 'final' ? 'PDF ที่เซ็นครบแล้ว' : 'PDF ล่าสุด'}`;
-    try {
-        const response = await fetch(url, { headers: api.authHeaders() });
-        if (!response.ok) throw new Error('โหลด PDF ไม่สำเร็จ');
-        const blob = await response.blob();
-        pdfUrl.value = URL.createObjectURL(blob);
-    } catch (err) {
-        toast.add({ severity: 'error', summary: 'เปิด PDF ไม่สำเร็จ', detail: err?.message || 'กรุณาลองใหม่', life: 3500 });
-        pdfDialog.value = false;
-    } finally {
-        pdfLoading.value = false;
-    }
 }
 
-function clearPDFUrl() {
-    if (pdfUrl.value) URL.revokeObjectURL(pdfUrl.value);
+function clearPDFPreview() {
     pdfUrl.value = '';
+    pdfTitle.value = '';
 }
 
 function recordEvent(event, extra = {}) {
@@ -442,7 +431,7 @@ function recordEvent(event, extra = {}) {
                                 <Button icon="pi pi-info-circle" rounded outlined severity="secondary" aria-label="ข้อมูล SML" @click="openInfo(data)" />
                                 <Button v-if="data.canOpenPaperless" icon="pi pi-external-link" rounded outlined severity="secondary" aria-label="เปิดเอกสาร" @click="openPaperless(data)" />
                                 <Button v-if="data.canViewCurrentPdf" icon="pi pi-file-pdf" rounded outlined severity="secondary" aria-label="ดู PDF ล่าสุด" @click="previewPDF(data, 'current')" />
-                                <Button v-if="data.canViewSignedPdf" icon="pi pi-check-circle" rounded outlined severity="success" aria-label="ดู PDF ที่เซ็นครบแล้ว" @click="previewPDF(data, 'final')" />
+                                <Button v-if="data.canViewSignedPdf" icon="pi pi-shield" rounded outlined severity="success" aria-label="ดูหลักฐานการลงนาม" @click="previewPDF(data, 'final')" />
                                 <Button v-if="!data.paperlessStatus" label="ส่งเข้า PaperLess" icon="pi pi-send" size="small" @click="startUpload(data)" />
                             </div>
                         </template>
@@ -489,7 +478,7 @@ function recordEvent(event, extra = {}) {
                     </Column>
                     <Column header="PDF" style="min-width: 11rem">
                         <template #body="{ data }">
-                            <Tag :value="data.hasFinalPdf ? 'มี PDF เซ็นครบ' : data.hasCurrentPdf ? 'มี PDF ล่าสุด' : 'ยังไม่มี PDF'" :severity="data.hasFinalPdf ? 'success' : data.hasCurrentPdf ? 'info' : 'secondary'" />
+                            <Tag :value="data.hasFinalPdf ? 'มีหลักฐานการลงนาม' : data.hasCurrentPdf ? 'มี PDF ล่าสุด' : 'ยังไม่มี PDF'" :severity="data.hasFinalPdf ? 'success' : data.hasCurrentPdf ? 'info' : 'secondary'" />
                         </template>
                     </Column>
                     <Column header="อัปเดตล่าสุด" style="min-width: 12rem">
@@ -507,16 +496,7 @@ function recordEvent(event, extra = {}) {
             </template>
         </Dialog>
 
-        <Dialog v-model:visible="pdfDialog" modal :header="pdfTitle" :style="{ width: 'min(72rem, 96vw)' }" @hide="clearPDFUrl">
-            <div v-if="pdfLoading" class="empty-state">
-                <i class="pi pi-spin pi-spinner"></i>
-                <strong>กำลังโหลด PDF</strong>
-            </div>
-            <iframe v-else-if="pdfUrl" :src="pdfUrl" class="pdf-frame" title="PDF preview"></iframe>
-            <template #footer>
-                <Button label="ปิด" severity="secondary" outlined @click="pdfDialog = false" />
-            </template>
-        </Dialog>
+        <ReadOnlyPdfDialog v-model:visible="pdfDialog" :url="pdfUrl" :title="pdfTitle" />
     </div>
 </template>
 
@@ -550,13 +530,6 @@ function recordEvent(event, extra = {}) {
     margin: 0;
     min-width: 0;
     overflow-wrap: anywhere;
-}
-
-.pdf-frame {
-    width: 100%;
-    height: min(72vh, 52rem);
-    border: 1px solid var(--surface-border);
-    border-radius: 8px;
 }
 
 @media (max-width: 640px) {

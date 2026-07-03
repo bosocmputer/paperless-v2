@@ -34,6 +34,12 @@ export function documentProgressIssue(document) {
             message: 'เอกสารเซ็นครบแล้ว แต่ยังสร้าง PDF หลักฐานไม่สำเร็จ ต้องสร้าง PDF อีกครั้งก่อนพิมพ์หรือส่งสถานะกลับ SML'
         };
     }
+    if (status === 'completed_image_failed') {
+        return {
+            severity: 'error',
+            message: 'เอกสารเซ็นครบและสร้าง PDF แล้ว แต่ยังส่งรูปเอกสารเข้า SML ไม่สำเร็จ ต้องส่งรูป SML อีกครั้งก่อน Lock SML หรือพิมพ์เอกสาร'
+        };
+    }
     if (status === 'completed_lock_failed') {
         return {
             severity: 'warn',

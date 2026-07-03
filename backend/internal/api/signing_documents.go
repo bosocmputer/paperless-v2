@@ -25,6 +25,7 @@ import (
 const (
 	signingLegalTextVersion             = "thai-eta-2544-v2"
 	signingLegalNoticePDFDisplayVersion = "thai-safe-v4"
+	signatureTransparencyVersion        = "transparent-v1"
 	signingLegalText                    = "เอกสารนี้จัดทำและลงนามในรูปแบบอิเล็กทรอนิกส์ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ผู้ลงนามยืนยันความถูกต้องของเนื้อหาและยอมรับผลผูกพันทางกฎหมายทุกประการ"
 	maxSigningEventBytes                = 8 * 1024
 )
@@ -84,6 +85,7 @@ type createSigningDocumentRequest struct {
 	ConfirmLocked       bool                                 `json:"confirmLocked"`
 	LayoutBoxes         []models.SignatureTemplateBoxRequest `json:"layoutBoxes"`
 	LegalNoticeBox      *models.LegalNoticeBoxRequest        `json:"legalNoticeBox"`
+	LegalNoticeBoxes    []models.LegalNoticeBoxRequest       `json:"legalNoticeBoxes"`
 }
 
 type signingCreateEventRequest struct {
@@ -177,6 +179,11 @@ func (s *Server) getSigningDocumentUploadPDF(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "upload_failed", "Cannot load uploaded PDF right now.")
 		return
 	}
+	serveInlinePDF(w, r, file)
+}
+
+func serveInlinePDF(w http.ResponseWriter, r *http.Request, file models.UploadedFile) {
+	setNoStoreHeaders(w)
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", file.OriginalName))
 	http.ServeFile(w, r, file.StoragePath)
@@ -276,22 +283,26 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "document_config_required", "Document config is required before sending for signature.")
 		return
 	}
-	layoutBoxes, selectedConfigs, issues := validateSigningDocumentLayout(req.LayoutBoxes, configs, uploaded.PageCount)
+	layoutBoxes, selectedConfigs, signaturePlacements, issues := validateSigningDocumentLayout(req.LayoutBoxes, configs, uploaded.PageCount)
 	if len(issues) == 0 {
 		issues = append(issues, s.inactiveSigningLayoutUserIssues(r.Context(), selectedConfigs, layoutBoxes)...)
 	}
-	legalNoticeBox, legalNoticeIssues := normalizeAndValidateLegalNoticeBox(req.LegalNoticeBox, uploaded.PageCount, true)
+	legalNoticeBoxes, legalNoticeIssues := normalizeAndValidateLegalNoticeBoxes(req.LegalNoticeBoxes, req.LegalNoticeBox, uploaded.PageCount, true)
 	issues = append(issues, legalNoticeIssues...)
 	if len(issues) > 0 {
 		writeValidationIssues(w, http.StatusBadRequest, "signature_layout_invalid", issues)
 		return
 	}
-	legalNoticeSource := "per_document"
-	if legalNoticeBox.Source == "preset" || (legalNoticeBox.Source == "" && req.SignatureTemplateID != "") {
-		legalNoticeSource = "preset"
+	legalNoticeSnapshots := make([]models.LegalNoticeSnapshot, 0, len(legalNoticeBoxes))
+	for _, box := range legalNoticeBoxes {
+		legalNoticeSource := "per_document"
+		if box.Source == "preset" || (box.Source == "" && req.SignatureTemplateID != "") {
+			legalNoticeSource = "preset"
+		}
+		legalNoticeSnapshots = append(legalNoticeSnapshots, legalNoticeSnapshotFromBox(box, legalNoticeSource))
 	}
-	legalNoticeSnapshot := legalNoticeSnapshotFromBox(*legalNoticeBox, legalNoticeSource)
-	currentFile, ok := s.createInitialLegalNoticePDF(w, r, uploaded, legalNoticeSnapshot, actor.ID)
+	legalNoticeSnapshot := legalNoticeSnapshots[0]
+	currentFile, ok := s.createInitialLegalNoticePDF(w, r, uploaded, legalNoticeSnapshots, actor.ID)
 	if !ok {
 		return
 	}
@@ -301,15 +312,22 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		"signatureTemplateId": req.SignatureTemplateID,
 		"pageCount":           uploaded.PageCount,
 		"boxes":               layoutBoxes,
-		"legalNoticeBox":      legalNoticeBox,
+		"signaturePlacements": signaturePlacements,
+		"legalNoticeBox":      legalNoticeBoxes[0],
+		"legalNoticeBoxes":    legalNoticeBoxes,
 	}
+	session, _ := currentSession(r)
 	document, err := s.store.CreateSigningDocument(r.Context(), store.CreateSigningDocumentInput{
 		ScreenCode:          screenCode,
 		Format:              format,
 		Candidate:           candidate,
+		SMLDataGroup:        session.SMLDataGroup,
+		SMLDataCode:         session.SMLDataCode,
 		SignatureTemplateID: req.SignatureTemplateID,
 		TemplateSnapshot:    layoutSnapshot,
 		LegalNoticeSnapshot: legalNoticeSnapshot,
+		LegalNoticeBoxes:    legalNoticeSnapshots,
+		SignaturePlacements: signaturePlacements,
 		LayoutBoxes:         layoutBoxes,
 		Configs:             selectedConfigs,
 		File:                uploaded,
@@ -377,12 +395,20 @@ func enrichSigningDocumentReferenceForAdminValue(ref models.SigningDocumentRefer
 	ref.CanViewCurrentPDF = ref.CanOpenPaperless && ref.HasCurrentPDF
 	ref.CanViewSignedPDF = ref.CanOpenPaperless && ref.HasFinalPDF
 	if ref.CanViewCurrentPDF {
-		ref.CurrentPDFURL = fmt.Sprintf("/api/signing-documents/%s/pdf?version=current", ref.ID)
+		ref.CurrentPDFURL = signingDocumentPDFURL(ref.ID, "current", ref.UpdatedAt)
 	}
 	if ref.CanViewSignedPDF {
-		ref.SignedPDFURL = fmt.Sprintf("/api/signing-documents/%s/pdf?version=final", ref.ID)
+		ref.SignedPDFURL = signingDocumentPDFURL(ref.ID, "final", ref.UpdatedAt)
 	}
 	return ref
+}
+
+func signingDocumentPDFURL(documentID, version string, updatedAt time.Time) string {
+	url := fmt.Sprintf("/api/signing-documents/%s/pdf?version=%s", documentID, version)
+	if !updatedAt.IsZero() {
+		url = fmt.Sprintf("%s&v=%d", url, updatedAt.UTC().UnixNano())
+	}
+	return url
 }
 
 func (s *Server) sendSigningDocument(w http.ResponseWriter, r *http.Request) {
@@ -434,10 +460,17 @@ func (s *Server) confirmSigningDocument(w http.ResponseWriter, r *http.Request) 
 	if _, err := s.store.PrepareSigningDocumentConfirmation(r.Context(), documentID, actor.ID, clientIP(r), r.UserAgent()); s.writeSigningDocumentTransitionError(w, err, "confirm_signing_document_failed", "Cannot confirm signing document right now.") {
 		return
 	}
-	finalOK, lockOK := s.finalizeCompletedDocument(r.Context(), documentID, clientIP(r), r.UserAgent())
+	result := s.finalizeCompletedDocument(r.Context(), documentID, clientIP(r), r.UserAgent())
 	updated, _ := s.store.FindSigningDocumentByID(r.Context(), documentID)
-	payload := map[string]any{"document": s.withExternalURLs(r, updated), "finalOk": finalOK, "lockOk": lockOK}
-	if lockOK {
+	payload := map[string]any{
+		"document": s.withExternalURLs(r, updated),
+		"finalOk":  result.FinalOK,
+		"imageOk":  result.ImageOK,
+		"lockOk":   result.LockOK,
+		"image":    result.ImageMetadata,
+		"lock":     result.LockMetadata,
+	}
+	if result.LockOK {
 		_ = s.store.AddSigningEvent(context.Background(), documentID, actor.ID, "", "document_confirmed", "ผู้ดูแลยืนยันเอกสารเรียบร้อยแล้ว", clientIP(r), r.UserAgent(), nil)
 		updated, _ = s.store.FindSigningDocumentByID(r.Context(), documentID)
 		payload["document"] = s.withExternalURLs(r, updated)
@@ -519,6 +552,13 @@ func (s *Server) decodeCreateSigningDocumentRequest(w http.ResponseWriter, r *ht
 				return req, false
 			}
 		}
+		rawLegalNoticeBoxes := firstNonEmpty(r.FormValue("legalNoticeBoxes"), r.FormValue("legal_notice_boxes"))
+		if rawLegalNoticeBoxes != "" {
+			if err := json.Unmarshal([]byte(rawLegalNoticeBoxes), &req.LegalNoticeBoxes); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_legal_notice_boxes", "legal_notice_boxes must be valid JSON.")
+				return req, false
+			}
+		}
 		return req, true
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
@@ -531,12 +571,12 @@ func (s *Server) decodeCreateSigningDocumentRequest(w http.ResponseWriter, r *ht
 	return req, true
 }
 
-func (s *Server) createInitialLegalNoticePDF(w http.ResponseWriter, r *http.Request, uploaded models.UploadedFile, legalNotice models.LegalNoticeSnapshot, actorID string) (models.UploadedFile, bool) {
+func (s *Server) createInitialLegalNoticePDF(w http.ResponseWriter, r *http.Request, uploaded models.UploadedFile, legalNotices []models.LegalNoticeSnapshot, actorID string) (models.UploadedFile, bool) {
 	if uploaded.StoragePath == "" || uploaded.PageCount <= 0 {
 		writeError(w, http.StatusBadRequest, "document_pdf_invalid", "Uploaded PDF is invalid.")
 		return models.UploadedFile{}, false
 	}
-	stamped, err := stampPDFWithSignaturesAndLegalNotice(uploaded.StoragePath, uploaded.PageCount, nil, nil, &legalNotice)
+	stamped, err := stampPDFWithSignaturePlacementsAndLegalNotices(uploaded.StoragePath, uploaded.PageCount, nil, nil, nil, legalNotices, nil)
 	if err != nil {
 		s.logger.Error("create initial legal notice pdf failed", "error", err, "fileID", uploaded.ID)
 		writeError(w, http.StatusInternalServerError, "pdf_legal_notice_failed", "Cannot add legal notice to the PDF right now.")
@@ -557,7 +597,7 @@ func (s *Server) createInitialLegalNoticePDF(w http.ResponseWriter, r *http.Requ
 }
 
 func currentPDFNeedsLegalNoticeRefresh(document models.SigningDocument) bool {
-	if document.LegalNoticeSnapshot == nil {
+	if len(documentLegalNotices(document)) == 0 {
 		return false
 	}
 	for _, event := range document.Events {
@@ -565,6 +605,21 @@ func currentPDFNeedsLegalNoticeRefresh(document models.SigningDocument) bool {
 			continue
 		}
 		if metadataBool(event.Metadata, "legalNoticeStamped") && metadataString(event.Metadata, "legalNoticeDisplayVersion") == signingLegalNoticePDFDisplayVersion {
+			return false
+		}
+	}
+	return true
+}
+
+func currentPDFNeedsSignatureTransparencyRefresh(document models.SigningDocument) bool {
+	if len(signedDocumentSigners(document.Signers)) == 0 {
+		return false
+	}
+	for _, event := range document.Events {
+		if event.Action != "pdf_stamped" && event.Action != "final_pdf_ready" {
+			continue
+		}
+		if metadataString(event.Metadata, "signatureTransparencyVersion") == signatureTransparencyVersion {
 			return false
 		}
 	}
@@ -635,8 +690,8 @@ func normalizeSigningCreateEventMetadata(req signingCreateEventRequest) (map[str
 	return metadata, nil
 }
 
-func validateSigningDocumentLayout(boxes []models.SignatureTemplateBoxRequest, configs []models.DocumentConfigStep, pageCount int) ([]models.SignatureTemplateBoxRequest, []models.DocumentConfigStep, []models.SignatureValidationIssue) {
-	normalized, issues := normalizeAndValidateBoxRequests(boxes, pageCount)
+func validateSigningDocumentLayout(boxes []models.SignatureTemplateBoxRequest, configs []models.DocumentConfigStep, pageCount int) ([]models.SignatureTemplateBoxRequest, []models.DocumentConfigStep, []models.SignaturePlacementSnapshot, []models.SignatureValidationIssue) {
+	normalized, issues := normalizeAndValidateSigningDocumentPlacements(boxes, pageCount)
 	if len(normalized) == 0 {
 		issues = append(issues, signatureIssue("layout_box_required", "", "Add at least one signature box before sending the document."))
 	}
@@ -654,40 +709,50 @@ func validateSigningDocumentLayout(boxes []models.SignatureTemplateBoxRequest, c
 		}
 	}
 
-	outBoxes := []models.SignatureTemplateBoxRequest{}
+	taskBoxes := []models.SignatureTemplateBoxRequest{}
 	selected := []models.DocumentConfigStep{}
+	placements := []models.SignaturePlacementSnapshot{}
 	for _, step := range configs {
 		key := strings.ToLower(strings.TrimSpace(step.PositionCode))
 		positionBoxes := boxesByPosition[key]
 		if len(positionBoxes) == 0 {
 			continue
 		}
+		sortPlacementBoxes(positionBoxes)
 		selected = append(selected, step)
 		switch step.ConditionType {
 		case 1:
 			if len(stepUsers(step)) == 0 {
 				issues = append(issues, signatureIssue("condition_any_users_required", step.PositionCode, fmt.Sprintf("%s needs at least one configured user.", step.PositionName)))
 			}
-			if len(positionBoxes) != 1 {
-				issues = append(issues, signatureIssue("condition_any_box_count_invalid", step.PositionCode, fmt.Sprintf("%s needs exactly one signature box.", step.PositionName)))
-			}
 			for i := range positionBoxes {
 				positionBoxes[i].SignerType = "any"
 				positionBoxes[i].SignerUser = ""
 				positionBoxes[i].SignerSlot = 1
+				placements = append(placements, signaturePlacementSnapshotFromBox(step, positionBoxes[i], "any", "", "", 1))
 			}
+			taskBoxes = append(taskBoxes, positionBoxes[0])
 		case 2:
-			required := map[string]string{}
-			for _, user := range stepUsers(step) {
-				username, _ := splitSignerUser(user)
+			required := map[string]struct {
+				Full    string
+				Slot    int
+				Display string
+			}{}
+			for index, user := range stepUsers(step) {
+				username, display := splitSignerUser(user)
 				if username != "" {
-					required[strings.ToLower(username)] = user
+					required[strings.ToLower(username)] = struct {
+						Full    string
+						Slot    int
+						Display string
+					}{Full: user, Slot: index + 1, Display: display}
 				}
 			}
 			if len(required) == 0 {
 				issues = append(issues, signatureIssue("condition_all_users_required", step.PositionCode, fmt.Sprintf("%s needs at least one configured user.", step.PositionName)))
 			}
-			seen := map[string]bool{}
+			seen := map[string]int{}
+			primaryByUser := map[string]models.SignatureTemplateBoxRequest{}
 			for i := range positionBoxes {
 				positionBoxes[i].SignerType = "internal"
 				username, _ := splitSignerUser(positionBoxes[i].SignerUser)
@@ -696,43 +761,145 @@ func validateSigningDocumentLayout(boxes []models.SignatureTemplateBoxRequest, c
 					issues = append(issues, signatureIssue("condition_all_user_required", step.PositionCode, fmt.Sprintf("%s requires a signer user on every box.", step.PositionName)))
 					continue
 				}
-				fullUser, ok := required[key]
+				requiredUser, ok := required[key]
 				if !ok {
 					issues = append(issues, signatureIssue("condition_all_unknown_user_box", step.PositionCode, fmt.Sprintf("%s has a box for a user outside this position: %s.", step.PositionName, username)))
 					continue
 				}
-				if seen[key] {
-					issues = append(issues, signatureIssue("condition_all_duplicate_user_box", step.PositionCode, fmt.Sprintf("%s has duplicate boxes for %s.", step.PositionName, fullUser)))
+				seen[key]++
+				positionBoxes[i].SignerUser = requiredUser.Full
+				positionBoxes[i].SignerSlot = requiredUser.Slot
+				placements = append(placements, signaturePlacementSnapshotFromBox(step, positionBoxes[i], "internal", username, requiredUser.Display, requiredUser.Slot))
+				if _, ok := primaryByUser[key]; !ok {
+					primaryByUser[key] = positionBoxes[i]
+				}
+			}
+			for _, user := range stepUsers(step) {
+				username, _ := splitSignerUser(user)
+				key := strings.ToLower(username)
+				if key == "" {
 					continue
 				}
-				seen[key] = true
-				positionBoxes[i].SignerUser = fullUser
-				positionBoxes[i].SignerSlot = len(seen)
+				requiredUser := required[key]
+				if seen[key] == 0 {
+					issues = append(issues, signatureIssue("condition_all_missing_user_box", step.PositionCode, fmt.Sprintf("%s needs a signature box for %s.", step.PositionName, requiredUser.Full)))
+					continue
+				}
+				taskBoxes = append(taskBoxes, primaryByUser[key])
 			}
 		case 3:
-			if len(positionBoxes) != 1 {
-				issues = append(issues, signatureIssue("condition_external_box_count_invalid", step.PositionCode, fmt.Sprintf("%s needs exactly one external signer box.", step.PositionName)))
-			}
 			for i := range positionBoxes {
 				positionBoxes[i].SignerType = "external"
 				positionBoxes[i].SignerUser = ""
 				positionBoxes[i].SignerSlot = 1
+				placements = append(placements, signaturePlacementSnapshotFromBox(step, positionBoxes[i], "external", "", "บุคคลภายนอก", 1))
 			}
+			taskBoxes = append(taskBoxes, positionBoxes[0])
 		default:
 			issues = append(issues, signatureIssue("condition_type_invalid", step.PositionCode, fmt.Sprintf("%s uses unsupported condition type.", step.PositionName)))
 		}
-		outBoxes = append(outBoxes, positionBoxes...)
 	}
-	sort.SliceStable(outBoxes, func(i, j int) bool {
-		if outBoxes[i].PositionCode == outBoxes[j].PositionCode {
-			return outBoxes[i].SignerSlot < outBoxes[j].SignerSlot
+	sort.SliceStable(taskBoxes, func(i, j int) bool {
+		if taskBoxes[i].PositionCode == taskBoxes[j].PositionCode {
+			return taskBoxes[i].SignerSlot < taskBoxes[j].SignerSlot
 		}
-		return outBoxes[i].PositionCode < outBoxes[j].PositionCode
+		return taskBoxes[i].PositionCode < taskBoxes[j].PositionCode
+	})
+	sort.SliceStable(placements, func(i, j int) bool {
+		if placements[i].SequenceNo == placements[j].SequenceNo {
+			if placements[i].PositionCode == placements[j].PositionCode {
+				if placements[i].SignerSlot == placements[j].SignerSlot {
+					return placements[i].PageNo < placements[j].PageNo
+				}
+				return placements[i].SignerSlot < placements[j].SignerSlot
+			}
+			return placements[i].PositionCode < placements[j].PositionCode
+		}
+		return placements[i].SequenceNo < placements[j].SequenceNo
 	})
 	sort.SliceStable(issues, func(i, j int) bool {
 		return issues[i].PositionCode < issues[j].PositionCode
 	})
-	return outBoxes, selected, issues
+	return taskBoxes, selected, placements, issues
+}
+
+const (
+	minSignatureBoxWidthRatio  = 0.03
+	minSignatureBoxHeightRatio = 0.03
+)
+
+func normalizeAndValidateSigningDocumentPlacements(boxes []models.SignatureTemplateBoxRequest, maxPages int) ([]models.SignatureTemplateBoxRequest, []models.SignatureValidationIssue) {
+	normalized := make([]models.SignatureTemplateBoxRequest, 0, len(boxes))
+	issues := []models.SignatureValidationIssue{}
+	for index, box := range boxes {
+		box.PositionCode = strings.TrimSpace(box.PositionCode)
+		box.SignerType = strings.ToLower(strings.TrimSpace(box.SignerType))
+		box.SignerUser = strings.TrimSpace(box.SignerUser)
+		box.Label = strings.TrimSpace(box.Label)
+		if box.SignerType == "" {
+			box.SignerType = "any"
+		}
+		if box.SignerSlot == 0 {
+			box.SignerSlot = index + 1
+		}
+		if box.PositionCode == "" {
+			issues = append(issues, signatureIssue("box_position_required", "", "Every signature box must choose a position."))
+		}
+		if box.SignerType != "any" && box.SignerType != "internal" && box.SignerType != "external" {
+			issues = append(issues, signatureIssue("box_signer_type_invalid", box.PositionCode, "Signer type must be any, internal, or external."))
+		}
+		if box.SignerSlot <= 0 {
+			issues = append(issues, signatureIssue("box_signer_slot_invalid", box.PositionCode, "Signer slot must be greater than 0."))
+		}
+		if box.PageNo <= 0 || box.PageNo > maxPages {
+			issues = append(issues, signatureIssue("box_page_invalid", box.PositionCode, fmt.Sprintf("Page must be between 1 and %d.", maxPages)))
+		}
+		if box.XRatio < 0 || box.YRatio < 0 || box.WidthRatio <= 0 || box.HeightRatio <= 0 || box.XRatio+box.WidthRatio > 1 || box.YRatio+box.HeightRatio > 1 {
+			issues = append(issues, signatureIssue("box_bounds_invalid", box.PositionCode, "Signature box must stay inside the PDF page."))
+		}
+		if box.WidthRatio < minSignatureBoxWidthRatio || box.HeightRatio < minSignatureBoxHeightRatio {
+			issues = append(issues, signatureIssue("box_too_small", box.PositionCode, "Signature box is too small to sign clearly."))
+		}
+		normalized = append(normalized, box)
+	}
+	return normalized, issues
+}
+
+func sortPlacementBoxes(boxes []models.SignatureTemplateBoxRequest) {
+	sort.SliceStable(boxes, func(i, j int) bool {
+		if boxes[i].PageNo == boxes[j].PageNo {
+			if boxes[i].SignerSlot == boxes[j].SignerSlot {
+				if boxes[i].YRatio == boxes[j].YRatio {
+					return boxes[i].XRatio < boxes[j].XRatio
+				}
+				return boxes[i].YRatio < boxes[j].YRatio
+			}
+			return boxes[i].SignerSlot < boxes[j].SignerSlot
+		}
+		return boxes[i].PageNo < boxes[j].PageNo
+	})
+}
+
+func signaturePlacementSnapshotFromBox(step models.DocumentConfigStep, box models.SignatureTemplateBoxRequest, signerType, signerUser, signerName string, signerSlot int) models.SignaturePlacementSnapshot {
+	if strings.TrimSpace(signerName) == "" {
+		_, signerName = splitSignerUser(box.SignerUser)
+	}
+	return models.SignaturePlacementSnapshot{
+		PositionCode:  step.PositionCode,
+		PositionName:  step.PositionName,
+		SequenceNo:    step.SequenceNo,
+		ConditionType: step.ConditionType,
+		SignerSlot:    signerSlot,
+		SignerType:    signerType,
+		SignerUser:    strings.TrimSpace(signerUser),
+		SignerName:    strings.TrimSpace(signerName),
+		PageNo:        box.PageNo,
+		XRatio:        box.XRatio,
+		YRatio:        box.YRatio,
+		WidthRatio:    box.WidthRatio,
+		HeightRatio:   box.HeightRatio,
+		Label:         box.Label,
+	}
 }
 
 func (s *Server) inactiveSigningLayoutUserIssues(ctx context.Context, configs []models.DocumentConfigStep, boxes []models.SignatureTemplateBoxRequest) []models.SignatureValidationIssue {
@@ -842,7 +1009,9 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	version := strings.TrimSpace(r.URL.Query().Get("version"))
-	if version == "" && document.Status == "in_progress" && currentPDFNeedsLegalNoticeRefresh(document) {
+	needsCurrentPDF := version == "" || version == "current"
+	canRefreshCurrentPDF := document.Status == "in_progress" || document.Status == "pending_confirm"
+	if needsCurrentPDF && canRefreshCurrentPDF && (currentPDFNeedsLegalNoticeRefresh(document) || currentPDFNeedsSignatureTransparencyRefresh(document)) {
 		if err := s.refreshStampedPDF(r.Context(), document.ID, false); err != nil {
 			s.logger.Error("refresh legal notice pdf failed", "error", err, "documentID", document.ID)
 			writeError(w, http.StatusInternalServerError, "pdf_legal_notice_failed", "Cannot prepare PDF legal notice right now.")
@@ -868,9 +1037,7 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "pdf_not_found", "PDF was not found.")
 		return
 	}
-	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", file.OriginalName))
-	http.ServeFile(w, r, file.StoragePath)
+	serveInlinePDF(w, r, *file)
 }
 
 func (s *Server) retrySigningDocumentLock(w http.ResponseWriter, r *http.Request) {
@@ -895,6 +1062,37 @@ func (s *Server) retrySigningDocumentLock(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "lock": metadata})
 }
 
+func (s *Server) retrySigningDocumentImages(w http.ResponseWriter, r *http.Request) {
+	documentID := strings.TrimSpace(r.PathValue("id"))
+	document, err := s.store.FindSigningDocumentByID(r.Context(), documentID)
+	if errors.Is(err, store.ErrSigningDocumentNotFound) {
+		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	if !canRetrySigningDocumentImagesStatus(document.Status) {
+		writeError(w, http.StatusBadRequest, "document_not_image_retryable", "Document is not ready for SML image retry.")
+		return
+	}
+	imageOK, imageMetadata := s.uploadCompletedDocumentImages(r.Context(), document.ID)
+	if !imageOK {
+		writeError(w, http.StatusBadGateway, "sml_images_failed", "SML image upload failed. You can retry again.")
+		return
+	}
+	lockOK, lockMetadata := s.lockCompletedDocument(r.Context(), document.ID, document.DocNo)
+	updated, _ := s.store.FindSigningDocumentByID(r.Context(), documentID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"document": s.withExternalURLs(r, updated),
+		"imageOk":  imageOK,
+		"lockOk":   lockOK,
+		"image":    imageMetadata,
+		"lock":     lockMetadata,
+	})
+}
+
 func (s *Server) retrySigningDocumentFinalPDF(w http.ResponseWriter, r *http.Request) {
 	documentID := strings.TrimSpace(r.PathValue("id"))
 	document, err := s.store.FindSigningDocumentByID(r.Context(), documentID)
@@ -910,13 +1108,20 @@ func (s *Server) retrySigningDocumentFinalPDF(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "document_not_evidence_failed", "Document is not waiting for final PDF retry.")
 		return
 	}
-	finalOK, lockOK := s.finalizeCompletedDocument(r.Context(), documentID, clientIP(r), r.UserAgent())
-	if !finalOK {
+	result := s.finalizeCompletedDocument(r.Context(), documentID, clientIP(r), r.UserAgent())
+	if !result.FinalOK {
 		writeError(w, http.StatusBadGateway, "final_pdf_failed", "Final PDF evidence generation failed. You can retry again.")
 		return
 	}
 	updated, _ := s.store.FindSigningDocumentByID(r.Context(), documentID)
-	writeJSON(w, http.StatusOK, map[string]any{"document": s.withExternalURLs(r, updated), "lockOk": lockOK})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"document": s.withExternalURLs(r, updated),
+		"finalOk":  result.FinalOK,
+		"imageOk":  result.ImageOK,
+		"lockOk":   result.LockOK,
+		"image":    result.ImageMetadata,
+		"lock":     result.LockMetadata,
+	})
 }
 
 func (s *Server) createSigningDocumentPrintCopy(w http.ResponseWriter, r *http.Request) {
@@ -941,6 +1146,8 @@ func (s *Server) createSigningDocumentPrintCopy(w http.ResponseWriter, r *http.R
 		switch document.Status {
 		case "completed_evidence_failed":
 			writeError(w, http.StatusConflict, "final_evidence_required", "Final PDF evidence is not ready. Retry Final PDF first.")
+		case "completed_image_failed":
+			writeError(w, http.StatusConflict, "sml_images_required", "SML document images are not complete. Retry SML Images before printing the official copy.")
 		case "completed_lock_failed":
 			writeError(w, http.StatusConflict, "sml_lock_required", "SML lock is not complete. Retry SML Lock before printing the official copy.")
 		default:
@@ -952,6 +1159,10 @@ func (s *Server) createSigningDocumentPrintCopy(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusConflict, "final_pdf_required", "Final PDF was not found.")
 		return
 	}
+	if document.OriginalFile == nil || document.OriginalFile.PageCount <= 0 {
+		writeError(w, http.StatusConflict, "original_pdf_required", "Original PDF page count was not found.")
+		return
+	}
 
 	printedAt := time.Now()
 	deviceIDHash := shortHash(req.DeviceID)
@@ -959,7 +1170,8 @@ func (s *Server) createSigningDocumentPrintCopy(w http.ResponseWriter, r *http.R
 	if printedBy == "" {
 		printedBy = actor.Username
 	}
-	printed, err := createPrintCopyPDF(document.FinalFile.StoragePath, document.FinalFile.PageCount, printEvidencePage{
+	printablePageCount := document.OriginalFile.PageCount
+	printed, err := createPrintCopyPDF(document.FinalFile.StoragePath, printablePageCount, printEvidencePage{
 		Document:        document,
 		PrintedAt:       printedAt,
 		PrintedBy:       printedBy,
@@ -976,7 +1188,7 @@ func (s *Server) createSigningDocumentPrintCopy(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "print_copy_failed", "Cannot create print copy right now.")
 		return
 	}
-	pageCount := document.FinalFile.PageCount + 1
+	pageCount := printablePageCount + 1
 	if count, err := readPDFPageCount(printed); err == nil && count > 0 {
 		pageCount = count
 	}
@@ -1027,9 +1239,7 @@ func (s *Server) getSigningDocumentPrintCopyPDF(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusNotFound, "pdf_not_found", "PDF was not found.")
 		return
 	}
-	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", printEvent.File.OriginalName))
-	http.ServeFile(w, r, printEvent.File.StoragePath)
+	serveInlinePDF(w, r, printEvent.File)
 }
 
 func (s *Server) regenerateExternalToken(w http.ResponseWriter, r *http.Request) {
@@ -1148,7 +1358,7 @@ func (s *Server) getMySigningHistoryPDF(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_pdf_version", "PDF version is invalid.")
 		return
 	}
-	needsCurrent := version == "current" || (version == "" && document.FinalFile == nil)
+	needsCurrent := version == "" || version == "current"
 	if needsCurrent && document.Status == "in_progress" && currentPDFNeedsLegalNoticeRefresh(document) {
 		if err := s.refreshStampedPDF(r.Context(), document.ID, false); err != nil {
 			s.logger.Error("refresh history legal notice pdf failed", "error", err, "documentID", document.ID)
@@ -1161,19 +1371,23 @@ func (s *Server) getMySigningHistoryPDF(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	file := document.CurrentFile
-	if version == "" || version == "final" {
-		if document.FinalFile != nil {
-			file = document.FinalFile
-		}
-	}
+	file := selectSigningHistoryPDFFile(document, version)
 	if file == nil || file.StoragePath == "" {
 		writeError(w, http.StatusNotFound, "pdf_not_found", "PDF was not found.")
 		return
 	}
-	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", file.OriginalName))
-	http.ServeFile(w, r, file.StoragePath)
+	serveInlinePDF(w, r, *file)
+}
+
+func canRetrySigningDocumentImagesStatus(status string) bool {
+	return status == "completed_image_failed" || status == "completed"
+}
+
+func selectSigningHistoryPDFFile(document models.SigningDocument, version string) *models.UploadedFile {
+	if version == "final" {
+		return document.FinalFile
+	}
+	return document.CurrentFile
 }
 
 func (s *Server) mySigningHistorySigner(w http.ResponseWriter, r *http.Request) (models.SigningDocumentSigner, bool) {
@@ -1215,6 +1429,13 @@ func sanitizeSigningDocumentForSigner(document models.SigningDocument) models.Si
 	return document
 }
 
+func sanitizeSigningDocumentForExternal(document models.SigningDocument) models.SigningDocument {
+	document = sanitizeSigningDocumentForSigner(document)
+	document.Signers = nil
+	document.Events = nil
+	return document
+}
+
 func sanitizeSigningTaskForUser(signer models.SigningDocumentSigner) models.SigningDocumentSigner {
 	signer.SignatureFileID = ""
 	signer.DeviceID = ""
@@ -1223,6 +1444,10 @@ func sanitizeSigningTaskForUser(signer models.SigningDocumentSigner) models.Sign
 	signer.ExternalTokenID = ""
 	signer.ExternalURL = ""
 	return signer
+}
+
+func externalSignOnlyForbidden(w http.ResponseWriter) {
+	writeError(w, http.StatusForbidden, "external_sign_only", "External signing links can only be used to sign documents.")
 }
 
 func (s *Server) recordMySigningTaskEvent(w http.ResponseWriter, r *http.Request) {
@@ -1370,15 +1595,23 @@ func (s *Server) verifyExternalOTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid_otp", "OTP is invalid or expired.")
 		return
 	}
+	if signer.Status != "pending" {
+		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session": models.VerifyExternalOTPResponse{SessionToken: sessionToken, ExpiresAt: expiresAt},
-		"task":    signer,
+		"task":    sanitizeSigningTaskForUser(signer),
 	})
 }
 
 func (s *Server) getPublicSigningDocument(w http.ResponseWriter, r *http.Request) {
 	signer, ok := s.externalSignerFromRequest(w, r)
 	if !ok {
+		return
+	}
+	if signer.Status != "pending" {
+		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
 		return
 	}
 	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
@@ -1390,12 +1623,20 @@ func (s *Server) getPublicSigningDocument(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"document": document, "task": signer, "legal": signingLegalPayload()})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"document": sanitizeSigningDocumentForExternal(document),
+		"task":     sanitizeSigningTaskForUser(signer),
+		"legal":    signingLegalPayload(),
+	})
 }
 
 func (s *Server) getPublicSigningPDF(w http.ResponseWriter, r *http.Request) {
 	signer, ok := s.externalSignerFromRequest(w, r)
 	if !ok {
+		return
+	}
+	if signer.Status != "pending" {
+		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
 		return
 	}
 	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
@@ -1407,7 +1648,7 @@ func (s *Server) getPublicSigningPDF(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
 		return
 	}
-	if document.Status == "in_progress" && currentPDFNeedsLegalNoticeRefresh(document) {
+	if document.Status == "in_progress" && (currentPDFNeedsLegalNoticeRefresh(document) || currentPDFNeedsSignatureTransparencyRefresh(document)) {
 		if err := s.refreshStampedPDF(r.Context(), document.ID, false); err != nil {
 			s.logger.Error("refresh public legal notice pdf failed", "error", err, "documentID", document.ID)
 			writeError(w, http.StatusInternalServerError, "pdf_legal_notice_failed", "Cannot prepare PDF legal notice right now.")
@@ -1419,8 +1660,7 @@ func (s *Server) getPublicSigningPDF(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	w.Header().Set("Content-Type", "application/pdf")
-	http.ServeFile(w, r, document.CurrentFile.StoragePath)
+	serveInlinePDF(w, r, *document.CurrentFile)
 }
 
 func (s *Server) recordPublicSigningTaskEvent(w http.ResponseWriter, r *http.Request) {
@@ -1452,29 +1692,11 @@ func (s *Server) recordPublicSigningTaskEvent(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) uploadPublicSigningTaskAttachment(w http.ResponseWriter, r *http.Request) {
-	signer, ok := s.externalSignerFromRequest(w, r)
+	_, ok := s.externalSignerFromRequest(w, r)
 	if !ok {
 		return
 	}
-	if signer.Status != "pending" {
-		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
-		return
-	}
-	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
-	if err != nil || document.Status != "in_progress" {
-		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
-		return
-	}
-	uploaded, note, err := s.readAndStoreSigningAttachment(w, r, "")
-	if err != nil {
-		return
-	}
-	if err := s.store.AddSigningAttachment(r.Context(), signer.DocumentID, signer.ID, uploaded.ID, note, ""); err != nil {
-		s.logger.Error("add public signing attachment failed", "error", err, "signerID", signer.ID)
-		writeError(w, http.StatusInternalServerError, "attachment_upload_failed", "Cannot attach file right now.")
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"file": uploaded})
+	externalSignOnlyForbidden(w)
 }
 
 func (s *Server) signPublicSigningTask(w http.ResponseWriter, r *http.Request) {
@@ -1491,12 +1713,12 @@ func (s *Server) signPublicSigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "legal_acceptance_required", "Legal acceptance is required before signing.")
 		return
 	}
-	if signer.Status != "pending" {
-		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
-		return
-	}
 	scope := "public-sign:" + signer.ID
 	if s.replayIdempotentResponse(w, r, scope, "") {
+		return
+	}
+	if signer.Status != "pending" {
+		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
 		return
 	}
 	claimed := strings.TrimSpace(r.Header.Get("Idempotency-Key")) != ""
@@ -1509,30 +1731,15 @@ func (s *Server) signPublicSigningTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.store.SignExternalTask(r.Context(), signer.ID, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion)
-	s.writeTaskMutationResult(w, r, scope, "", result, err)
+	s.writePublicTaskMutationResult(w, r, scope, signer.ID, result, err)
 }
 
 func (s *Server) rejectPublicSigningTask(w http.ResponseWriter, r *http.Request) {
-	signer, ok := s.externalSignerFromRequest(w, r)
+	_, ok := s.externalSignerFromRequest(w, r)
 	if !ok {
 		return
 	}
-	var req models.RejectTaskRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
-		return
-	}
-	req.Reason = strings.TrimSpace(req.Reason)
-	if req.Reason == "" {
-		writeError(w, http.StatusBadRequest, "reject_reason_required", "Reject reason is required.")
-		return
-	}
-	scope := "public-reject:" + signer.ID
-	if s.replayIdempotentResponse(w, r, scope, "") {
-		return
-	}
-	documentID, err := s.store.RejectExternalTask(r.Context(), signer.ID, req.Reason, req.DeviceID, clientIP(r), r.UserAgent())
-	s.writeRejectResult(w, r, scope, "", documentID, err)
+	externalSignOnlyForbidden(w)
 }
 
 func (s *Server) writeTaskMutationResult(w http.ResponseWriter, r *http.Request, idempotencyScope, actorUserID string, result store.SignTaskResult, err error) {
@@ -1561,6 +1768,44 @@ func (s *Server) writeTaskMutationResult(w http.ResponseWriter, r *http.Request,
 	document, _ := s.store.FindSigningDocumentByID(r.Context(), result.DocumentID)
 	payload := map[string]any{"document": document}
 	s.completeIdempotency(idempotencyScope, actorUserID, r, http.StatusOK, payload)
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) writePublicTaskMutationResult(w http.ResponseWriter, r *http.Request, idempotencyScope, signerID string, result store.SignTaskResult, err error) {
+	if errors.Is(err, store.ErrSigningTaskNotFound) {
+		s.releaseIdempotency(idempotencyScope, "", r)
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
+	if errors.Is(err, store.ErrSigningTaskUnavailable) {
+		s.releaseIdempotency(idempotencyScope, "", r)
+		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
+		return
+	}
+	if err != nil {
+		s.releaseIdempotency(idempotencyScope, "", r)
+		s.logger.Error("public sign task failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot sign document right now.")
+		return
+	}
+	if err := s.refreshStampedPDF(r.Context(), result.DocumentID, false); err != nil {
+		s.logger.Error("stamp public signing document pdf failed", "error", err, "documentID", result.DocumentID)
+		_ = s.store.AddSigningEvent(context.Background(), result.DocumentID, "", "", "pdf_stamp_failed", "สร้าง PDF พร้อมลายเซ็นไม่สำเร็จ", clientIP(r), r.UserAgent(), map[string]any{
+			"error": err.Error(),
+		})
+	}
+	document, _ := s.store.FindSigningDocumentByID(r.Context(), result.DocumentID)
+	signer, signerErr := s.store.FindSigningTaskByID(r.Context(), signerID)
+	if signerErr != nil {
+		signer = models.SigningDocumentSigner{ID: signerID, DocumentID: result.DocumentID, Status: "signed"}
+	}
+	payload := map[string]any{
+		"document":  sanitizeSigningDocumentForExternal(document),
+		"task":      sanitizeSigningTaskForUser(signer),
+		"legal":     signingLegalPayload(),
+		"completed": result.Completed,
+	}
+	s.completeIdempotency(idempotencyScope, "", r, http.StatusOK, payload)
 	writeJSON(w, http.StatusOK, payload)
 }
 
@@ -1733,6 +1978,7 @@ func (s *Server) lockCompletedDocument(ctx context.Context, documentID, docNo st
 	}
 	lockCtx, cancel := context.WithTimeout(context.Background(), s.cfg.SMLPaperlessTimeout)
 	defer cancel()
+	lockCtx = store.WithSMLTenant(lockCtx, document.SMLTenant)
 	metadata, err := s.lockSMLDocument(lockCtx, docNo)
 	if err != nil {
 		metadata = map[string]any{"error": err.Error(), "docNo": docNo}
@@ -1743,22 +1989,100 @@ func (s *Server) lockCompletedDocument(ctx context.Context, documentID, docNo st
 	return true, metadata
 }
 
-func (s *Server) finalizeCompletedDocument(ctx context.Context, documentID, ipAddress, userAgent string) (bool, bool) {
+type completedDocumentFinalizeResult struct {
+	FinalOK       bool
+	ImageOK       bool
+	LockOK        bool
+	ImageMetadata map[string]any
+	LockMetadata  map[string]any
+}
+
+func (s *Server) uploadCompletedDocumentImages(ctx context.Context, documentID string) (bool, map[string]any) {
 	start := time.Now()
+	document, err := s.store.FindSigningDocumentByID(ctx, documentID)
+	if err != nil {
+		metadata := map[string]any{"error": truncateForMetadata(err.Error(), 500)}
+		_ = s.store.MarkDocumentImageResult(context.Background(), documentID, false, metadata)
+		return false, metadata
+	}
+	if document.FinalFile == nil || strings.TrimSpace(document.FinalFile.StoragePath) == "" {
+		metadata := map[string]any{"error": "final PDF is missing", "docNo": document.DocNo}
+		_ = s.store.MarkDocumentImageResult(context.Background(), documentID, false, metadata)
+		return false, metadata
+	}
+	if document.OriginalFile == nil || document.OriginalFile.PageCount <= 0 {
+		metadata := map[string]any{"error": "original PDF page count is missing", "docNo": document.DocNo}
+		_ = s.store.MarkDocumentImageResult(context.Background(), documentID, false, metadata)
+		return false, metadata
+	}
+
+	renderTimeout := s.cfg.SMLPaperlessTimeout
+	if renderTimeout < 30*time.Second {
+		renderTimeout = 30 * time.Second
+	}
+	renderCtx, cancel := context.WithTimeout(context.Background(), renderTimeout)
+	render, err := renderSMLDocumentSnapshots(renderCtx, document.FinalFile.StoragePath, document.OriginalFile.PageCount)
+	cancel()
+	metadata := map[string]any{
+		"docNo":      document.DocNo,
+		"totalPages": document.OriginalFile.PageCount,
+		"elapsedMs":  time.Since(start).Milliseconds(),
+	}
+	if err != nil {
+		metadata["error"] = truncateForMetadata(err.Error(), 500)
+		_ = s.store.MarkDocumentImageResult(context.Background(), documentID, false, metadata)
+		return false, metadata
+	}
+	metadata["imageCount"] = render.PageCount
+	metadata["truncated"] = render.Truncated
+	metadata["totalBytes"] = render.TotalBytes
+	metadata["dpi"] = render.Profile.DPI
+	metadata["quality"] = render.Profile.Quality
+	metadata["renderElapsedMs"] = render.Elapsed.Milliseconds()
+
+	uploadTimeout := s.cfg.SMLPaperlessTimeout
+	if uploadTimeout < 30*time.Second {
+		uploadTimeout = 30 * time.Second
+	}
+	uploadCtx, uploadCancel := context.WithTimeout(context.Background(), uploadTimeout)
+	uploadCtx = store.WithSMLTenant(uploadCtx, document.SMLTenant)
+	smlMetadata, err := s.replaceSMLDocumentImages(uploadCtx, document.DocNo, render)
+	uploadCancel()
+	metadata["elapsedMs"] = time.Since(start).Milliseconds()
+	if err != nil {
+		metadata["error"] = truncateForMetadata(err.Error(), 500)
+		_ = s.store.MarkDocumentImageResult(context.Background(), documentID, false, metadata)
+		return false, metadata
+	}
+	for key, value := range smlMetadata {
+		metadata[key] = value
+	}
+	_ = s.store.MarkDocumentImageResult(context.Background(), documentID, true, metadata)
+	return true, metadata
+}
+
+func (s *Server) finalizeCompletedDocument(ctx context.Context, documentID, ipAddress, userAgent string) completedDocumentFinalizeResult {
+	start := time.Now()
+	result := completedDocumentFinalizeResult{}
 	if err := s.refreshStampedPDF(ctx, documentID, true); err != nil {
 		s.logger.Error("final pdf evidence failed", "error", err, "documentID", documentID)
 		_ = s.store.MarkDocumentEvidenceFailed(context.Background(), documentID, map[string]any{
 			"error":     truncateForMetadata(err.Error(), 500),
 			"elapsedMs": time.Since(start).Milliseconds(),
 		})
-		return false, false
+		return result
 	}
-	ok, _ := s.lockCompletedDocument(ctx, documentID, "")
+	result.FinalOK = true
+	result.ImageOK, result.ImageMetadata = s.uploadCompletedDocumentImages(ctx, documentID)
+	if result.ImageOK {
+		result.LockOK, result.LockMetadata = s.lockCompletedDocument(ctx, documentID, "")
+	}
 	_ = s.store.AddSigningEvent(context.Background(), documentID, "", "", "final_pdf_metrics", "บันทึก metric การสร้าง final PDF", ipAddress, userAgent, map[string]any{
 		"elapsedMs": time.Since(start).Milliseconds(),
-		"lockOk":    ok,
+		"imageOk":   result.ImageOK,
+		"lockOk":    result.LockOK,
 	})
-	return true, ok
+	return result
 }
 
 func normalizePrintCopyRequest(req models.CreatePrintCopyRequest) models.CreatePrintCopyRequest {
@@ -1813,14 +2137,21 @@ func (s *Server) readAndStorePDFUpload(w http.ResponseWriter, r *http.Request, f
 }
 
 func (s *Server) storeSignatureImage(ctx context.Context, dataURL, actorID string) (models.UploadedFile, error) {
-	data, contentType, ext, err := parseSignatureDataURL(dataURL)
+	data, _, _, err := parseSignatureDataURL(dataURL)
 	if err != nil {
 		return models.UploadedFile{}, err
 	}
-	if int64(len(data)) > 2*1024*1024 {
+	if int64(len(data)) > maxSignatureImageBytes {
 		return models.UploadedFile{}, fmt.Errorf("signature image must be 2 MB or smaller")
 	}
-	return s.storeUploadedBytes(ctx, data, "signature"+ext, "signature"+ext, contentType, ext, 0, actorID)
+	normalized, err := normalizeSignatureImage(data)
+	if err != nil {
+		return models.UploadedFile{}, err
+	}
+	if len(normalized) > maxSignatureImageBytes {
+		return models.UploadedFile{}, fmt.Errorf("signature image must be 2 MB or smaller")
+	}
+	return s.storeUploadedBytes(ctx, normalized, "signature.png", "signature.png", "image/png", ".png", 0, actorID)
 }
 
 func (s *Server) readAndStoreSigningAttachment(w http.ResponseWriter, r *http.Request, actorID string) (models.UploadedFile, string, error) {

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
+	"github.com/bosocmputer/paperless-v2/backend/internal/store"
 )
 
 var (
@@ -83,6 +84,20 @@ type smlAPIError struct {
 	Message string `json:"message"`
 }
 
+func (s *Server) smlTenantForContext(ctx context.Context) string {
+	if tenant, ok := store.SMLTenantFromContext(ctx); ok {
+		return store.NormalizeSMLTenant(tenant)
+	}
+	return store.NormalizeSMLTenant(s.cfg.SMLPaperlessTenant)
+}
+
+func (s *Server) hasSMLAPIConfig(ctx context.Context) (string, bool) {
+	tenant := s.smlTenantForContext(ctx)
+	return tenant, strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) != "" &&
+		strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) != "" &&
+		strings.TrimSpace(tenant) != ""
+}
+
 func (s *Server) listSMLScreenCodes(w http.ResponseWriter, r *http.Request) {
 	formats, err := s.fetchSMLDocFormats(r.Context(), "")
 	if errors.Is(err, errSMLConfigMissing) {
@@ -113,7 +128,7 @@ func (s *Server) listSMLScreenCodes(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tenant":      s.cfg.SMLPaperlessTenant,
+		"tenant":      s.smlTenantForContext(r.Context()),
 		"screenCodes": screenCodes,
 		"source":      "sml-api-bybos-paperless",
 		"sourceTable": "erp_doc_format",
@@ -140,7 +155,7 @@ func (s *Server) listSMLDocFormats(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"screenCode":  screenCode,
-		"tenant":      s.cfg.SMLPaperlessTenant,
+		"tenant":      s.smlTenantForContext(r.Context()),
 		"docFormats":  formats,
 		"source":      "sml-api-bybos-paperless",
 		"sourceTable": "erp_doc_format",
@@ -168,7 +183,7 @@ func (s *Server) getSMLDocFormatByCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tenant":      s.cfg.SMLPaperlessTenant,
+		"tenant":      s.smlTenantForContext(r.Context()),
 		"docFormat":   format,
 		"source":      "sml-api-bybos-paperless",
 		"sourceTable": "erp_doc_format",
@@ -229,9 +244,8 @@ func (s *Server) getSMLDocumentCandidate(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) fetchSMLDocFormats(ctx context.Context, screenCode string) ([]models.SMLDocFormat, error) {
-	if strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessTenant) == "" {
+	tenant, ok := s.hasSMLAPIConfig(ctx)
+	if !ok {
 		return nil, errSMLConfigMissing
 	}
 
@@ -251,7 +265,7 @@ func (s *Server) fetchSMLDocFormats(ctx context.Context, screenCode string) ([]m
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
-	req.Header.Set("X-Tenant", s.cfg.SMLPaperlessTenant)
+	req.Header.Set("X-Tenant", tenant)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -280,9 +294,8 @@ func (s *Server) fetchSMLDocFormats(ctx context.Context, screenCode string) ([]m
 }
 
 func (s *Server) fetchSMLDocFormatByCode(ctx context.Context, docFormatCode string) (models.SMLDocFormat, error) {
-	if strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessTenant) == "" {
+	tenant, ok := s.hasSMLAPIConfig(ctx)
+	if !ok {
 		return models.SMLDocFormat{}, errSMLConfigMissing
 	}
 
@@ -300,7 +313,7 @@ func (s *Server) fetchSMLDocFormatByCode(ctx context.Context, docFormatCode stri
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
-	req.Header.Set("X-Tenant", s.cfg.SMLPaperlessTenant)
+	req.Header.Set("X-Tenant", tenant)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -332,9 +345,8 @@ func (s *Server) fetchSMLDocFormatByCode(ctx context.Context, docFormatCode stri
 }
 
 func (s *Server) fetchSMLDocumentCandidates(ctx context.Context, docFormatCode, search, page, size string) (smlDocumentCandidatesResponse, error) {
-	if strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessTenant) == "" {
+	tenant, ok := s.hasSMLAPIConfig(ctx)
+	if !ok {
 		return smlDocumentCandidatesResponse{}, errSMLConfigMissing
 	}
 
@@ -361,7 +373,7 @@ func (s *Server) fetchSMLDocumentCandidates(ctx context.Context, docFormatCode, 
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
-	req.Header.Set("X-Tenant", s.cfg.SMLPaperlessTenant)
+	req.Header.Set("X-Tenant", tenant)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -383,9 +395,8 @@ func (s *Server) fetchSMLDocumentCandidates(ctx context.Context, docFormatCode, 
 }
 
 func (s *Server) fetchSMLDocumentCandidate(ctx context.Context, docFormatCode, docNo string) (models.SMLDocumentCandidate, error) {
-	if strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessTenant) == "" {
+	tenant, ok := s.hasSMLAPIConfig(ctx)
+	if !ok {
 		return models.SMLDocumentCandidate{}, errSMLConfigMissing
 	}
 	endpoint, err := url.Parse(s.cfg.SMLPaperlessBaseURL + "/api/v1/ic/document-candidates/" + url.PathEscape(docNo))
@@ -402,7 +413,7 @@ func (s *Server) fetchSMLDocumentCandidate(ctx context.Context, docFormatCode, d
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
-	req.Header.Set("X-Tenant", s.cfg.SMLPaperlessTenant)
+	req.Header.Set("X-Tenant", tenant)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -424,9 +435,8 @@ func (s *Server) fetchSMLDocumentCandidate(ctx context.Context, docFormatCode, d
 }
 
 func (s *Server) lockSMLDocument(ctx context.Context, docNo string) (map[string]any, error) {
-	if strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) == "" ||
-		strings.TrimSpace(s.cfg.SMLPaperlessTenant) == "" {
+	tenant, ok := s.hasSMLAPIConfig(ctx)
+	if !ok {
 		return nil, errSMLConfigMissing
 	}
 	endpoint, err := url.Parse(s.cfg.SMLPaperlessBaseURL + "/api/v1/documents/" + url.PathEscape(docNo) + "/lock")
@@ -439,7 +449,7 @@ func (s *Server) lockSMLDocument(ctx context.Context, docNo string) (map[string]
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
-	req.Header.Set("X-Tenant", s.cfg.SMLPaperlessTenant)
+	req.Header.Set("X-Tenant", tenant)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
