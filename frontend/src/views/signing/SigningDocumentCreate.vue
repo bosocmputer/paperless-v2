@@ -24,6 +24,8 @@ const creating = ref(false);
 const uploading = ref(false);
 const searchingCandidates = ref(false);
 const loadingLayoutContext = ref(false);
+const workflowLoadError = ref('');
+const workflowContextDocFormatCode = ref('');
 const checkingDuplicate = ref(false);
 const duplicateCheck = ref(null);
 const duplicateCheckError = ref('');
@@ -38,6 +40,8 @@ let suppressSearchWatch = false;
 let openedAt = Date.now();
 let createFinished = false;
 let duplicateCheckSeq = 0;
+let layoutContextSeq = 0;
+const bypassLeaveConfirm = ref(false);
 
 const wizardSteps = [
     { label: 'เลือกเอกสาร', shortLabel: 'เอกสาร', icon: 'pi pi-file' },
@@ -61,6 +65,23 @@ const headerSummary = computed(() => {
 const lockedBySML = computed(() => Number(form.value.selectedCandidate?.is_lock_record || 0) === 1);
 const blockingDuplicateDocument = computed(() => duplicateCheck.value?.blockingDocument || null);
 const duplicateWarningDocuments = computed(() => duplicateCheck.value?.previousDocuments || []);
+const workflowContextLoaded = computed(() => !!form.value.docFormatCode && workflowContextDocFormatCode.value === form.value.docFormatCode);
+const workflowMissing = computed(() => workflowContextLoaded.value && !workflowLoadError.value && (form.value.configs || []).length === 0);
+const workflowBlockingReason = computed(() => {
+    if (!form.value.docFormatCode) return '';
+    if (loadingLayoutContext.value) return 'กำลังโหลด Workflow ของชนิดเอกสารนี้';
+    if (workflowLoadError.value) return `โหลด Workflow ไม่สำเร็จ: ${workflowLoadError.value}`;
+    if (workflowMissing.value) return 'ยังไม่ได้กำหนด Workflow สำหรับชนิดเอกสารนี้ กรุณาตั้งค่า Workflow ก่อนสร้างเอกสาร';
+    return '';
+});
+const canSearchSMLDocuments = computed(() => !!form.value.docFormatCode && workflowContextLoaded.value && !workflowBlockingReason.value);
+const candidateEmptyMessage = computed(() => {
+    if (!form.value.docFormatCode) return 'เลือกชนิดเอกสารก่อน';
+    if (loadingLayoutContext.value) return 'กำลังโหลด Workflow ก่อนค้นหาเอกสาร';
+    if (workflowMissing.value) return 'ต้องตั้งค่า Workflow ของชนิดเอกสารนี้ก่อนค้นหาเอกสาร';
+    if (workflowLoadError.value) return 'โหลด Workflow ไม่สำเร็จ กรุณาลองใหม่';
+    return form.value.search?.length >= 2 ? 'ไม่พบเอกสาร' : 'พิมพ์อย่างน้อย 2 ตัวอักษรเพื่อค้นหา';
+});
 const layoutValidationIssues = computed(() => [...new Set([...validateLayout(), ...designerValidationIssues.value])]);
 const createDisabledReason = computed(() => finalDisabledReason());
 const dirty = computed(() => {
@@ -97,7 +118,7 @@ watch(
         candidatePage.value = 1;
         candidateHasMore.value = false;
         persistDraft();
-        if (!form.value.docFormatCode || String(form.value.search || '').trim().length < 2) return;
+        if (!canSearchSMLDocuments.value || String(form.value.search || '').trim().length < 2) return;
         searchTimer = setTimeout(() => searchCandidates(1), 300);
     }
 );
@@ -131,7 +152,7 @@ onBeforeUnmount(() => {
 });
 
 onBeforeRouteLeave((_to, _from, next) => {
-    if (!dirty.value) {
+    if (bypassLeaveConfirm.value || !dirty.value) {
         next();
         return;
     }
@@ -188,7 +209,7 @@ async function loadPage() {
 }
 
 async function searchCandidates(page = 1) {
-    if (!form.value.docFormatCode) return;
+    if (!canSearchSMLDocuments.value) return;
     searchingCandidates.value = true;
     try {
         const result = await api.listSMLDocumentCandidates({
@@ -210,11 +231,16 @@ async function searchCandidates(page = 1) {
 }
 
 function loadMoreCandidates() {
-    if (!candidateHasMore.value || searchingCandidates.value) return;
+    if (!canSearchSMLDocuments.value || !candidateHasMore.value || searchingCandidates.value) return;
     searchCandidates(candidatePage.value + 1);
 }
 
 function selectCandidate(candidate) {
+    if (!canSearchSMLDocuments.value) {
+        recordCreateEvent('validation_blocked');
+        toast.add({ severity: 'warn', summary: 'ยังเลือกเอกสารไม่ได้', detail: workflowBlockingReason.value || 'กรุณาตั้งค่า Workflow ก่อน', life: 3200 });
+        return;
+    }
     form.value.selectedCandidate = candidate;
     form.value.docNo = candidate.doc_no;
     form.value.confirmLocked = false;
@@ -252,7 +278,7 @@ function applyInitialRoutePrefill() {
 }
 
 async function validateInitialRouteCandidate() {
-    if (!form.value.docFormatCode || !form.value.docNo) return;
+    if (!form.value.docFormatCode || !form.value.docNo || !canSearchSMLDocuments.value) return;
     searchingCandidates.value = true;
     try {
         const result = await api.getSMLDocumentCandidate(form.value.docFormatCode, form.value.docNo);
@@ -327,16 +353,34 @@ async function uploadSelectedPDF(file) {
 
 async function loadLayoutContext() {
     if (!form.value.docFormatCode) return;
+    const requestedDocFormatCode = form.value.docFormatCode;
+    const seq = layoutContextSeq + 1;
+    layoutContextSeq = seq;
     loadingLayoutContext.value = true;
+    workflowLoadError.value = '';
+    workflowContextDocFormatCode.value = '';
     try {
-        const [configsResult, templateResult] = await Promise.all([api.listDocumentConfigs({ docFormatCode: form.value.docFormatCode }), api.getSignatureTemplateState(form.value.docFormatCode).catch(() => ({}))]);
+        const [configsResult, templateResult] = await Promise.all([api.listDocumentConfigs({ docFormatCode: requestedDocFormatCode }), api.getSignatureTemplateState(requestedDocFormatCode).catch(() => ({}))]);
+        if (seq !== layoutContextSeq || requestedDocFormatCode !== form.value.docFormatCode) return;
         form.value.configs = configsResult.configs || [];
         form.value.presetTemplate = templateResult.active || templateResult.draft || null;
+        workflowContextDocFormatCode.value = requestedDocFormatCode;
+        if (form.value.configs.length === 0) {
+            resetCandidateSearch();
+            resetUploadedLayout();
+            activeStep.value = 0;
+            recordCreateEvent('validation_blocked');
+        }
         if (form.value.uploadedFile && !hasLayoutWork()) applyPresetAfterUpload();
     } catch (err) {
+        if (seq !== layoutContextSeq || requestedDocFormatCode !== form.value.docFormatCode) return;
+        workflowLoadError.value = err.message || 'Cannot load workflow';
+        workflowContextDocFormatCode.value = requestedDocFormatCode;
+        form.value.configs = [];
+        form.value.presetTemplate = null;
         toast.add({ severity: 'error', summary: 'โหลด Workflow ไม่สำเร็จ', detail: err.message, life: 4500 });
     } finally {
-        loadingLayoutContext.value = false;
+        if (seq === layoutContextSeq) loadingLayoutContext.value = false;
     }
 }
 
@@ -421,7 +465,12 @@ async function onDocFormatChange(nextCode) {
 
 async function applyDocFormatChange(nextCode) {
     clearTimeout(searchTimer);
+    layoutContextSeq += 1;
+    workflowLoadError.value = '';
+    workflowContextDocFormatCode.value = '';
     form.value.docFormatCode = nextCode || '';
+    form.value.configs = [];
+    form.value.presetTemplate = null;
     resetCandidateSearch();
     resetUploadedLayout();
     activeStep.value = 0;
@@ -515,6 +564,7 @@ async function submitDocument() {
 function blockedReasonForStep(index) {
     if (index === 0) {
         if (!form.value.docFormatCode) return 'เลือกชนิดเอกสารก่อน';
+        if (workflowBlockingReason.value) return workflowBlockingReason.value;
         if (!form.value.selectedCandidate) return 'เลือกเลขเอกสารจากผลค้นหา SML ก่อน';
         if (checkingDuplicate.value) return 'กำลังตรวจสอบเอกสารซ้ำใน PaperLess';
         if (blockingDuplicateDocument.value) return duplicateCheck.value?.message || 'เอกสารนี้มีอยู่ใน PaperLess แล้ว กรุณาเปิดเอกสารเดิมแทนการสร้างซ้ำ';
@@ -648,6 +698,20 @@ function resetUploadedLayout() {
     form.value.legalNoticeBoxes = [];
     form.value.selectedPresetId = '';
     designerValidationIssues.value = [];
+}
+
+function goToWorkflowConfig() {
+    if (!form.value.docFormatCode) {
+        goToWorkflowList();
+        return;
+    }
+    bypassLeaveConfirm.value = true;
+    router.push({ name: 'document-config-workflow', params: { docFormatCode: form.value.docFormatCode } });
+}
+
+function goToWorkflowList() {
+    bypassLeaveConfirm.value = true;
+    router.push({ name: 'document-config' });
 }
 
 function toLegalNoticePayload(box) {
@@ -871,11 +935,39 @@ function makeLegalNoticeBoxKey() {
                                     <label class="block font-bold mb-3">ค้นหาเลขเอกสารจาก SML</label>
                                     <IconField>
                                         <InputIcon><i class="pi pi-search" /></InputIcon>
-                                        <InputText v-model="form.search" placeholder="เช่น PO2606" fluid :disabled="!form.docFormatCode" />
+                                        <InputText v-model="form.search" placeholder="เช่น PO2606" fluid :disabled="!canSearchSMLDocuments" />
                                     </IconField>
-                                    <small class="text-muted-color">ต้องเลือกจากผลค้นหา SML เท่านั้น ระบบไม่รับเลขเอกสารที่พิมพ์เอง</small>
+                                    <small class="text-muted-color">
+                                        {{ canSearchSMLDocuments ? 'ต้องเลือกจากผลค้นหา SML เท่านั้น ระบบไม่รับเลขเอกสารที่พิมพ์เอง' : workflowBlockingReason || 'ต้องเลือกชนิดเอกสารก่อน' }}
+                                    </small>
                                 </div>
                             </div>
+
+                            <Message v-if="loadingLayoutContext" severity="info">กำลังโหลด Workflow และกรอบเริ่มต้นของ {{ selectedDocFormatLabel }}</Message>
+                            <Message v-else-if="workflowMissing" severity="warn" :closable="false">
+                                <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                    <div>
+                                        <div class="font-bold">ยังไม่ได้กำหนด Workflow สำหรับชนิดเอกสารนี้</div>
+                                        <div class="mt-1">กรุณาตั้งค่า Workflow ของ {{ selectedDocFormatLabel }} ก่อนค้นหาเอกสารและสร้างเอกสาร PaperLess</div>
+                                    </div>
+                                    <div class="flex flex-wrap gap-2">
+                                        <Button label="ตั้งค่า Workflow" icon="pi pi-file-edit" severity="warn" @click="goToWorkflowConfig" />
+                                        <Button label="ดูรายการ Workflow" icon="pi pi-list" severity="secondary" outlined @click="goToWorkflowList" />
+                                    </div>
+                                </div>
+                            </Message>
+                            <Message v-else-if="workflowLoadError" severity="error" :closable="false">
+                                <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                    <div>
+                                        <div class="font-bold">โหลด Workflow ไม่สำเร็จ</div>
+                                        <div class="mt-1">{{ workflowLoadError }}</div>
+                                    </div>
+                                    <div class="flex flex-wrap gap-2">
+                                        <Button label="ลองโหลดใหม่" icon="pi pi-refresh" severity="secondary" outlined :loading="loadingLayoutContext" @click="loadLayoutContext" />
+                                        <Button label="ไปตั้งค่า Workflow" icon="pi pi-file-edit" severity="secondary" outlined @click="goToWorkflowConfig" />
+                                    </div>
+                                </div>
+                            </Message>
 
                             <Message v-if="form.selectedCandidate" severity="success">
                                 เลือกเอกสาร {{ form.selectedCandidate.doc_no }} · {{ form.selectedCandidate.party_name || form.selectedCandidate.party_code || '-' }}
@@ -922,7 +1014,7 @@ function makeLegalNoticeBoxKey() {
                                     @row-click="selectCandidate($event.data)"
                                 >
                                     <template #empty>
-                                        <div class="py-6 text-center text-muted-color">{{ form.search?.length >= 2 ? 'ไม่พบเอกสาร' : 'พิมพ์อย่างน้อย 2 ตัวอักษรเพื่อค้นหา' }}</div>
+                                        <div class="py-6 text-center text-muted-color">{{ candidateEmptyMessage }}</div>
                                     </template>
                                     <Column field="doc_no" header="เลขที่เอกสาร" style="min-width: 12rem">
                                         <template #body="{ data }">

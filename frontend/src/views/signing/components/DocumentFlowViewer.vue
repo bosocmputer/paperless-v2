@@ -13,6 +13,7 @@ const emit = defineEmits(['open-document', 'preview-pdf', 'node-click']);
 
 const selectedNode = ref(null);
 const detailVisible = ref(false);
+const activeNodeKey = ref('');
 
 const nodes = computed(() => props.graph?.nodes || []);
 const edges = computed(() => props.graph?.edges || []);
@@ -26,6 +27,21 @@ const timelineItems = computed(() =>
         isRoot: node.doc_no === rootDocNo.value
     }))
 );
+const selectedFlowNode = computed(() => {
+    const active = timelineItems.value.find((node) => flowNodeKey(node) === activeNodeKey.value);
+    if (active) return active;
+    return timelineItems.value.find((node) => node.isRoot) || timelineItems.value[0] || null;
+});
+const selectedFlowNodeKey = computed(() => (selectedFlowNode.value ? flowNodeKey(selectedFlowNode.value) : ''));
+
+function flowNodeKey(node = {}) {
+    return `${node.doc_format_code || node.docFormatCode || 'doc'}-${node.doc_no || node.docNo || ''}`;
+}
+
+function selectFlowNode(node) {
+    activeNodeKey.value = flowNodeKey(node);
+    emit('node-click', node);
+}
 
 function sourceLabel(node) {
     return node.paperlessStatus ? 'เอกสารใน PaperLess' : 'ข้อมูลจาก SML';
@@ -51,9 +67,54 @@ function relationText(item) {
     return from.length ? `ต่อจาก ${from.join(', ')}` : 'เอกสารที่เกี่ยวข้อง';
 }
 
+function documentTypeLabel(node) {
+    const transFlagName = node.trans_flag_name_th || node.transFlagNameTh || node.trans_flag_name_en || node.transFlagNameEn || '';
+    if (transFlagName) return transFlagName;
+    const name = node.doc_format_name || node.docFormatName || '';
+    if (name) return name;
+    const code = String(node.doc_format_code || node.docFormatCode || '').toUpperCase();
+    const labels = {
+        PO: 'ใบสั่งซื้อ',
+        PA: 'ซื้อ',
+        PUP: 'ซื้อ',
+        PB: 'ใบรับวางบิล',
+        PBV: 'ใบรับวางบิล',
+        PV: 'จ่ายชำระหนี้',
+        PVV: 'จ่ายชำระหนี้',
+        INV: 'ใบขาย'
+    };
+    return labels[code] || code || 'เอกสาร';
+}
+
+function sourceDocNo(node) {
+    const explicit = node.source_doc_no || node.sourceDocNo || '';
+    if (explicit) return explicit;
+    const incoming = node.incoming || [];
+    if (!incoming.length) return node.doc_no || '-';
+    return incoming
+        .map((edge) => edge.from_doc_no)
+        .filter(Boolean)
+        .join(', ');
+}
+
 function technicalRelations(item) {
     const all = [...(item.incoming || []), ...(item.outgoing || [])];
     return all.map((edge) => `${edge.from_doc_no} → ${edge.to_doc_no} (${edge.source_table}.${edge.source_column})`).join('\n');
+}
+
+function normalizeTime(value) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    const match = text.match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return text;
+    return `${match[1].padStart(2, '0')}:${match[2]}`;
+}
+
+function formatDocumentDateTime(node) {
+    const dateText = formatDocumentDate(node.doc_date);
+    const timeText = normalizeTime(node.doc_time || node.docTime);
+    if (dateText === '-') return timeText || '-';
+    return timeText ? `${dateText} ${timeText}` : dateText;
 }
 
 function formatAmount(value) {
@@ -98,68 +159,59 @@ function previewBestPDF(node) {
             <span>ยังไม่พบเอกสารประกอบจาก SML</span>
         </div>
 
-        <Timeline v-else :value="timelineItems" align="left" class="flow-timeline">
+        <Timeline v-else :value="timelineItems" align="alternate" :data-key="'doc_no'" class="document-flow-timeline" :class="{ compact }">
             <template #opposite="{ item }">
-                <div class="flow-opposite">
-                    <strong>{{ formatDocumentDate(item.doc_date) }}</strong>
-                    <small>{{ item.doc_format_code || '-' }}</small>
-                </div>
+                <small class="text-muted-color">{{ formatDocumentDateTime(item) }}</small>
             </template>
-
-            <template #marker="{ item }">
-                <span class="flow-marker" :class="{ root: item.isRoot, paperless: item.paperlessStatus }">
-                    <i :class="item.isRoot ? 'pi pi-star-fill' : item.paperlessStatus ? 'pi pi-file-check' : 'pi pi-file'"></i>
-                </span>
+            <template #marker="{ item, index }">
+                <button
+                    type="button"
+                    class="flex w-8 h-8 items-center justify-center rounded-full z-10 shadow-sm border transition-colors"
+                    :class="selectedFlowNodeKey === flowNodeKey(item) || item.isRoot ? 'bg-primary text-primary-contrast border-primary' : 'bg-surface-0 text-muted-color border-surface-300 dark:bg-surface-900 dark:border-surface-600'"
+                    :aria-label="`เลือกเอกสาร ${item.doc_no || ''}`"
+                    @click="selectFlowNode(item)"
+                >
+                    {{ index + 1 }}
+                </button>
             </template>
-
             <template #content="{ item }">
-                <div class="flow-content" :class="{ root: item.isRoot }">
-                    <div class="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
-                        <div class="min-w-0">
-                            <Button :label="item.doc_no" link class="p-0 font-semibold text-lg text-left max-w-full" @click="previewBestPDF(item)" />
-                            <div class="text-muted-color">{{ item.doc_format_code || '-' }} · {{ item.party_name || item.party_code || '-' }}</div>
-                            <div class="text-muted-color text-sm mt-1">{{ relationText(item) }}</div>
-                        </div>
-                        <div class="flex gap-2 flex-wrap lg:justify-end">
-                            <Tag v-if="item.isRoot" value="เอกสารที่ค้นหา" severity="info" />
-                            <Tag :value="sourceLabel(item)" :severity="sourceSeverity(item)" />
-                            <Tag :value="statusLabel(item)" :severity="item.paperlessStatus ? signingStatusSeverity(item.paperlessStatus) : lockSeverity(item)" />
-                            <Tag v-if="item.matchCount > 1" :value="`${item.matchCount} รายการใน PaperLess`" severity="warn" />
-                        </div>
-                    </div>
-
-                    <div class="flex flex-wrap gap-2 mt-3">
-                        <Button label="ข้อมูล SML" icon="pi pi-info-circle" size="small" severity="secondary" outlined @click="openInfo(item)" />
-                        <Button
-                            v-if="admin && item.canOpenPaperless"
-                            label="เปิด PaperLess"
-                            icon="pi pi-external-link"
-                            size="small"
-                            severity="secondary"
-                            outlined
-                            @click="openPaperless(item)"
-                        />
-                        <Button
-                            v-if="admin && item.canViewCurrentPdf"
-                            label="ดู PDF ล่าสุด"
-                            icon="pi pi-file-pdf"
-                            size="small"
-                            severity="secondary"
-                            outlined
-                            @click="previewPDF(item, 'current')"
-                        />
-                        <Button
-                            v-if="admin"
-                            label="ดูหลักฐานการลงนาม"
-                            icon="pi pi-shield"
-                            size="small"
-                            :disabled="!item.canViewSignedPdf"
-                            :severity="item.canViewSignedPdf ? 'success' : 'secondary'"
-                            outlined
-                            @click="previewPDF(item, 'final')"
-                        />
-                    </div>
-                    <small v-if="admin && !item.canViewSignedPdf" class="text-muted-color block mt-2">ยังไม่มีหลักฐานการลงนาม</small>
+                <div
+                    class="flow-card-hitarea"
+                    role="button"
+                    tabindex="0"
+                    :aria-label="`เลือกเอกสาร ${item.doc_no || ''}`"
+                    @click="selectFlowNode(item)"
+                    @keydown.enter.prevent="selectFlowNode(item)"
+                    @keydown.space.prevent="selectFlowNode(item)"
+                >
+                    <Card class="mt-4 flow-document-card" :class="{ selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }">
+                        <template #title>
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{{ documentTypeLabel(item) }}</span>
+                                <Tag v-if="item.isRoot" value="เอกสารที่ค้นหา" severity="info" />
+                            </div>
+                        </template>
+                        <template #subtitle>
+                            <span>{{ item.doc_no || '-' }} · {{ relationText(item) }}</span>
+                        </template>
+                        <template #content>
+                            <dl class="flow-metadata-grid">
+                                <dt>เลขที่เอกสาร</dt>
+                                <dd class="flow-doc-no">{{ item.doc_no || '-' }}</dd>
+                                <dt>วันที่-เวลา</dt>
+                                <dd>{{ formatDocumentDateTime(item) }}</dd>
+                                <dt>มูลค่าเอกสาร</dt>
+                                <dd>{{ formatAmount(item.total_amount) }}</dd>
+                                <dt>เอกสารต้นทาง</dt>
+                                <dd>{{ sourceDocNo(item) }}</dd>
+                            </dl>
+                            <div class="flex flex-wrap gap-2 mt-3">
+                                <Tag :value="sourceLabel(item)" :severity="sourceSeverity(item)" />
+                                <Tag :value="statusLabel(item)" :severity="item.paperlessStatus ? signingStatusSeverity(item.paperlessStatus) : lockSeverity(item)" />
+                                <Tag v-if="item.matchCount > 1" :value="`${item.matchCount} รายการใน PaperLess`" severity="warn" />
+                            </div>
+                        </template>
+                    </Card>
                 </div>
             </template>
         </Timeline>
@@ -175,10 +227,13 @@ function previewBestPDF(node) {
                 <template #body="{ data }">{{ data.party_name || data.party_code || '-' }}</template>
             </Column>
             <Column header="วันที่" style="min-width: 8rem">
-                <template #body="{ data }">{{ formatDocumentDate(data.doc_date) }}</template>
+                <template #body="{ data }">{{ formatDocumentDateTime(data) }}</template>
             </Column>
             <Column header="ยอดเงิน" style="min-width: 9rem">
                 <template #body="{ data }">{{ formatAmount(data.total_amount) }}</template>
+            </Column>
+            <Column header="เอกสารต้นทาง" style="min-width: 11rem">
+                <template #body="{ data }">{{ sourceDocNo(data) }}</template>
             </Column>
             <Column header="PaperLess" style="min-width: 12rem">
                 <template #body="{ data }">
@@ -212,9 +267,11 @@ function previewBestPDF(node) {
                     <dt>เลขที่เอกสาร</dt>
                     <dd>{{ selectedNode.doc_no }}</dd>
                     <dt>ชนิดเอกสาร</dt>
-                    <dd>{{ selectedNode.doc_format_code || '-' }}</dd>
-                    <dt>วันที่เอกสาร</dt>
-                    <dd>{{ formatDocumentDate(selectedNode.doc_date) }}</dd>
+                    <dd>{{ documentTypeLabel(selectedNode) }} ({{ selectedNode.doc_format_code || '-' }})</dd>
+                    <dt>วันที่-เวลา</dt>
+                    <dd>{{ formatDocumentDateTime(selectedNode) }}</dd>
+                    <dt>เอกสารต้นทาง</dt>
+                    <dd>{{ sourceDocNo(selectedNode) }}</dd>
                     <dt>คู่ค้า</dt>
                     <dd>{{ selectedNode.party_name || selectedNode.party_code || '-' }}</dd>
                     <dt>ยอดเงิน</dt>
@@ -248,85 +305,75 @@ function previewBestPDF(node) {
     padding: 1rem;
 }
 
-.flow-opposite {
-    display: grid;
-    gap: 0.1rem;
-    min-width: 6.5rem;
-    text-align: right;
-    color: var(--text-color-secondary);
+.flow-card-hitarea {
+    cursor: pointer;
 }
 
-.flow-marker {
-    width: 1.8rem;
-    height: 1.8rem;
-    border-radius: 999px;
-    display: inline-grid;
-    place-items: center;
-    color: var(--text-color-secondary);
-    background: var(--surface-hover);
-    border: 2px solid var(--surface-card);
-    font-size: 0.8rem;
+.flow-card-hitarea:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 3px;
+    border-radius: 8px;
 }
 
-.flow-marker.root,
-.flow-marker.paperless {
-    color: var(--primary-contrast-color);
-    background: var(--primary-color);
+.flow-document-card {
+    border: 1px solid var(--surface-border);
 }
 
-.flow-content {
-    min-width: 0;
-    display: grid;
-    gap: 0.35rem;
-    padding: 0 0 1.25rem 0.35rem;
+.flow-document-card.root,
+.flow-document-card.selected {
+    border-color: var(--primary-color);
 }
 
-.flow-content.root {
-    border-left: 3px solid var(--primary-color);
-    padding-left: 0.75rem;
+.flow-document-card.selected {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 65%, transparent);
 }
 
-.flow-timeline :deep(.p-timeline-event-opposite) {
-    flex: 0 0 7.5rem;
-    padding: 0 0.75rem 0 0;
-}
-
-.flow-timeline :deep(.p-timeline-event-content) {
-    padding-left: 0.75rem;
-}
-
-.flow-timeline :deep(.p-timeline-event-marker) {
-    border: 0;
-}
-
+.flow-metadata-grid,
 .metadata-grid {
     display: grid;
-    grid-template-columns: 9rem minmax(0, 1fr);
-    gap: 0.65rem 1rem;
+    grid-template-columns: 8rem minmax(0, 1fr);
+    gap: 0.45rem 0.75rem;
     margin: 0;
 }
 
+.flow-metadata-grid dt,
 .metadata-grid dt {
-    color: var(--text-color-secondary);
+    color: var(--text-color);
+    font-weight: 600;
 }
 
+.flow-metadata-grid dd,
 .metadata-grid dd {
     margin: 0;
     min-width: 0;
     overflow-wrap: anywhere;
 }
 
+.flow-doc-no {
+    color: var(--primary-color);
+    font-weight: 700;
+}
+
+@media screen and (max-width: 960px) {
+    .document-flow-timeline:deep(.p-timeline-event:nth-child(even)) {
+        flex-direction: row !important;
+    }
+
+    .document-flow-timeline:deep(.p-timeline-event:nth-child(even) .p-timeline-event-content) {
+        text-align: left !important;
+    }
+
+    .document-flow-timeline:deep(.p-timeline-event-opposite) {
+        flex: 0;
+    }
+
+    .document-flow-timeline:deep(.p-card) {
+        margin-top: 1rem;
+    }
+}
+
 @media (max-width: 640px) {
-    .flow-timeline :deep(.p-timeline-event-opposite) {
-        flex: 0 0 5.5rem;
-        padding-right: 0.5rem;
-    }
-
-    .flow-opposite {
-        min-width: 0;
-        text-align: left;
-    }
-
+    .flow-metadata-grid,
     .metadata-grid {
         grid-template-columns: 1fr;
     }

@@ -44,6 +44,7 @@ const flowHeader = computed(() => {
     const party = doc.partyName || doc.partyCode || '';
     return `${doc.docNo} ~ ${doc.docFormatCode || '-'}${party ? ` · ${party}` : ''}`;
 });
+const flowNodeCount = computed(() => flowGraph.value?.nodes?.length || 0);
 
 watch(
     () => [props.visible, requestedDocumentKey.value],
@@ -91,7 +92,7 @@ async function loadDocumentFlow(doc = flowDocument.value, options = {}) {
         flowGraph.value = flowCache.get(cacheKey);
         flowLoading.value = false;
         touchFlowCache(cacheKey, flowGraph.value);
-        recordFlowEvent('document_flow_cache_hit', { docFormatCode: normalizedDoc.docFormatCode, nodeCount: flowGraph.value?.nodes?.length || 0 });
+        recordFlowEvent('document_flow_cache_hit', { docFormatCode: normalizedDoc.docFormatCode, nodeCount: flowNodeCount.value });
         return;
     }
 
@@ -149,7 +150,7 @@ async function previewFlowPDF(payload = {}) {
     pdfUrl.value = url;
     pdfTitle.value = `${docNo} · ${version === 'final' ? 'หลักฐานการลงนาม' : 'PDF ล่าสุด'}`;
     pdfDialog.value = true;
-    recordFlowEvent('document_flow_pdf_open', { docFormatCode: node.doc_format_code || flowDocument.value?.docFormatCode || '', nodeCount: flowGraph.value?.nodes?.length || 0 });
+    recordFlowEvent('document_flow_pdf_open', { docFormatCode: node.doc_format_code || flowDocument.value?.docFormatCode || '', nodeCount: flowNodeCount.value });
 }
 
 function clearPDFPreview() {
@@ -170,21 +171,33 @@ function recordFlowEvent(event, extra = {}) {
         sessionId: flowSessionId,
         docFormatCode: extra.docFormatCode || flowDocument.value?.docFormatCode || '',
         elapsedMs: Date.now() - openedAt.value,
-        nodeCount: extra.nodeCount || flowGraph.value?.nodes?.length || 0,
+        nodeCount: extra.nodeCount || flowNodeCount.value,
         errorCode: extra.errorCode || ''
     }).catch(() => {});
 }
 </script>
 
 <template>
-    <Dialog v-model:visible="dialogVisible" modal :header="flowHeader" :style="{ width: 'min(70rem, 96vw)' }" @hide="closeFlowDialog">
-        <div class="flex flex-col gap-3">
-            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+    <Dialog
+        v-model:visible="dialogVisible"
+        modal
+        maximizable
+        class="document-flow-dialog"
+        :header="flowHeader"
+        :style="{ width: 'min(118rem, 98vw)', height: 'min(88vh, 58rem)' }"
+        :breakpoints="{ '960px': '98vw', '640px': '100vw' }"
+        @hide="closeFlowDialog"
+    >
+        <div class="flow-dialog-layout">
+            <div class="flow-dialog-toolbar flex flex-col md:flex-row md:items-center justify-between gap-3">
                 <div class="min-w-0">
                     <div class="font-semibold">Flow เอกสาร</div>
                     <small class="text-muted-color">ดูความสัมพันธ์จาก SML และเปิด PDF ของเอกสารที่มีใน PaperLess</small>
                 </div>
-                <Button icon="pi pi-refresh" label="โหลดใหม่" severity="secondary" outlined :loading="flowLoading" @click="loadDocumentFlow(flowDocument, { force: true })" />
+                <div class="flex flex-wrap items-center gap-2 md:justify-end">
+                    <Tag v-if="flowNodeCount" :value="`${flowNodeCount} เอกสาร`" severity="info" />
+                    <Button icon="pi pi-refresh" label="โหลดใหม่" severity="secondary" outlined :loading="flowLoading" @click="loadDocumentFlow(flowDocument, { force: true })" />
+                </div>
             </div>
 
             <Message v-if="flowNotice" severity="info">{{ flowNotice }}</Message>
@@ -199,15 +212,16 @@ function recordFlowEvent(event, extra = {}) {
                 <i class="pi pi-spin pi-spinner"></i>
                 <span>กำลังโหลด Flow เอกสาร</span>
             </div>
-            <DocumentFlowViewer
-                v-else
-                :graph="flowGraph"
-                admin
-                compact
-                :show-table="false"
-                @open-document="(documentId) => emit('open-document', documentId)"
-                @preview-pdf="previewFlowPDF"
-            />
+            <div v-else class="flow-dialog-viewer">
+                <DocumentFlowViewer
+                    :graph="flowGraph"
+                    admin
+                    compact
+                    :show-table="false"
+                    @open-document="(documentId) => emit('open-document', documentId)"
+                    @preview-pdf="previewFlowPDF"
+                />
+            </div>
         </div>
         <template #footer>
             <Button label="ปิด" severity="secondary" outlined @click="closeFlowDialog" />
@@ -218,12 +232,75 @@ function recordFlowEvent(event, extra = {}) {
 </template>
 
 <style scoped>
+.flow-dialog-layout {
+    display: flex;
+    min-height: 0;
+    height: 100%;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.flow-dialog-toolbar {
+    flex: 0 0 auto;
+}
+
+.flow-dialog-viewer {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0.15rem 0.1rem 0.65rem;
+}
+
 .flow-loading {
-    min-height: 10rem;
+    min-height: 18rem;
     display: grid;
     place-items: center;
     align-content: center;
     gap: 0.6rem;
     color: var(--text-color-secondary);
+}
+
+:global(.document-flow-dialog.p-dialog) {
+    max-width: 98vw;
+    max-height: 92vh;
+}
+
+:global(.document-flow-dialog .p-dialog-content) {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    overflow: hidden;
+    padding-block: 0.75rem;
+}
+
+:global(.document-flow-dialog .p-dialog-header) {
+    padding: 0.9rem 1rem 0.65rem;
+}
+
+:global(.document-flow-dialog .p-dialog-footer) {
+    padding: 0.65rem 1rem 0.85rem;
+}
+
+@media (max-width: 640px) {
+    :global(.document-flow-dialog.p-dialog) {
+        width: 100vw !important;
+        height: 100dvh !important;
+        max-width: 100vw;
+        max-height: 100dvh;
+        margin: 0;
+        border-radius: 0;
+    }
+
+    :global(.document-flow-dialog .p-dialog-header),
+    :global(.document-flow-dialog .p-dialog-content),
+    :global(.document-flow-dialog .p-dialog-footer) {
+        padding-inline: 0.75rem;
+    }
+
+    .flow-dialog-viewer {
+        padding-bottom: 0.5rem;
+    }
 }
 </style>

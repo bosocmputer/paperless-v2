@@ -93,8 +93,7 @@ async function submit() {
                         <div class="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-primary text-primary-contrast mb-5">
                             <i class="pi pi-file-check text-2xl"></i>
                         </div>
-                        <div class="text-surface-900 dark:text-surface-0 text-3xl font-medium mb-2">PaperLess</div>
-                        <span class="text-muted-color font-medium">เข้าสู่ระบบด้วยบัญชี SML แล้วเลือก database ที่ต้องการใช้งาน</span>
+                        <div class="text-surface-900 dark:text-surface-0 text-3xl font-medium">PaperLess</div>
                     </div>
 
                     <div class="w-full md:w-[30rem] mx-auto mb-6 grid grid-cols-2 gap-2">

@@ -284,13 +284,20 @@ type SMLRelatedDocumentsGraph struct {
 type SMLRelatedDocumentNode struct {
 	DocNo               string                     `json:"doc_no"`
 	DocDate             string                     `json:"doc_date"`
+	DocTime             string                     `json:"doc_time,omitempty"`
 	DocFormatCode       string                     `json:"doc_format_code"`
+	DocFormatName       string                     `json:"doc_format_name,omitempty"`
 	TransFlag           int                        `json:"trans_flag"`
+	TransFlagMenu       string                     `json:"trans_flag_menu,omitempty"`
+	TransFlagNameTH     string                     `json:"trans_flag_name_th,omitempty"`
+	TransFlagNameEN     string                     `json:"trans_flag_name_en,omitempty"`
+	TransType           int                        `json:"trans_type,omitempty"`
 	Table               string                     `json:"table"`
 	PartyCode           string                     `json:"party_code"`
 	PartyName           string                     `json:"party_name"`
 	PartyType           string                     `json:"party_type"`
 	TotalAmount         float64                    `json:"total_amount"`
+	SourceDocNo         string                     `json:"source_doc_no,omitempty"`
 	IsLockRecord        int                        `json:"is_lock_record"`
 	PaperlessDocumentID string                     `json:"paperlessDocumentId,omitempty"`
 	PaperlessStatus     string                     `json:"paperlessStatus,omitempty"`
