@@ -1,10 +1,9 @@
 <script setup>
 import { api } from '@/services/api';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 
-const route = useRoute();
 const router = useRouter();
 const toast = useToast();
 
@@ -22,17 +21,13 @@ const openedAt = Date.now();
 let searchTimer = null;
 
 const hasRows = computed(() => documents.value.length > 0);
-const isAdminSignerWorkspace = computed(() => route.meta.adminSignerWorkspace === true);
-const historyDetailRouteName = computed(() => (isAdminSignerWorkspace.value ? 'admin-my-signing-history-detail' : 'my-signing-history-detail'));
-const pageTitle = computed(() => (isAdminSignerWorkspace.value ? 'ประวัติการเซ็นของฉัน' : 'ประวัติการเซ็น'));
-const pageSubtitle = computed(() => (isAdminSignerWorkspace.value ? 'ดูประวัติการเซ็นของคุณในฐานข้อมูลนี้' : 'ดูเอกสารที่คุณเคยเซ็นหรือปฏิเสธไว้'));
 const emptyTitle = computed(() => {
     if (searchQuery.value) return 'ไม่พบประวัติจากคำค้นนี้';
-    return isAdminSignerWorkspace.value ? 'ยังไม่มีประวัติการเซ็นในฐานข้อมูลนี้' : 'ยังไม่มีประวัติการเซ็น';
+    return 'ยังไม่มีประวัติการเซ็น';
 });
 const emptyDescription = computed(() => {
     if (searchQuery.value) return 'ลองค้นหาด้วยเลขเอกสาร ชื่อคู่ค้า หรือตำแหน่งอีกครั้ง';
-    return isAdminSignerWorkspace.value ? 'เมื่อคุณเซ็นหรือปฏิเสธเอกสารในฐานข้อมูลนี้ รายการจะแสดงที่นี่' : 'เมื่อคุณเซ็นหรือปฏิเสธเอกสาร รายการจะแสดงที่นี่';
+    return 'เมื่อคุณเซ็นหรือปฏิเสธเอกสาร รายการจะแสดงที่นี่';
 });
 
 onMounted(() => loadHistory());
@@ -79,7 +74,7 @@ async function loadMore() {
 }
 
 function openHistory(row) {
-    router.push({ name: historyDetailRouteName.value, params: { taskId: row.taskId } });
+    router.push({ name: 'my-signing-history-detail', params: { taskId: row.taskId } });
 }
 
 function recordHistoryOpen() {
@@ -117,8 +112,8 @@ function formatDateTime(value) {
     <section class="history-page">
         <header class="history-header">
             <div>
-                <h1>{{ pageTitle }}</h1>
-                <p>{{ pageSubtitle }}</p>
+                <h1>ประวัติการเซ็น</h1>
+                <p>ดูเอกสารที่คุณเคยเซ็นหรือปฏิเสธไว้</p>
             </div>
             <div class="header-actions">
                 <Tag :value="`${total || 0} รายการ`" severity="secondary" />

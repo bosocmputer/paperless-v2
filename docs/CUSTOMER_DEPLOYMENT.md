@@ -62,6 +62,31 @@ Required groups:
 
 Provider and data group are system configuration values. The login UI must not ask the user to enter them.
 
+## SML Tenant Image DB Preflight
+
+Every selectable SML tenant must have a matching image database. For example, tenant `stpt` requires:
+
+- `stpt` for ERP document data
+- `stpt_images` for image bytes
+
+Both databases must contain `public.sml_doc_images` with the same schema. Tenants created directly in PostgreSQL can miss the `_images` database, which causes PaperLess confirm to stop at `completed_image_failed`.
+
+Run from the deployed SML API source/container before customer testing:
+
+```bash
+docker exec paperless-prod-sml-api ./verify-sml-tenant --all-allowed --template iampcoffee_images
+```
+
+If a tenant image DB is missing, create only that image DB with dry-run first, then apply after customer approval:
+
+```bash
+docker exec paperless-prod-sml-api ./provision-sml-image-db --tenant stpt --template iampcoffee_images
+docker exec paperless-prod-sml-api ./provision-sml-image-db --tenant stpt --template iampcoffee_images --apply
+docker exec paperless-prod-sml-api ./verify-sml-tenant --tenant stpt --template iampcoffee_images
+```
+
+Do not insert or repair `sml_doc_images` rows by direct SQL during normal operation. Use the PaperLess “ส่งรูป SML อีกครั้ง” retry action so events and lock flow remain auditable.
+
 ## Login Verification
 
 Customer login must be verified with real SML credentials from `smlerpmaindata`.
@@ -69,10 +94,11 @@ Customer login must be verified with real SML credentials from `smlerpmaindata`.
 Expected login behavior:
 
 1. User enters SML username/password.
-2. PaperLess asks the SML API for allowed databases.
+2. PaperLess asks the SML API for allowed databases and quick tenant readiness.
 3. User selects a database every login.
-4. PaperLess creates a local user if it does not exist yet.
-5. `superadmin` maps to admin role only when the real SML `superadmin` account authenticates successfully.
+4. PaperLess runs a full tenant readiness check before issuing the JWT.
+5. PaperLess creates a local user if it does not exist yet.
+6. `superadmin` maps to admin role only when the real SML `superadmin` account authenticates successfully.
 
 Development default credentials are not assumed to work on the customer server.
 
@@ -86,7 +112,8 @@ Development default credentials are not assumed to work on the customer server.
 6. Open `http://45.122.49.250:8095`.
 7. Test login with a real SML account.
 8. Select the customer tenant database.
-9. Smoke test dashboard, workflow config, document search, PDF preview, signer queue, SML image upload, and SML lock.
+9. Run SML tenant image DB preflight for every allowed tenant.
+10. Smoke test dashboard, workflow config, document search, PDF preview, signer queue, SML image upload, and SML lock.
 
 ## Smoke Commands
 
@@ -95,8 +122,8 @@ From the customer server:
 ```bash
 docker ps --filter "name=paperless-prod"
 curl -fsS http://127.0.0.1:8095/
-curl -fsS http://127.0.0.1:8095/api/live
-curl -fsS http://127.0.0.1:8095/api/ready
+curl -fsS http://127.0.0.1:8095/health/live
+curl -fsS http://127.0.0.1:8095/health/ready
 ```
 
 Do not print secrets in terminal logs that will be copied into tickets or chat.

@@ -21,11 +21,15 @@ const databaseOptions = computed(() =>
     databases.value.map((database) => ({
         label: databaseLabel(database),
         value: database.databaseName || database.tenant || database.dataCode,
-        description: [database.dataCode, database.tenant].filter(Boolean).join(' · ')
+        description: [database.dataCode, database.tenant].filter(Boolean).join(' · '),
+        readiness: database.readiness || null
     }))
 );
+const selectedDatabaseOption = computed(() => databaseOptions.value.find((option) => option.value === selectedDatabase.value) || null);
+const selectedReadiness = computed(() => selectedDatabaseOption.value?.readiness || null);
+const selectedDatabaseReady = computed(() => !selectedReadiness.value || selectedReadiness.value.ok || selectedReadiness.value.status === 'unknown');
 const credentialsComplete = computed(() => username.value.trim() !== '' && password.value !== '');
-const canSubmit = computed(() => (step.value === 'database' ? Boolean(selectedDatabase.value) : credentialsComplete.value));
+const canSubmit = computed(() => (step.value === 'database' ? Boolean(selectedDatabase.value) && selectedDatabaseReady.value : credentialsComplete.value));
 
 function databaseLabel(database) {
     const name = database.dataName || database.databaseName || database.tenant || database.dataCode;
@@ -33,6 +37,31 @@ function databaseLabel(database) {
     if (!name) return code || 'Database';
     if (!code || name === code) return name;
     return `${name} (${code})`;
+}
+
+function readinessLabel(readiness) {
+    if (!readiness) return 'รอตรวจ';
+    if (readiness.ok) return 'พร้อมใช้งาน';
+    if (readiness.status === 'image_db_missing') return 'ต้องตั้งค่า image DB';
+    if (readiness.status === 'main_db_missing') return 'ไม่พบ DB หลัก';
+    if (readiness.status === 'schema_mismatch') return 'schema ไม่พร้อม';
+    return 'ตรวจไม่ได้';
+}
+
+function readinessSeverity(readiness) {
+    if (!readiness) return 'secondary';
+    if (readiness.ok) return 'success';
+    if (readiness.status === 'unknown') return 'warn';
+    return 'danger';
+}
+
+function readinessDetail(readiness) {
+    if (!readiness) return '';
+    if (readiness.ok) return `ตรวจแล้วพร้อมใช้งาน${readiness.imageDatabase ? ` · ${readiness.imageDatabase}` : ''}`;
+    if (readiness.status === 'image_db_missing') return `ฐานข้อมูลนี้ยังไม่มีฐานรูป ${readiness.imageDatabase || ''} กรุณาแจ้งผู้ดูแลระบบ`;
+    if (readiness.status === 'main_db_missing') return 'ไม่พบฐานข้อมูล SML หลัก กรุณาแจ้งผู้ดูแลระบบ';
+    if (readiness.status === 'schema_mismatch') return 'schema ตารางรูปเอกสารไม่ตรงกับมาตรฐาน กรุณาแจ้งผู้ดูแลระบบ';
+    return readiness.message || 'ยังตรวจความพร้อมไม่ได้ในขณะนี้';
 }
 
 function goToApp() {
@@ -125,12 +154,31 @@ async function submit() {
                             <label for="database" class="block text-surface-900 dark:text-surface-0 font-medium mb-2">Database</label>
                             <Select id="database" v-model="selectedDatabase" :options="databaseOptions" optionLabel="label" optionValue="value" filter fluid class="mb-4">
                                 <template #option="{ option }">
-                                    <div class="flex flex-col">
-                                        <span>{{ option.label }}</span>
-                                        <small v-if="option.description" class="text-muted-color">{{ option.description }}</small>
+                                    <div class="flex items-start justify-between gap-3 w-full">
+                                        <div class="flex flex-col min-w-0">
+                                            <span class="truncate">{{ option.label }}</span>
+                                            <small v-if="option.description" class="text-muted-color">{{ option.description }}</small>
+                                        </div>
+                                        <Tag :value="readinessLabel(option.readiness)" :severity="readinessSeverity(option.readiness)" />
                                     </div>
                                 </template>
+                                <template #value="{ value, placeholder }">
+                                    <div v-if="selectedDatabaseOption" class="flex items-center justify-between gap-3 w-full">
+                                        <div class="flex flex-col min-w-0">
+                                            <span class="truncate">{{ selectedDatabaseOption.label }}</span>
+                                            <small v-if="selectedDatabaseOption.description" class="text-muted-color">{{ selectedDatabaseOption.description }}</small>
+                                        </div>
+                                        <Tag :value="readinessLabel(selectedDatabaseOption.readiness)" :severity="readinessSeverity(selectedDatabaseOption.readiness)" />
+                                    </div>
+                                    <span v-else>{{ placeholder || value }}</span>
+                                </template>
                             </Select>
+                            <Message v-if="selectedReadiness" :severity="selectedReadiness.ok ? 'success' : selectedReadiness.status === 'unknown' ? 'warn' : 'error'" class="mb-4">
+                                {{ readinessDetail(selectedReadiness) }}
+                            </Message>
+                            <Message v-if="selectedReadiness && !selectedDatabaseReady" severity="warn" class="mb-4">
+                                ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess จึงยังไม่สามารถเข้าสู่ระบบด้วย database นี้ได้
+                            </Message>
                         </template>
 
                         <Message v-if="error" severity="error" class="mb-4">{{ error }}</Message>

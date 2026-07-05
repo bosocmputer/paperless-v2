@@ -1,7 +1,7 @@
 <script setup>
 import { useLayout } from '@/layout/composables/layout';
 import { api } from '@/services/api';
-import { formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
+import { formatThaiDateTime, signingStatusLabel, signingStatusSeverity, smlImageFailureDetail } from '@/utils/signingFormatters';
 import { isSigningDocumentMenuKey, normalizeSigningDocumentQueue, signingDocumentMenuKeyForQueue, signingDocumentQueueForStatus } from '@/utils/signingQueue';
 import ContinuousPdfViewer from '@/views/signing/components/ContinuousPdfViewer.vue';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
@@ -167,7 +167,7 @@ function confirmResultSummary(result = {}) {
 
 function confirmResultDetail(result = {}) {
     if (!result.finalOk) return 'สร้าง final PDF/evidence ไม่สำเร็จ กรุณา retry';
-    if (!result.imageOk) return 'ส่งรูปเอกสารเข้า SML ไม่สำเร็จ กรุณา retry';
+    if (!result.imageOk) return smlImageFailureDetail(result);
     if (!result.lockOk) return ['Lock SML ไม่สำเร็จ กรุณา retry', imageTruncatedDetail(result)].filter(Boolean).join(' · ');
     return imageTruncatedDetail(result);
 }

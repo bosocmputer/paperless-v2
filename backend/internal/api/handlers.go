@@ -84,6 +84,16 @@ func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, r
 		writeError(w, http.StatusForbidden, "database_not_allowed", "Database is not allowed for this user.")
 		return
 	}
+	readiness, err := s.fetchSMLTenantReadiness(r.Context(), result.SelectedDatabase.Tenant)
+	if err != nil {
+		s.logger.Warn("SML tenant readiness check failed", "error", err, "tenant", result.SelectedDatabase.Tenant)
+		writeError(w, http.StatusBadGateway, "tenant_readiness_failed", "Cannot verify selected database readiness right now.")
+		return
+	}
+	if !readiness.OK {
+		writeError(w, http.StatusFailedDependency, "tenant_not_ready", tenantReadinessLoginMessage(readiness))
+		return
+	}
 
 	user, err := s.findOrProvisionSMLUser(r.Context(), req.Username, result)
 	if err != nil {
@@ -126,13 +136,34 @@ func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, r
 	}
 
 	writeJSON(w, http.StatusOK, models.LoginResponse{
-		Token:      token,
-		TokenType:  "Bearer",
-		ExpiresAt:  &expiresAt,
-		User:       &user,
-		Session:    &session,
-		AuthSource: "sml",
+		Token:           token,
+		TokenType:       "Bearer",
+		ExpiresAt:       &expiresAt,
+		User:            &user,
+		Session:         &session,
+		AuthSource:      "sml",
+		TenantReadiness: &readiness,
 	})
+}
+
+func tenantReadinessLoginMessage(readiness models.SMLTenantReadiness) string {
+	imageDatabase := strings.TrimSpace(readiness.ImageDatabase)
+	switch readiness.Status {
+	case "image_db_missing":
+		if imageDatabase != "" {
+			return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูลรูป " + imageDatabase + " กรุณาแจ้งผู้ดูแลระบบ"
+		}
+		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูลรูป กรุณาแจ้งผู้ดูแลระบบ"
+	case "main_db_missing":
+		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูล SML หลัก กรุณาแจ้งผู้ดูแลระบบ"
+	case "schema_mismatch":
+		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: schema ตารางรูปเอกสารไม่ตรงกับมาตรฐาน กรุณาแจ้งผู้ดูแลระบบ"
+	default:
+		if strings.TrimSpace(readiness.Message) != "" {
+			return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: " + readiness.Message
+		}
+		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess กรุณาแจ้งผู้ดูแลระบบ"
+	}
 }
 
 func (s *Server) findOrProvisionSMLUser(ctx context.Context, username string, result smlAuthResult) (models.User, error) {

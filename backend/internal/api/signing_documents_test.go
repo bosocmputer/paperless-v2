@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -154,6 +155,38 @@ func TestCanRetrySigningDocumentImagesStatusIncludesCompletedRepair(t *testing.T
 		if canRetrySigningDocumentImagesStatus(status) {
 			t.Fatalf("status %q should not be retryable for SML image repair", status)
 		}
+	}
+}
+
+func TestSMLImagesHTTPErrorExplainsMissingImageDatabase(t *testing.T) {
+	status, code, message := smlImagesHTTPError(map[string]any{
+		"errorCode": "tenant_image_database_missing",
+		"errorDetails": map[string]any{
+			"imageDatabase": "stpt_images",
+		},
+	})
+
+	if status != http.StatusFailedDependency {
+		t.Fatalf("status = %d, want %d", status, http.StatusFailedDependency)
+	}
+	if code != "tenant_image_database_missing" {
+		t.Fatalf("code = %q, want tenant_image_database_missing", code)
+	}
+	if !strings.Contains(message, "stpt_images") {
+		t.Fatalf("message = %q, want image database name", message)
+	}
+}
+
+func TestTenantReadinessLoginMessageExplainsMissingImageDatabase(t *testing.T) {
+	message := tenantReadinessLoginMessage(models.SMLTenantReadiness{
+		Status:        "image_db_missing",
+		ImageDatabase: "silk_images",
+	})
+	if !strings.Contains(message, "silk_images") {
+		t.Fatalf("message = %q, want image database name", message)
+	}
+	if strings.Contains(strings.ToLower(message), "failed") {
+		t.Fatalf("message should be user-facing Thai copy, got %q", message)
 	}
 }
 

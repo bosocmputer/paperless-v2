@@ -47,6 +47,13 @@ type smlAuthLoginResponse struct {
 	Message string       `json:"message"`
 }
 
+type smlTenantReadinessResponse struct {
+	Success bool                      `json:"success"`
+	Data    models.SMLTenantReadiness `json:"data"`
+	Error   *smlAPIError              `json:"error"`
+	Message string                    `json:"message"`
+}
+
 type smlAuthResult struct {
 	Provider         string
 	DataGroup        string
@@ -135,6 +142,43 @@ func (s *Server) verifySMLLogin(ctx context.Context, username, password, databas
 		result.SelectedDatabase = &selected
 	}
 	return result, nil
+}
+
+func (s *Server) fetchSMLTenantReadiness(ctx context.Context, tenant string) (models.SMLTenantReadiness, error) {
+	if strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) == "" || strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) == "" {
+		return models.SMLTenantReadiness{}, errSMLConfigMissing
+	}
+	endpoint, err := url.Parse(s.cfg.SMLPaperlessBaseURL + "/api/v1/tenants/readiness")
+	if err != nil {
+		return models.SMLTenantReadiness{}, fmt.Errorf("invalid SML base URL")
+	}
+	query := endpoint.Query()
+	query.Set("tenant", store.NormalizeSMLTenant(tenant))
+	endpoint.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return models.SMLTenantReadiness{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return models.SMLTenantReadiness{}, err
+	}
+	defer resp.Body.Close()
+
+	var payload smlTenantReadinessResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload); err != nil {
+		return models.SMLTenantReadiness{}, fmt.Errorf("cannot parse SML tenant readiness response")
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return models.SMLTenantReadiness{}, newSMLRequestError(payload.Error, payload.Message, resp.Status)
+	}
+	if !payload.Success {
+		return models.SMLTenantReadiness{}, newSMLRequestError(payload.Error, payload.Message, "SML tenant readiness failed")
+	}
+	return payload.Data, nil
 }
 
 func normalizeSMLAuthDatabases(items []models.SMLAuthDatabase) []models.SMLAuthDatabase {

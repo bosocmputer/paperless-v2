@@ -1,6 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
-import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
+import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity, smlImageFailureDetail } from '@/utils/signingFormatters';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -283,7 +283,7 @@ function confirmResultSummary(result = {}) {
 
 function confirmResultDetail(result = {}) {
     if (!result.finalOk) return 'สร้าง final PDF/evidence ไม่สำเร็จ กรุณา retry';
-    if (!result.imageOk) return 'ส่งรูปเอกสารเข้า SML ไม่สำเร็จ กรุณาเปิดเอกสารเพื่อ retry';
+    if (!result.imageOk) return smlImageFailureDetail(result, 'ส่งรูปเอกสารเข้า SML ไม่สำเร็จ กรุณาเปิดเอกสารเพื่อ retry');
     if (!result.lockOk) return ['Lock SML ไม่สำเร็จ กรุณาเปิดเอกสารเพื่อ retry', imageTruncatedDetail(result)].filter(Boolean).join(' · ');
     return imageTruncatedDetail(result);
 }

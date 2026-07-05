@@ -70,3 +70,12 @@ export function signingActionLabel(action) {
     };
     return labels[action] || action || '-';
 }
+
+export function smlImageFailureDetail(result = {}, fallback = 'ส่งรูปเอกสารเข้า SML ไม่สำเร็จ กรุณา retry') {
+    const image = result.image || {};
+    if (image.errorCode === 'tenant_image_database_missing') {
+        const imageDatabase = image.errorDetails?.imageDatabase;
+        return imageDatabase ? `ฐานข้อมูลรูป SML ยังไม่พร้อม: ${imageDatabase} กรุณาแจ้งผู้ดูแลระบบ แล้วกดส่งรูป SML อีกครั้งหลังแก้ไข` : 'ฐานข้อมูลรูป SML ยังไม่พร้อม กรุณาแจ้งผู้ดูแลระบบ แล้วกดส่งรูป SML อีกครั้งหลังแก้ไข';
+    }
+    return fallback;
+}

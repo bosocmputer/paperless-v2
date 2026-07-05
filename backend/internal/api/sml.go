@@ -82,6 +82,23 @@ type smlLockResponse struct {
 type smlAPIError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	Details any    `json:"details,omitempty"`
+}
+
+type smlRequestError struct {
+	Code    string
+	Message string
+	Details any
+}
+
+func (e *smlRequestError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.Code != "" {
+		return e.Code
+	}
+	return "SML request failed"
 }
 
 func (s *Server) smlTenantForContext(ctx context.Context) string {
@@ -484,4 +501,15 @@ func smlErrorMessage(apiErr *smlAPIError, message, fallback string) string {
 		return message
 	}
 	return fallback
+}
+
+func newSMLRequestError(apiErr *smlAPIError, message, fallback string) error {
+	if apiErr != nil {
+		return &smlRequestError{
+			Code:    apiErr.Code,
+			Message: smlErrorMessage(apiErr, message, fallback),
+			Details: apiErr.Details,
+		}
+	}
+	return &smlRequestError{Message: smlErrorMessage(nil, message, fallback)}
 }

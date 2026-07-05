@@ -1136,7 +1136,8 @@ func (s *Server) retrySigningDocumentImages(w http.ResponseWriter, r *http.Reque
 	}
 	imageOK, imageMetadata := s.uploadCompletedDocumentImages(r.Context(), document.ID)
 	if !imageOK {
-		writeError(w, http.StatusBadGateway, "sml_images_failed", "SML image upload failed. You can retry again.")
+		status, code, message := smlImagesHTTPError(imageMetadata)
+		writeError(w, status, code, message)
 		return
 	}
 	lockOK, lockMetadata := s.lockCompletedDocument(r.Context(), document.ID, document.DocNo)
@@ -1471,6 +1472,29 @@ func (s *Server) getMySigningHistoryPDF(w http.ResponseWriter, r *http.Request) 
 
 func canRetrySigningDocumentImagesStatus(status string) bool {
 	return status == "completed_image_failed" || status == "completed"
+}
+
+func smlImagesHTTPError(metadata map[string]any) (int, string, string) {
+	code, _ := metadata["errorCode"].(string)
+	if code == "tenant_image_database_missing" {
+		imageDatabase := imageDatabaseFromSMLImageMetadata(metadata)
+		if imageDatabase != "" {
+			return http.StatusFailedDependency, code, "ฐานข้อมูลรูป SML ยังไม่พร้อม: " + imageDatabase + " กรุณา provision image DB แล้วกดส่งรูป SML อีกครั้ง"
+		}
+		return http.StatusFailedDependency, code, "ฐานข้อมูลรูป SML ยังไม่พร้อม กรุณา provision image DB แล้วกดส่งรูป SML อีกครั้ง"
+	}
+	return http.StatusBadGateway, "sml_images_failed", "SML image upload failed. You can retry again."
+}
+
+func imageDatabaseFromSMLImageMetadata(metadata map[string]any) string {
+	details, _ := metadata["errorDetails"].(map[string]any)
+	if details == nil {
+		return ""
+	}
+	if imageDatabase, _ := details["imageDatabase"].(string); strings.TrimSpace(imageDatabase) != "" {
+		return strings.TrimSpace(imageDatabase)
+	}
+	return ""
 }
 
 func selectSigningHistoryPDFFile(document models.SigningDocument, version string) *models.UploadedFile {
@@ -2141,6 +2165,15 @@ func (s *Server) uploadCompletedDocumentImages(ctx context.Context, documentID s
 	metadata["elapsedMs"] = time.Since(start).Milliseconds()
 	if err != nil {
 		metadata["error"] = truncateForMetadata(err.Error(), 500)
+		var smlErr *smlRequestError
+		if errors.As(err, &smlErr) {
+			if strings.TrimSpace(smlErr.Code) != "" {
+				metadata["errorCode"] = smlErr.Code
+			}
+			if smlErr.Details != nil {
+				metadata["errorDetails"] = smlErr.Details
+			}
+		}
 		_ = s.store.MarkDocumentImageResult(context.Background(), documentID, false, metadata)
 		return false, metadata
 	}

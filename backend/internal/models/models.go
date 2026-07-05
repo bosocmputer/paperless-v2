@@ -674,14 +674,15 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	Token            string            `json:"token,omitempty"`
-	TokenType        string            `json:"tokenType,omitempty"`
-	ExpiresAt        *time.Time        `json:"expiresAt,omitempty"`
-	User             *User             `json:"user,omitempty"`
-	Session          *AuthSession      `json:"session,omitempty"`
-	DatabaseRequired bool              `json:"databaseRequired,omitempty"`
-	Databases        []SMLAuthDatabase `json:"databases,omitempty"`
-	AuthSource       string            `json:"authSource,omitempty"`
+	Token            string              `json:"token,omitempty"`
+	TokenType        string              `json:"tokenType,omitempty"`
+	ExpiresAt        *time.Time          `json:"expiresAt,omitempty"`
+	User             *User               `json:"user,omitempty"`
+	Session          *AuthSession        `json:"session,omitempty"`
+	DatabaseRequired bool                `json:"databaseRequired,omitempty"`
+	Databases        []SMLAuthDatabase   `json:"databases,omitempty"`
+	AuthSource       string              `json:"authSource,omitempty"`
+	TenantReadiness  *SMLTenantReadiness `json:"tenantReadiness,omitempty"`
 }
 
 type AuthSession struct {
@@ -693,11 +694,28 @@ type AuthSession struct {
 }
 
 type SMLAuthDatabase struct {
-	DataGroup    string `json:"dataGroup"`
-	DataCode     string `json:"dataCode"`
-	DataName     string `json:"dataName"`
-	DatabaseName string `json:"databaseName"`
-	Tenant       string `json:"tenant"`
+	DataGroup    string              `json:"dataGroup"`
+	DataCode     string              `json:"dataCode"`
+	DataName     string              `json:"dataName"`
+	DatabaseName string              `json:"databaseName"`
+	Tenant       string              `json:"tenant"`
+	Readiness    *SMLTenantReadiness `json:"readiness,omitempty"`
+}
+
+type SMLTenantReadiness struct {
+	OK            bool                  `json:"ok"`
+	Status        string                `json:"status"`
+	Message       string                `json:"message"`
+	Tenant        string                `json:"tenant"`
+	ImageDatabase string                `json:"imageDatabase"`
+	Template      string                `json:"template,omitempty"`
+	Checks        []SMLTenantReadyCheck `json:"checks,omitempty"`
+}
+
+type SMLTenantReadyCheck struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
 }
 
 type APIError struct {

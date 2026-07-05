@@ -101,7 +101,7 @@ const router = createRouter({
                 {
                     path: '/admin/signing/tasks',
                     name: 'admin-my-signing-tasks',
-                    component: () => import('@/views/signing/MySigningTasks.vue'),
+                    component: () => import('@/views/signing/AdminMySigningTasks.vue'),
                     meta: { role: 'admin', adminSignerWorkspace: true, activeMenuKey: ADMIN_SIGNER_MENU_KEYS.tasks }
                 },
                 {
@@ -113,7 +113,7 @@ const router = createRouter({
                 {
                     path: '/admin/signing/history',
                     name: 'admin-my-signing-history',
-                    component: () => import('@/views/signing/MySigningHistory.vue'),
+                    component: () => import('@/views/signing/AdminMySigningHistory.vue'),
                     meta: { role: 'admin', adminSignerWorkspace: true, activeMenuKey: ADMIN_SIGNER_MENU_KEYS.history }
                 },
                 {

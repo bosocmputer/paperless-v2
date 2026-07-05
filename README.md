@@ -37,7 +37,9 @@ PaperLess authenticates against the SML auth API. The provider and data group ar
 Login is always two steps:
 
 1. User enters SML username/password.
-2. PaperLess verifies SML, shows every allowed database, and requires the user to choose one.
+2. PaperLess verifies SML, shows every allowed database with tenant readiness status, and requires the user to choose one.
+
+The selected database is checked again before JWT issuance. Databases missing `<tenant>_images` or a compatible `public.sml_doc_images` schema are blocked at login so users do not reach a broken confirm/upload flow.
 
 On first successful SML login, PaperLess creates the local user automatically:
 
@@ -83,6 +85,8 @@ When admin confirms a document, the backend:
 6. Locks the ERP document in SML after image upload succeeds.
 
 If image upload fails, status becomes `completed_image_failed` and SML lock is not attempted. Admin can retry SML images. Retrying a completed document is allowed for repair and remains idempotent.
+
+Before enabling a new SML tenant, verify that both the main database and matching image database exist. Example: tenant `stpt` requires `stpt` and `stpt_images`, both with `public.sml_doc_images`. Use the SML API maintenance command `verify-sml-tenant`; if the image DB is missing, provision it explicitly with `provision-sml-image-db` and then use PaperLess retry instead of direct SQL image inserts.
 
 ## Local Development
 

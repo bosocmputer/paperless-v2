@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -92,10 +91,10 @@ func (s *Server) replaceSMLDocumentImages(ctx context.Context, docNo string, ren
 		return nil, fmt.Errorf("cannot parse SML response")
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, errors.New(smlErrorMessage(payload.Error, payload.Message, resp.Status))
+		return nil, newSMLRequestError(payload.Error, payload.Message, resp.Status)
 	}
 	if !payload.Success {
-		return nil, errors.New(smlErrorMessage(payload.Error, payload.Message, "SML request failed"))
+		return nil, newSMLRequestError(payload.Error, payload.Message, "SML request failed")
 	}
 
 	return map[string]any{

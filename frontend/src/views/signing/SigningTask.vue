@@ -18,7 +18,8 @@ const saving = ref(false);
 
 const pdfUrl = computed(() => api.signingDocumentPDFUrlForDocument(document.value));
 const identityLabel = computed(() => authStore.user?.displayName || authStore.user?.username || task.value?.signerName || task.value?.signerUser || '');
-const taskListRouteName = computed(() => (route.meta.adminSignerWorkspace === true ? 'admin-my-signing-tasks' : 'my-signing-tasks'));
+const isAdminSignerWorkspace = computed(() => route.meta.adminSignerWorkspace === true);
+const taskListRouteName = computed(() => (isAdminSignerWorkspace.value ? 'admin-my-signing-tasks' : 'my-signing-tasks'));
 
 onMounted(loadTask);
 
@@ -95,6 +96,7 @@ function goBackToTasks() {
         :loading="loading"
         :saving="saving"
         :identity-label="identityLabel"
+        :admin-workspace="isAdminSignerWorkspace"
         :on-back="goBackToTasks"
         :on-reload="loadTask"
         :on-sign="signTask"

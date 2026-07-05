@@ -18,6 +18,7 @@ const props = defineProps({
     identityLabel: { type: String, default: '' },
     publicMode: { type: Boolean, default: false },
     externalSignOnly: { type: Boolean, default: false },
+    adminWorkspace: { type: Boolean, default: false },
     onBack: { type: Function, default: null },
     onReload: { type: Function, default: null },
     onSign: { type: Function, default: null },
@@ -423,14 +424,17 @@ function newRequestKey() {
 </script>
 
 <template>
-    <section class="signing-workspace" :class="{ 'read-only-workspace': !canInteract, 'history-focus-workspace': historyFocus }">
+    <section class="signing-workspace" :class="{ 'read-only-workspace': !canInteract, 'history-focus-workspace': historyFocus, 'admin-workspace': adminWorkspace }">
         <div class="signing-header">
-            <Button v-if="onBack" icon="pi pi-arrow-left" text rounded aria-label="กลับ" @click="onBack" />
+            <Button v-if="onBack" :label="adminWorkspace ? 'กลับ' : undefined" icon="pi pi-arrow-left" text rounded aria-label="กลับ" @click="onBack" />
             <div class="doc-title">
                 <strong>{{ document?.docNo || 'เอกสาร' }}</strong>
-                <span>{{ task?.positionName || '-' }} · {{ document?.partyName || document?.partyCode || '-' }}</span>
+                <span>{{ [adminWorkspace ? document?.docFormatCode : '', task?.positionName || '-', document?.partyName || document?.partyCode || '-'].filter(Boolean).join(' · ') }}</span>
             </div>
-            <Tag :value="statusView.label" :severity="statusView.severity" />
+            <div class="header-status">
+                <Tag :value="statusView.label" :severity="statusView.severity" />
+                <Button v-if="adminWorkspace && onReload" icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="onReload" />
+            </div>
         </div>
 
         <div v-if="loading" class="loading-state">
@@ -513,6 +517,14 @@ function newRequestKey() {
                     <label for="legalAccepted">ยืนยันข้อความ พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์</label>
                     <Button label="อ่านข้อความ" icon="pi pi-book" text size="small" @click="legalDialogVisible = true" />
                 </div>
+
+                <div v-if="adminWorkspace" class="admin-actions">
+                    <Message v-if="primaryDisabledReason" severity="warn" class="sticky-reason">{{ primaryDisabledReason }}</Message>
+                    <div class="admin-action-buttons" :class="{ 'single-action': !allowReject }">
+                        <Button v-if="allowReject" label="ปฏิเสธ" icon="pi pi-times" severity="danger" outlined :disabled="!canInteract || isBusy" @click="rejectVisible = true" />
+                        <Button label="ยืนยันเซ็น" icon="pi pi-check" :disabled="!canConfirm" :loading="isBusy" @click="confirmSign" />
+                    </div>
+                </div>
             </aside>
 
             <aside v-else-if="showReadOnlyPanel" class="sign-card readonly-card">
@@ -543,7 +555,7 @@ function newRequestKey() {
             </aside>
         </div>
 
-        <div v-if="!loading && canInteract" class="sticky-actions">
+        <div v-if="!adminWorkspace && !loading && canInteract" class="sticky-actions">
             <Message v-if="primaryDisabledReason" severity="warn" class="sticky-reason">{{ primaryDisabledReason }}</Message>
             <div class="sticky-buttons" :class="{ 'single-action': !allowReject }">
                 <Button v-if="allowReject" label="ปฏิเสธ" icon="pi pi-times" severity="danger" outlined :disabled="!canInteract || isBusy" @click="rejectVisible = true" />
@@ -616,6 +628,12 @@ function newRequestKey() {
     padding-bottom: 0.65rem;
 }
 
+.admin-workspace {
+    min-height: calc(100dvh - 8rem);
+    padding: 0;
+    padding-bottom: 0;
+}
+
 .signing-header {
     min-height: 46px;
     display: flex;
@@ -625,6 +643,18 @@ function newRequestKey() {
     border: 1px solid var(--surface-border);
     border-radius: 8px;
     background: var(--surface-card);
+}
+
+.admin-workspace .signing-header {
+    min-height: 56px;
+    padding: 0.75rem 1rem;
+}
+
+.header-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
 }
 
 .doc-title {
@@ -922,6 +952,26 @@ function newRequestKey() {
     min-height: 44px;
 }
 
+.admin-actions {
+    display: grid;
+    gap: 0.65rem;
+    padding-top: 0.25rem;
+}
+
+.admin-action-buttons {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: 0.65rem;
+}
+
+.admin-action-buttons.single-action {
+    grid-template-columns: 1fr;
+}
+
+.admin-action-buttons :deep(.p-button) {
+    min-height: 42px;
+}
+
 .history-summary {
     margin: 0;
 }
@@ -964,6 +1014,10 @@ function newRequestKey() {
         gap: 0.55rem;
     }
 
+    .admin-workspace {
+        padding-bottom: 0;
+    }
+
     .signing-header,
     .history-summary {
         margin-inline: 0.55rem;
@@ -1003,12 +1057,33 @@ function newRequestKey() {
     .history-focus-grid .pdf-shell {
         height: min(72dvh, 640px);
     }
+
+    .admin-workspace .pdf-shell {
+        height: min(68dvh, 620px);
+        border-inline: 1px solid var(--surface-border);
+        border-radius: 8px;
+        margin-inline: 0.55rem;
+    }
 }
 
 @media (min-width: 921px) {
     .signing-workspace {
         height: calc(100dvh - 56px);
         overflow: hidden;
+    }
+
+    .admin-workspace.signing-workspace {
+        height: calc(100dvh - 8rem);
+    }
+
+    .admin-workspace .workspace-grid {
+        grid-template-columns: minmax(0, 1fr) minmax(360px, 420px);
+        gap: 1rem;
+    }
+
+    .admin-workspace .pdf-shell,
+    .admin-workspace .sign-card {
+        min-height: 0;
     }
 
     .sticky-actions {

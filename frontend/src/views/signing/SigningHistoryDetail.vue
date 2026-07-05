@@ -17,7 +17,8 @@ const loading = ref(false);
 
 const pdfUrl = computed(() => api.mySigningHistoryPDFUrlForTask(task.value, document.value, 'current'));
 const identityLabel = computed(() => authStore.user?.displayName || authStore.user?.username || task.value?.signerName || task.value?.signerUser || '');
-const historyListRouteName = computed(() => (route.meta.adminSignerWorkspace === true ? 'admin-my-signing-history' : 'my-signing-history'));
+const isAdminSignerWorkspace = computed(() => route.meta.adminSignerWorkspace === true);
+const historyListRouteName = computed(() => (isAdminSignerWorkspace.value ? 'admin-my-signing-history' : 'my-signing-history'));
 const readOnlyReason = computed(() => {
     if (task.value?.status === 'rejected') return 'คุณปฏิเสธเอกสารนี้แล้ว หน้านี้เปิดดูย้อนหลังได้อย่างเดียว';
     return 'คุณเซ็นเอกสารนี้แล้ว หน้านี้เปิดดูย้อนหลังได้อย่างเดียว';
@@ -58,6 +59,7 @@ function goBackToHistory() {
         :pdf-headers="api.authHeaders()"
         :loading="loading"
         :identity-label="identityLabel"
+        :admin-workspace="isAdminSignerWorkspace"
         :on-back="goBackToHistory"
         :on-reload="loadHistory"
         :on-record-event="recordEvent"
