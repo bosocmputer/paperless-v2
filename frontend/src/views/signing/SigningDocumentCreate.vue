@@ -13,6 +13,7 @@ const router = useRouter();
 const confirm = useConfirm();
 const toast = useToast();
 
+const candidatePageSize = 40;
 const legacyDraftKey = 'paperless_signing_wizard_draft_v1';
 const draftKey = 'paperless_signing_wizard_draft_v2';
 const docFormats = ref([]);
@@ -228,7 +229,7 @@ async function searchCandidates(page = 1) {
             docFormatCode: requestedDocFormatCode,
             search: requestedSearch,
             page,
-            size: 20
+            size: candidatePageSize
         });
         if (seq !== candidateSearchSeq || requestedDocFormatCode !== form.value.docFormatCode || requestedSearch !== form.value.search) return;
         const rows = result.documents || [];
@@ -1021,15 +1022,16 @@ function makeLegalNoticeBoxKey() {
                                 {{ duplicateCheckError }} ระบบยังจะตรวจซ้ำอีกครั้งตอนบันทึกเอกสาร
                             </Message>
 
-                            <div class="min-w-0 max-w-full overflow-x-auto">
+                            <div class="min-w-0 max-w-full">
                                 <DataTable
                                     :value="candidates"
                                     :loading="searchingCandidates"
                                     dataKey="doc_no"
                                     responsiveLayout="scroll"
                                     stripedRows
-                                    scrollable
-                                    scrollHeight="18rem"
+                                    rowHover
+                                    size="small"
+                                    class="candidate-results-table"
                                     @row-click="selectCandidate($event.data)"
                                 >
                                     <template #empty>
