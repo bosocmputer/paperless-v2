@@ -2,9 +2,10 @@
 import { api } from '@/services/api';
 import { authStore } from '@/stores/auth';
 import { computed, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 
+const route = useRoute();
 const router = useRouter();
 const toast = useToast();
 
@@ -29,6 +30,20 @@ const waitingRows = computed(() => waitingDocuments.value.map(normalizeQueueRow)
 const filteredReadyRows = computed(() => filterRows(readyRows.value));
 const filteredWaitingRows = computed(() => filterRows(waitingRows.value));
 const hasAnyRows = computed(() => readyRows.value.length > 0 || waitingRows.value.length > 0);
+const isAdminSignerWorkspace = computed(() => route.meta.adminSignerWorkspace === true);
+const taskDetailRouteName = computed(() => (isAdminSignerWorkspace.value ? 'admin-my-signing-task' : 'my-signing-task'));
+const pageTitle = computed(() => (isAdminSignerWorkspace.value ? 'งานรอเซ็นของฉัน' : 'งานรอเซ็น'));
+const pageSubtitle = computed(() =>
+    isAdminSignerWorkspace.value ? 'เซ็นเอกสารที่ส่งถึงคุณในฐานข้อมูลนี้ โดยยังอยู่ในมุมผู้ดูแล' : 'ดูงานที่เซ็นได้ทันที และเอกสารที่กำลังรอขั้นตอนก่อนหน้า'
+);
+const emptyTitle = computed(() => {
+    if (searchQuery.value) return 'ไม่พบงานที่ค้นหา';
+    return isAdminSignerWorkspace.value ? 'ยังไม่มีงานที่ต้องเซ็นในฐานข้อมูลนี้' : 'ยังไม่มีเอกสารที่เกี่ยวข้องกับคุณ';
+});
+const emptyDescription = computed(() => {
+    if (searchQuery.value) return 'ลองค้นหาด้วยเลขเอกสาร ชื่อคู่ค้า หรือชื่อผู้เซ็นอีกครั้ง';
+    return isAdminSignerWorkspace.value ? 'เมื่อมีเอกสารที่ระบุคุณเป็นผู้เซ็น ระบบจะแสดงรายการให้เซ็นที่นี่' : 'เมื่อมีเอกสารส่งถึงคุณ ระบบจะแสดงทั้งงานที่เซ็นได้และงานที่ยังรอคิว';
+});
 
 onMounted(() => loadTasks());
 
@@ -120,7 +135,7 @@ function filterRows(rows) {
 }
 
 function openTask(row) {
-    router.push({ name: 'my-signing-task', params: { taskId: row.task.id } });
+    router.push({ name: taskDetailRouteName.value, params: { taskId: row.task.id } });
 }
 
 function recordWaitingQueueSeen() {
@@ -148,8 +163,8 @@ function formatDate(value) {
     <section class="tasks-page">
         <header class="tasks-header">
             <div>
-                <h1>งานรอเซ็น</h1>
-                <p>ดูงานที่เซ็นได้ทันที และเอกสารที่กำลังรอขั้นตอนก่อนหน้า</p>
+                <h1>{{ pageTitle }}</h1>
+                <p>{{ pageSubtitle }}</p>
             </div>
             <div class="header-actions">
                 <div class="queue-tags">
@@ -175,8 +190,8 @@ function formatDate(value) {
         <template v-else>
             <div v-if="!hasAnyRows" class="empty-state">
                 <i class="pi pi-inbox"></i>
-                <strong>{{ searchQuery ? 'ไม่พบงานที่ค้นหา' : 'ยังไม่มีเอกสารที่เกี่ยวข้องกับคุณ' }}</strong>
-                <p>{{ searchQuery ? 'ลองค้นหาด้วยเลขเอกสาร ชื่อคู่ค้า หรือชื่อผู้เซ็นอีกครั้ง' : 'เมื่อมีเอกสารส่งถึงคุณ ระบบจะแสดงทั้งงานที่เซ็นได้และงานที่ยังรอคิว' }}</p>
+                <strong>{{ emptyTitle }}</strong>
+                <p>{{ emptyDescription }}</p>
             </div>
 
             <template v-else>

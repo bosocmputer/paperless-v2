@@ -17,6 +17,7 @@ const loading = ref(false);
 
 const pdfUrl = computed(() => api.mySigningHistoryPDFUrlForTask(task.value, document.value, 'current'));
 const identityLabel = computed(() => authStore.user?.displayName || authStore.user?.username || task.value?.signerName || task.value?.signerUser || '');
+const historyListRouteName = computed(() => (route.meta.adminSignerWorkspace === true ? 'admin-my-signing-history' : 'my-signing-history'));
 const readOnlyReason = computed(() => {
     if (task.value?.status === 'rejected') return 'คุณปฏิเสธเอกสารนี้แล้ว หน้านี้เปิดดูย้อนหลังได้อย่างเดียว';
     return 'คุณเซ็นเอกสารนี้แล้ว หน้านี้เปิดดูย้อนหลังได้อย่างเดียว';
@@ -42,6 +43,10 @@ function recordEvent(payload) {
     api.recordMySigningTaskEvent(route.params.taskId, payload).catch(() => {});
 }
 
+function goBackToHistory() {
+    router.push({ name: historyListRouteName.value });
+}
+
 </script>
 
 <template>
@@ -53,7 +58,7 @@ function recordEvent(payload) {
         :pdf-headers="api.authHeaders()"
         :loading="loading"
         :identity-label="identityLabel"
-        :on-back="() => router.push({ name: 'my-signing-history' })"
+        :on-back="goBackToHistory"
         :on-reload="loadHistory"
         :on-record-event="recordEvent"
         read-only

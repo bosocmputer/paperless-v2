@@ -1,8 +1,31 @@
 import AppLayout from '@/layout/AppLayout.vue';
 import SignerLayout from '@/layout/SignerLayout.vue';
 import { authStore } from '@/stores/auth';
-import { SIGNING_DOCUMENT_MENU_KEYS } from '@/utils/signingQueue';
+import { ADMIN_SIGNER_MENU_KEYS, SIGNING_DOCUMENT_MENU_KEYS } from '@/utils/signingQueue';
 import { createRouter, createWebHistory } from 'vue-router';
+
+const ADMIN_SIGNER_ROUTE_BY_USER_ROUTE = Object.freeze({
+    'my-signing-tasks': 'admin-my-signing-tasks',
+    'my-signing-task': 'admin-my-signing-task',
+    'my-signing-history': 'admin-my-signing-history',
+    'my-signing-history-detail': 'admin-my-signing-history-detail'
+});
+
+const USER_SIGNER_ROUTE_BY_ADMIN_ROUTE = Object.freeze({
+    'admin-my-signing-tasks': 'my-signing-tasks',
+    'admin-my-signing-task': 'my-signing-task',
+    'admin-my-signing-history': 'my-signing-history',
+    'admin-my-signing-history-detail': 'my-signing-history-detail'
+});
+
+function redirectToSiblingRoute(routeName, to) {
+    return {
+        name: routeName,
+        params: to.params,
+        query: to.query,
+        hash: to.hash
+    };
+}
 
 const router = createRouter({
     history: createWebHistory(),
@@ -74,6 +97,30 @@ const router = createRouter({
                     name: 'admin-user-guide',
                     component: () => import('@/views/signing/UserGuide.vue'),
                     meta: { role: 'admin', guideAudience: 'admin' }
+                },
+                {
+                    path: '/admin/signing/tasks',
+                    name: 'admin-my-signing-tasks',
+                    component: () => import('@/views/signing/MySigningTasks.vue'),
+                    meta: { role: 'admin', adminSignerWorkspace: true, activeMenuKey: ADMIN_SIGNER_MENU_KEYS.tasks }
+                },
+                {
+                    path: '/admin/signing/tasks/:taskId',
+                    name: 'admin-my-signing-task',
+                    component: () => import('@/views/signing/SigningTask.vue'),
+                    meta: { role: 'admin', adminSignerWorkspace: true, activeMenuKey: ADMIN_SIGNER_MENU_KEYS.tasks }
+                },
+                {
+                    path: '/admin/signing/history',
+                    name: 'admin-my-signing-history',
+                    component: () => import('@/views/signing/MySigningHistory.vue'),
+                    meta: { role: 'admin', adminSignerWorkspace: true, activeMenuKey: ADMIN_SIGNER_MENU_KEYS.history }
+                },
+                {
+                    path: '/admin/signing/history/:taskId',
+                    name: 'admin-my-signing-history-detail',
+                    component: () => import('@/views/signing/SigningHistoryDetail.vue'),
+                    meta: { role: 'admin', adminSignerWorkspace: true, activeMenuKey: ADMIN_SIGNER_MENU_KEYS.history }
                 },
                 {
                     path: '/config/documents',
@@ -192,6 +239,14 @@ router.beforeEach(async (to) => {
 
     if (to.name === 'dashboard' && authStore.user?.role === 'user') {
         return { name: 'my-signing-tasks' };
+    }
+
+    if (authStore.user?.role === 'admin' && ADMIN_SIGNER_ROUTE_BY_USER_ROUTE[to.name]) {
+        return redirectToSiblingRoute(ADMIN_SIGNER_ROUTE_BY_USER_ROUTE[to.name], to);
+    }
+
+    if (authStore.user?.role === 'user' && USER_SIGNER_ROUTE_BY_ADMIN_ROUTE[to.name]) {
+        return redirectToSiblingRoute(USER_SIGNER_ROUTE_BY_ADMIN_ROUTE[to.name], to);
     }
 
     if (to.meta.role && authStore.user?.role !== to.meta.role) {

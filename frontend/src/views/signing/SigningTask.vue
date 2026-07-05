@@ -18,6 +18,7 @@ const saving = ref(false);
 
 const pdfUrl = computed(() => api.signingDocumentPDFUrlForDocument(document.value));
 const identityLabel = computed(() => authStore.user?.displayName || authStore.user?.username || task.value?.signerName || task.value?.signerUser || '');
+const taskListRouteName = computed(() => (route.meta.adminSignerWorkspace === true ? 'admin-my-signing-tasks' : 'my-signing-tasks'));
 
 onMounted(loadTask);
 
@@ -42,7 +43,7 @@ async function signTask(payload) {
         document.value = result.document;
         task.value = (result.document?.signers || []).find((item) => item.id === route.params.taskId) || task.value;
         toast.add({ severity: 'success', summary: 'เซ็นเอกสารแล้ว', life: 2600 });
-        router.push({ name: 'my-signing-tasks' });
+        goBackToTasks();
     } catch (err) {
         toast.add({ severity: 'error', summary: 'เซ็นไม่สำเร็จ', detail: err.message, life: 4200 });
         throw err;
@@ -58,7 +59,7 @@ async function rejectTask(payload) {
         document.value = result.document;
         task.value = (result.document?.signers || []).find((item) => item.id === route.params.taskId) || task.value;
         toast.add({ severity: 'success', summary: 'ปฏิเสธเอกสารแล้ว', life: 2600 });
-        router.push({ name: 'my-signing-tasks' });
+        goBackToTasks();
     } catch (err) {
         toast.add({ severity: 'error', summary: 'ปฏิเสธไม่สำเร็จ', detail: err.message, life: 4200 });
         throw err;
@@ -78,6 +79,10 @@ function recordEvent(payload) {
 function loadRelatedDocuments() {
     return api.getMySigningTaskRelatedDocuments(route.params.taskId);
 }
+
+function goBackToTasks() {
+    router.push({ name: taskListRouteName.value });
+}
 </script>
 
 <template>
@@ -90,7 +95,7 @@ function loadRelatedDocuments() {
         :loading="loading"
         :saving="saving"
         :identity-label="identityLabel"
-        :on-back="() => router.push({ name: 'my-signing-tasks' })"
+        :on-back="goBackToTasks"
         :on-reload="loadTask"
         :on-sign="signTask"
         :on-reject="rejectTask"

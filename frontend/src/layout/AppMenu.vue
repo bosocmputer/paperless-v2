@@ -1,6 +1,6 @@
 <script setup>
 import { authStore } from '@/stores/auth';
-import { SIGNING_DOCUMENT_MENU_KEYS } from '@/utils/signingQueue';
+import { ADMIN_SIGNER_MENU_KEYS, SIGNING_DOCUMENT_MENU_KEYS } from '@/utils/signingQueue';
 import { computed } from 'vue';
 import AppMenuItem from './AppMenuItem.vue';
 
@@ -53,6 +53,25 @@ const model = computed(() => {
                     to: '/signing/documents/history',
                     menuKey: SIGNING_DOCUMENT_MENU_KEYS.history,
                     activeMatch: '/signing/documents/history'
+                }
+            ]
+        },
+        {
+            label: 'งานของฉัน',
+            items: [
+                {
+                    label: 'งานรอเซ็นของฉัน',
+                    icon: 'pi pi-fw pi-inbox',
+                    to: '/admin/signing/tasks',
+                    menuKey: ADMIN_SIGNER_MENU_KEYS.tasks,
+                    activeMatch: '/admin/signing/tasks'
+                },
+                {
+                    label: 'ประวัติการเซ็นของฉัน',
+                    icon: 'pi pi-fw pi-history',
+                    to: '/admin/signing/history',
+                    menuKey: ADMIN_SIGNER_MENU_KEYS.history,
+                    activeMatch: '/admin/signing/history'
                 }
             ]
         },
