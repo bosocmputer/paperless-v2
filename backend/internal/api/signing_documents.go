@@ -337,6 +337,9 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		IPAddress:           clientIP(r),
 		UserAgent:           r.UserAgent(),
 	})
+	if err != nil && currentFile.ID != "" && currentFile.ID != uploaded.ID {
+		s.cleanupUploadedFileBestEffort(currentFile, "create_signing_document_failed")
+	}
 	if errors.Is(err, store.ErrSigningDocumentDuplicate) {
 		duplicateCheck, duplicateErr := s.store.CheckSigningDocumentDuplicate(r.Context(), format.Code, candidate.DocNo)
 		if duplicateErr != nil || duplicateCheck.CanCreate {
@@ -978,6 +981,32 @@ func (s *Server) cleanupExpiredSigningUploads() {
 	}
 }
 
+func (s *Server) cleanupUploadedFileBestEffort(file models.UploadedFile, reason string) {
+	fileID := strings.TrimSpace(file.ID)
+	if fileID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	storagePath, deleted, err := s.store.DeleteUploadedFileIfUnreferenced(ctx, fileID)
+	if err != nil {
+		s.logger.Warn("cleanup generated upload failed", "error", err, "fileID", fileID, "reason", reason)
+		return
+	}
+	if !deleted {
+		return
+	}
+	if strings.TrimSpace(storagePath) == "" {
+		storagePath = file.StoragePath
+	}
+	if strings.TrimSpace(storagePath) == "" {
+		return
+	}
+	if err := os.Remove(storagePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		s.logger.Warn("remove generated upload failed", "error", err, "fileID", fileID, "reason", reason)
+	}
+}
+
 func (s *Server) getSigningDocument(w http.ResponseWriter, r *http.Request) {
 	document, err := s.store.FindSigningDocumentByID(r.Context(), strings.TrimSpace(r.PathValue("id")))
 	if errors.Is(err, store.ErrSigningDocumentNotFound) {
@@ -1213,6 +1242,7 @@ func (s *Server) createSigningDocumentPrintCopy(w http.ResponseWriter, r *http.R
 	})
 	if err != nil {
 		s.logger.Error("record print copy failed", "error", err, "documentID", document.ID)
+		s.cleanupUploadedFileBestEffort(uploaded, "record_print_copy_failed")
 		writeError(w, http.StatusInternalServerError, "print_event_failed", "Cannot record print event right now.")
 		return
 	}

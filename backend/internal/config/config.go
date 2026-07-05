@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 )
+
+const defaultJWTSecret = "change-this-before-production"
 
 type Config struct {
 	AppName             string
@@ -40,7 +43,7 @@ func Load() (Config, error) {
 		Env:         getenv("APP_ENV", "development"),
 		Port:        getenv("APP_PORT", "8080"),
 		DatabaseURL: os.Getenv("DATABASE_URL"),
-		JWTSecret:   getenv("JWT_SECRET", "change-this-before-production"),
+		JWTSecret:   getenv("JWT_SECRET", defaultJWTSecret),
 		CORSOrigins: splitCSV(getenv("APP_CORS_ORIGINS", "http://localhost:5173,http://localhost:3070")),
 		SMLPaperlessBaseURL: strings.TrimRight(
 			getenv("SML_PAPERLESS_BASE_URL", "http://192.168.2.109:8201"),
@@ -99,8 +102,41 @@ func Load() (Config, error) {
 	if strings.TrimSpace(cfg.JWTSecret) == "" {
 		return Config{}, errors.New("JWT_SECRET is required")
 	}
+	if err := cfg.validateProduction(); err != nil {
+		return Config{}, err
+	}
 
 	return cfg, nil
+}
+
+func (cfg Config) validateProduction() error {
+	if !strings.EqualFold(strings.TrimSpace(cfg.Env), "production") {
+		return nil
+	}
+
+	issues := []string{}
+	if strings.TrimSpace(cfg.JWTSecret) == "" || cfg.JWTSecret == defaultJWTSecret || len(cfg.JWTSecret) < 32 {
+		issues = append(issues, "JWT_SECRET must be set to a non-default value with at least 32 characters")
+	}
+	if strings.TrimSpace(cfg.SMLPaperlessAPIKey) == "" {
+		issues = append(issues, "SML_PAPERLESS_API_KEY is required in production")
+	}
+	if strings.TrimSpace(cfg.PublicBaseURL) == "" {
+		issues = append(issues, "PUBLIC_BASE_URL is required in production")
+	}
+	if cfg.LocalAuthFallback {
+		issues = append(issues, "PAPERLESS_LOCAL_AUTH_FALLBACK_ENABLED must be false in production")
+	}
+	for _, origin := range cfg.CORSOrigins {
+		if strings.TrimSpace(origin) == "*" {
+			issues = append(issues, "APP_CORS_ORIGINS must not contain wildcard '*' in production")
+			break
+		}
+	}
+	if len(issues) > 0 {
+		return fmt.Errorf("invalid production config: %s", strings.Join(issues, "; "))
+	}
+	return nil
 }
 
 func getenv(key, fallback string) string {

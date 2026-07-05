@@ -113,6 +113,7 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		return err
 	}
 	if err := s.store.UpdateSigningDocumentPDF(ctx, document.ID, uploaded, final); err != nil {
+		s.cleanupUploadedFileBestEffort(uploaded, "update_signing_document_pdf_failed")
 		return err
 	}
 	return s.store.AddSigningEvent(ctx, document.ID, "", "", action, message, "", "", map[string]any{

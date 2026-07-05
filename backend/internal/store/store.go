@@ -1042,6 +1042,35 @@ WHERE id = $1
 `, id))
 }
 
+const deleteUploadedFileIfUnreferencedSQL = `
+DELETE FROM uploaded_files f
+WHERE f.id = $1
+  AND NOT EXISTS (SELECT 1 FROM signing_document_uploads u WHERE u.file_id = f.id)
+  AND NOT EXISTS (SELECT 1 FROM signature_templates t WHERE t.sample_file_id = f.id)
+  AND NOT EXISTS (SELECT 1 FROM signing_documents d WHERE d.original_file_id = f.id OR d.current_file_id = f.id OR d.final_file_id = f.id)
+  AND NOT EXISTS (SELECT 1 FROM signing_document_versions v WHERE v.file_id = f.id)
+  AND NOT EXISTS (SELECT 1 FROM signing_document_signers sg WHERE sg.signature_file_id = f.id)
+  AND NOT EXISTS (SELECT 1 FROM signing_document_attachments a WHERE a.file_id = f.id)
+  AND NOT EXISTS (SELECT 1 FROM signing_document_print_events p WHERE p.file_id = f.id)
+RETURNING f.storage_path
+`
+
+func (s *Store) DeleteUploadedFileIfUnreferenced(ctx context.Context, fileID string) (string, bool, error) {
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return "", false, nil
+	}
+	var storagePath string
+	err := s.pool.QueryRow(ctx, deleteUploadedFileIfUnreferencedSQL, fileID).Scan(&storagePath)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return storagePath, true, nil
+}
+
 func (s *Store) CreateSigningDocumentUpload(ctx context.Context, fileID, actorID string) error {
 	_, err := s.pool.Exec(ctx, `
 INSERT INTO signing_document_uploads (file_id, created_by)
