@@ -2133,7 +2133,13 @@ func (s *Server) readAndStorePDFUpload(w http.ResponseWriter, r *http.Request, f
 		writeError(w, http.StatusBadRequest, "invalid_pdf", "Uploaded file must be a readable PDF.")
 		return models.UploadedFile{}, fmt.Errorf("invalid pdf")
 	}
-	return s.storeUploadedBytes(r.Context(), data, filepath.Base(header.Filename), fallbackName, "application/pdf", ".pdf", pageCount, actorID)
+	uploaded, err := s.storeUploadedBytes(r.Context(), data, filepath.Base(header.Filename), fallbackName, "application/pdf", ".pdf", pageCount, actorID)
+	if err != nil {
+		s.logger.Error("store uploaded pdf failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "upload_store_failed", "Cannot save uploaded PDF right now.")
+		return models.UploadedFile{}, err
+	}
+	return uploaded, nil
 }
 
 func (s *Server) storeSignatureImage(ctx context.Context, dataURL, actorID string) (models.UploadedFile, error) {
