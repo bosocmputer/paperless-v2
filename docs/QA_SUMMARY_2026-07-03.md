@@ -1,5 +1,26 @@
 # QA Summary - 2026-07-03
 
+## Current Customer Test Status - 2026-07-05
+
+Status: deployed to the customer server and waiting for user feedback.
+
+- Customer URL: `http://45.122.49.250:8095/`
+- Customer release evidence: `/data/paperless/releases/20260705180548/postdeploy-checks.txt`
+- PaperLess app commit tested: `9b9aac0`
+- SML API commit tested: `b9ef4ca`
+
+Customer smoke passed on release `20260705180548`:
+
+- `paperless-prod-web`, `paperless-prod-api`, `paperless-prod-sml-api`, and `paperless-prod-db` were healthy/running.
+- `/health/ready` returned HTTP 200.
+- SML login/database selection returned the customer database list.
+- Self-service image DB setup was verified with tenant `SILK`: before setup it returned tenant-not-ready, after setup login succeeded and JWT was issued.
+
+Known tenant readiness states from the latest customer smoke:
+
+- `RUHRES`: image DB missing; user can repair from the login page with `ตั้งค่า image DB`.
+- `PTTP-TAX`: main tenant DB missing; this is blocked for SML/admin database setup and cannot be auto-provisioned by PaperLess.
+
 ## Scope
 
 Final QA covered admin, internal user, external signer, SML integration, and customer deployment smoke.
@@ -57,6 +78,7 @@ curl -fsS http://127.0.0.1:8095/api/ready
 - External signer cannot reject, attach files, print, download, or open admin views.
 - After signing completes, admin confirm uploads images before SML lock.
 - SML image rows contain JPEG bytes in tenant and `_images` databases.
+- Login self-service image DB setup works for a tenant that is missing only the `_images` DB/table.
 - Admin history preview excludes evidence appendix.
 - Evidence dialog shows Thai text, English text, UUIDs, and hashes.
 - Print action creates a print event before PDF opens.
@@ -66,3 +88,4 @@ curl -fsS http://127.0.0.1:8095/api/ready
 - Read-only viewer is a UX control, not DRM.
 - Browser print event proves official print copy was generated, not that paper physically printed.
 - Customer login depends on real SML users and database permissions in `smlerpmaindata`.
+- PaperLess can provision missing image DB/table only when the main tenant DB exists and the selected SML user is allowed to access that database.

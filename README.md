@@ -131,4 +131,6 @@ Dev server deployment currently uses port `3070`.
 
 Customer deployment is documented in [docs/CUSTOMER_DEPLOYMENT.md](docs/CUSTOMER_DEPLOYMENT.md). The customer stack is deployed under `/data/paperless`, exposes only the frontend on port `8095`, and talks to SML through the shared Docker network.
 
+Latest customer test status and known tenant readiness items are tracked in [docs/QA_SUMMARY_2026-07-03.md](docs/QA_SUMMARY_2026-07-03.md) and [docs/RELEASE_NOTES_2026-07-03.md](docs/RELEASE_NOTES_2026-07-03.md).
+
 Do not commit real `.env` files, passwords, API keys, tokens, OTPs, PDF bytes, or signature images. Use `.env.example` for placeholders only.

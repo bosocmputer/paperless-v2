@@ -12,6 +12,26 @@
 
 The server has other projects. Keep PaperLess isolated and expose only the approved port.
 
+## Current Customer Status - 2026-07-05
+
+- Active customer test release: `20260705180548`
+- PaperLess app commit: `9b9aac0`
+- SML API commit: `b9ef4ca`
+- Status: deployed and waiting for customer/user feedback
+- Post-deploy evidence: `/data/paperless/releases/20260705180548/postdeploy-checks.txt`
+
+Latest smoke results:
+
+- Web/API/SML API/PaperLess DB containers were healthy.
+- `http://45.122.49.250:8095/health/ready` returned HTTP 200.
+- Database selection returned the customer SML database list.
+- Tenant `SILK` was verified end-to-end for login-time image DB setup: not-ready before setup, ready after setup, and login succeeded.
+
+Known tenant readiness notes:
+
+- `RUHRES` is missing image DB/table. Users can click `ตั้งค่า image DB` on the login page to repair it after SML credential verification.
+- `PTTP-TAX` is missing the main tenant DB. PaperLess must keep it blocked until SML/admin database setup is complete.
+
 ## Port Policy
 
 PaperLess customer deployment uses host port `8095` for the web container.
@@ -100,8 +120,8 @@ Expected login behavior:
 3. User selects a database every login.
 4. If only the image DB is missing, user can click `ตั้งค่า image DB`; after success the same database becomes selectable.
 5. PaperLess runs a full tenant readiness check before issuing the JWT.
-5. PaperLess creates a local user if it does not exist yet.
-6. `superadmin` maps to admin role only when the real SML `superadmin` account authenticates successfully.
+6. PaperLess creates a local user if it does not exist yet.
+7. `superadmin` maps to admin role only when the real SML `superadmin` account authenticates successfully.
 
 Development default credentials are not assumed to work on the customer server.
 

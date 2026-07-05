@@ -1,5 +1,22 @@
 # PaperLess Release Notes - 2026-07-03
 
+## Customer Test Update - 2026-07-05
+
+Release `20260705180548` is deployed on the customer server at `http://45.122.49.250:8095/` and is currently waiting for user feedback.
+
+Updates included in the deployed customer test build:
+
+- Added guarded self-service image DB setup from the login database selection screen.
+- Added PaperLess backend endpoint `POST /api/auth/sml/provision-image-db` to re-verify SML credentials and database permission before provisioning.
+- Added SML API endpoint `POST /api/v1/tenants/image-database` to create only missing `<tenant>_images` / `public.sml_doc_images` resources.
+- Kept unsafe cases blocked: missing main tenant DB and existing schema mismatch require admin/SML review.
+- Verified customer smoke with tenant `SILK`: blocked before image DB setup, provisioned successfully, then login succeeded.
+
+Latest known readiness items:
+
+- `RUHRES` is missing image DB/table and can be repaired by the user from login.
+- `PTTP-TAX` is missing the main tenant DB and must be handled outside PaperLess.
+
 ## Summary
 
 This release turns PaperLess from the initial pilot stack into a production-ready SML-integrated signing system. It covers SML login/database selection, tenant isolation, mobile signer UX, external sign-only flow, multi-page template cloning, transparent signatures, read-only PDF preview, evidence/print audit flows, SML image upload, and customer Docker deployment preparation.
@@ -19,6 +36,7 @@ This release turns PaperLess from the initial pilot stack into a production-read
 - Added SML image rendering/upload with JPEG validation, page cap, retry, and completed repair support.
 - Added official print-copy event creation before opening printable PDFs.
 - Hardened public external signing API responses and state transitions.
+- Added guarded SML image DB provisioning endpoint for login-time self-service readiness repair.
 
 ## Frontend
 
@@ -34,6 +52,7 @@ This release turns PaperLess from the initial pilot stack into a production-read
 - Added admin external signer section with generate/copy link fallback.
 - Added in-app admin guide and user guide with screenshots.
 - Kept the user guide accessible from an icon in signer topbar and also available inside admin.
+- Added login database readiness action so users can set up a missing image DB/table without waiting for an admin when the main tenant DB already exists.
 
 ## SML Integration
 
@@ -43,6 +62,7 @@ This release turns PaperLess from the initial pilot stack into a production-read
 - Main and `_images` rows share `guid_code`, `image_order`, and `system_id=PAPERLESS`.
 - SML lock runs only after image upload succeeds.
 - Retry remains idempotent and replaces rows by document number.
+- Tenant readiness distinguishes user-repairable image DB/table gaps from admin-only main DB/schema problems.
 
 ## QA Status
 
