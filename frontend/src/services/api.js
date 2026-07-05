@@ -328,19 +328,36 @@ export const api = {
         if (!document?.id) return '';
         return this.signingDocumentPDFUrl(document.id, version, signingDocumentPDFCacheKey(document, version));
     },
-    retrySigningDocumentLock(id) {
-        return request(`/api/signing-documents/${id}/retry-sml-lock`, { method: 'POST' });
+    retrySigningDocumentLock(id, payload = {}) {
+        const { body, headers } = splitIdempotencyPayload(payload);
+        return request(`/api/signing-documents/${id}/retry-sml-lock`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+        });
     },
-    retrySigningDocumentFinalPDF(id) {
-        return request(`/api/signing-documents/${id}/retry-final-pdf`, { method: 'POST' });
+    retrySigningDocumentFinalPDF(id, payload = {}) {
+        const { body, headers } = splitIdempotencyPayload(payload);
+        return request(`/api/signing-documents/${id}/retry-final-pdf`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+        });
     },
-    retrySigningDocumentImages(id) {
-        return request(`/api/signing-documents/${id}/retry-sml-images`, { method: 'POST' });
+    retrySigningDocumentImages(id, payload = {}) {
+        const { body, headers } = splitIdempotencyPayload(payload);
+        return request(`/api/signing-documents/${id}/retry-sml-images`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+        });
     },
-    createSigningDocumentPrintCopy(id, payload) {
+    createSigningDocumentPrintCopy(id, payload = {}) {
+        const { body, headers } = splitIdempotencyPayload(payload);
         return request(`/api/signing-documents/${id}/print-copies`, {
             method: 'POST',
-            body: JSON.stringify(payload)
+            headers,
+            body: JSON.stringify(body)
         });
     },
     signingDocumentPrintCopyPDFUrl(id, printCopyId) {

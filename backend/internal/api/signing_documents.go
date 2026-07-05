@@ -1070,7 +1070,20 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) retrySigningDocumentLock(w http.ResponseWriter, r *http.Request) {
-	document, err := s.store.FindSigningDocumentByID(r.Context(), strings.TrimSpace(r.PathValue("id")))
+	actor, _ := currentUser(r)
+	documentID := strings.TrimSpace(r.PathValue("id"))
+	scope := "signing_document_retry_lock:" + documentID
+	if s.replayIdempotentResponse(w, r, scope, actor.ID) {
+		return
+	}
+	idempotencyCompleted := false
+	defer func() {
+		if !idempotencyCompleted {
+			s.releaseIdempotency(scope, actor.ID, r)
+		}
+	}()
+
+	document, err := s.store.FindSigningDocumentByID(r.Context(), documentID)
 	if errors.Is(err, store.ErrSigningDocumentNotFound) {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
 		return
@@ -1088,11 +1101,26 @@ func (s *Server) retrySigningDocumentLock(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadGateway, "sml_lock_failed", "SML lock failed. You can retry again.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "lock": metadata})
+	payload := map[string]any{"status": "ok", "lock": metadata}
+	s.completeIdempotency(scope, actor.ID, r, http.StatusOK, payload)
+	idempotencyCompleted = true
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) retrySigningDocumentImages(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
 	documentID := strings.TrimSpace(r.PathValue("id"))
+	scope := "signing_document_retry_images:" + documentID
+	if s.replayIdempotentResponse(w, r, scope, actor.ID) {
+		return
+	}
+	idempotencyCompleted := false
+	defer func() {
+		if !idempotencyCompleted {
+			s.releaseIdempotency(scope, actor.ID, r)
+		}
+	}()
+
 	document, err := s.store.FindSigningDocumentByID(r.Context(), documentID)
 	if errors.Is(err, store.ErrSigningDocumentNotFound) {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
@@ -1113,17 +1141,32 @@ func (s *Server) retrySigningDocumentImages(w http.ResponseWriter, r *http.Reque
 	}
 	lockOK, lockMetadata := s.lockCompletedDocument(r.Context(), document.ID, document.DocNo)
 	updated, _ := s.store.FindSigningDocumentByID(r.Context(), documentID)
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"document": s.withExternalURLs(r, updated),
 		"imageOk":  imageOK,
 		"lockOk":   lockOK,
 		"image":    imageMetadata,
 		"lock":     lockMetadata,
-	})
+	}
+	s.completeIdempotency(scope, actor.ID, r, http.StatusOK, payload)
+	idempotencyCompleted = true
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) retrySigningDocumentFinalPDF(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
 	documentID := strings.TrimSpace(r.PathValue("id"))
+	scope := "signing_document_retry_final_pdf:" + documentID
+	if s.replayIdempotentResponse(w, r, scope, actor.ID) {
+		return
+	}
+	idempotencyCompleted := false
+	defer func() {
+		if !idempotencyCompleted {
+			s.releaseIdempotency(scope, actor.ID, r)
+		}
+	}()
+
 	document, err := s.store.FindSigningDocumentByID(r.Context(), documentID)
 	if errors.Is(err, store.ErrSigningDocumentNotFound) {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
@@ -1143,14 +1186,17 @@ func (s *Server) retrySigningDocumentFinalPDF(w http.ResponseWriter, r *http.Req
 		return
 	}
 	updated, _ := s.store.FindSigningDocumentByID(r.Context(), documentID)
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"document": s.withExternalURLs(r, updated),
 		"finalOk":  result.FinalOK,
 		"imageOk":  result.ImageOK,
 		"lockOk":   result.LockOK,
 		"image":    result.ImageMetadata,
 		"lock":     result.LockMetadata,
-	})
+	}
+	s.completeIdempotency(scope, actor.ID, r, http.StatusOK, payload)
+	idempotencyCompleted = true
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) createSigningDocumentPrintCopy(w http.ResponseWriter, r *http.Request) {
@@ -1162,6 +1208,17 @@ func (s *Server) createSigningDocumentPrintCopy(w http.ResponseWriter, r *http.R
 		return
 	}
 	req = normalizePrintCopyRequest(req)
+	scope := "signing_document_print_copy:" + documentID
+	if s.replayIdempotentResponse(w, r, scope, actor.ID) {
+		return
+	}
+	idempotencyCompleted := false
+	defer func() {
+		if !idempotencyCompleted {
+			s.releaseIdempotency(scope, actor.ID, r)
+		}
+	}()
+
 	document, err := s.store.FindSigningDocumentByID(r.Context(), documentID)
 	if errors.Is(err, store.ErrSigningDocumentNotFound) {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
@@ -1246,11 +1303,14 @@ func (s *Server) createSigningDocumentPrintCopy(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "print_event_failed", "Cannot record print event right now.")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
+	payload := map[string]any{
 		"printCopyId": printEvent.ID,
 		"fileUrl":     fmt.Sprintf("/api/signing-documents/%s/print-copies/%s/pdf", document.ID, printEvent.ID),
 		"printEvent":  printEvent,
-	})
+	}
+	s.completeIdempotency(scope, actor.ID, r, http.StatusCreated, payload)
+	idempotencyCompleted = true
+	writeJSON(w, http.StatusCreated, payload)
 }
 
 func (s *Server) getSigningDocumentPrintCopyPDF(w http.ResponseWriter, r *http.Request) {

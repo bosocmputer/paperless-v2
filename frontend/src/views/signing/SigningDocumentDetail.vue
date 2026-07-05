@@ -111,7 +111,7 @@ async function loadPage() {
 async function retryLock() {
     retryingLock.value = true;
     try {
-        await api.retrySigningDocumentLock(document.value.id);
+        await api.retrySigningDocumentLock(document.value.id, { idempotencyKey: makeTransitionKey('retry-lock') });
         toast.add({ severity: 'success', summary: 'Lock SML สำเร็จ', life: 2500 });
         await loadPage();
     } catch (err) {
@@ -124,7 +124,7 @@ async function retryLock() {
 async function retryImages() {
     retryingImages.value = true;
     try {
-        const result = await api.retrySigningDocumentImages(document.value.id);
+        const result = await api.retrySigningDocumentImages(document.value.id, { idempotencyKey: makeTransitionKey('retry-images') });
         toast.add({
             severity: result.lockOk ? 'success' : 'warn',
             summary: result.lockOk ? 'ส่งรูป SML และ Lock SML สำเร็จ' : 'ส่งรูป SML สำเร็จ แต่ Lock SML ยังไม่สำเร็จ',
@@ -142,7 +142,7 @@ async function retryImages() {
 async function retryFinalPDF() {
     retryingFinalPDF.value = true;
     try {
-        const result = await api.retrySigningDocumentFinalPDF(document.value.id);
+        const result = await api.retrySigningDocumentFinalPDF(document.value.id, { idempotencyKey: makeTransitionKey('retry-final-pdf') });
         toast.add({
             severity: confirmResultSeverity(result),
             summary: confirmResultSummary(result),
@@ -270,6 +270,7 @@ async function printOfficialCopy() {
     try {
         const deviceId = getAdminDeviceId();
         const result = await api.createSigningDocumentPrintCopy(document.value.id, {
+            idempotencyKey: makeTransitionKey('print-copy'),
             channel: 'web',
             deviceId,
             clientTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || ''
