@@ -718,6 +718,11 @@ type SMLTenantReadyCheck struct {
 	Message string `json:"message"`
 }
 
+type SMLTenantProvisionResponse struct {
+	Provisioned bool               `json:"provisioned"`
+	Readiness   SMLTenantReadiness `json:"readiness"`
+}
+
 type APIError struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`

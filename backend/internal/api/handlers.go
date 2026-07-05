@@ -71,6 +71,75 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusBadGateway, "sml_login_failed", "Cannot verify SML login right now.")
 }
 
+func (s *Server) provisionSMLTenantImageDatabaseForLogin(w http.ResponseWriter, r *http.Request) {
+	var req models.LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	req.DatabaseName = strings.TrimSpace(req.DatabaseName)
+	if req.Username == "" || req.Password == "" || req.DatabaseName == "" {
+		writeError(w, http.StatusBadRequest, "missing_credentials", "Username, password, and database are required.")
+		return
+	}
+
+	smlResult, err := s.verifySMLLogin(r.Context(), req.Username, req.Password, req.DatabaseName)
+	if errors.Is(err, errSMLAuthInvalidCredentials) {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Username or password is incorrect.")
+		return
+	}
+	if errors.Is(err, errSMLAuthDatabaseDenied) {
+		writeError(w, http.StatusForbidden, "database_not_allowed", "Database is not allowed for this user.")
+		return
+	}
+	if errors.Is(err, errSMLConfigMissing) {
+		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML PaperLess API is not configured.")
+		return
+	}
+	if err != nil {
+		s.logger.Warn("SML login check before image DB provision failed", "error", err, "username", req.Username)
+		writeError(w, http.StatusBadGateway, "sml_login_failed", "Cannot verify SML login right now.")
+		return
+	}
+	if smlResult.SelectedDatabase == nil {
+		writeError(w, http.StatusForbidden, "database_not_allowed", "Database is not allowed for this user.")
+		return
+	}
+
+	tenant := smlResult.SelectedDatabase.Tenant
+	readiness, err := s.fetchSMLTenantReadiness(r.Context(), tenant)
+	if err != nil {
+		s.logger.Warn("SML tenant readiness check before image DB provision failed", "error", err, "tenant", tenant)
+		writeError(w, http.StatusBadGateway, "tenant_readiness_failed", "Cannot verify selected database readiness right now.")
+		return
+	}
+	if readiness.OK {
+		writeJSON(w, http.StatusOK, models.SMLTenantProvisionResponse{
+			Provisioned: false,
+			Readiness:   readiness,
+		})
+		return
+	}
+	if !tenantReadinessCanSelfProvision(readiness) {
+		writeError(w, http.StatusFailedDependency, "tenant_not_provisionable", tenantReadinessLoginMessage(readiness))
+		return
+	}
+
+	provision, err := s.provisionSMLTenantImageDatabase(r.Context(), tenant)
+	if err != nil {
+		s.logger.Warn("SML tenant image DB provision failed", "error", err, "tenant", tenant, "username", req.Username)
+		writeError(w, http.StatusBadGateway, "tenant_image_db_provision_failed", "Cannot prepare SML image database right now.")
+		return
+	}
+	if !provision.Readiness.OK {
+		writeError(w, http.StatusFailedDependency, "tenant_still_not_ready", tenantReadinessLoginMessage(provision.Readiness))
+		return
+	}
+	s.logger.Info("SML tenant image DB provisioned", "tenant", tenant, "imageDatabase", provision.Readiness.ImageDatabase, "username", req.Username, "provisioned", provision.Provisioned)
+	writeJSON(w, http.StatusOK, provision)
+}
+
 func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, req models.LoginRequest, result smlAuthResult) {
 	if req.DatabaseName == "" {
 		writeJSON(w, http.StatusOK, models.LoginResponse{
@@ -91,7 +160,7 @@ func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 	if !readiness.OK {
-		writeError(w, http.StatusFailedDependency, "tenant_not_ready", tenantReadinessLoginMessage(readiness))
+		writeTenantReadinessError(w, http.StatusFailedDependency, "tenant_not_ready", tenantReadinessLoginMessage(readiness), readiness)
 		return
 	}
 
@@ -151,9 +220,11 @@ func tenantReadinessLoginMessage(readiness models.SMLTenantReadiness) string {
 	switch readiness.Status {
 	case "image_db_missing":
 		if imageDatabase != "" {
-			return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูลรูป " + imageDatabase + " กรุณาแจ้งผู้ดูแลระบบ"
+			return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูลรูป " + imageDatabase + " กรุณากดตั้งค่า image DB"
 		}
-		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูลรูป กรุณาแจ้งผู้ดูแลระบบ"
+		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูลรูป กรุณากดตั้งค่า image DB"
+	case "doc_images_table_missing":
+		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ยังไม่มีตารางรูปเอกสาร กรุณากดตั้งค่า image DB"
 	case "main_db_missing":
 		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูล SML หลัก กรุณาแจ้งผู้ดูแลระบบ"
 	case "schema_mismatch":
@@ -163,6 +234,15 @@ func tenantReadinessLoginMessage(readiness models.SMLTenantReadiness) string {
 			return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: " + readiness.Message
 		}
 		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess กรุณาแจ้งผู้ดูแลระบบ"
+	}
+}
+
+func tenantReadinessCanSelfProvision(readiness models.SMLTenantReadiness) bool {
+	switch readiness.Status {
+	case "image_db_missing", "doc_images_table_missing":
+		return strings.TrimSpace(readiness.Tenant) != ""
+	default:
+		return false
 	}
 }
 
@@ -299,4 +379,12 @@ func setNoStoreHeaders(w http.ResponseWriter) {
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, models.APIError{Error: code, Message: message})
+}
+
+func writeTenantReadinessError(w http.ResponseWriter, status int, code, message string, readiness models.SMLTenantReadiness) {
+	writeJSON(w, status, map[string]any{
+		"error":     code,
+		"message":   message,
+		"readiness": readiness,
+	})
 }

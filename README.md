@@ -38,6 +38,7 @@ Login is always two steps:
 
 1. User enters SML username/password.
 2. PaperLess verifies SML, shows every allowed database with tenant readiness status, and requires the user to choose one.
+3. If the selected database is missing `<tenant>_images` or the `public.sml_doc_images` table, the user can click **ตั้งค่า image DB** on the login page. PaperLess re-verifies the SML username/password/database permission before asking the SML API to create only the missing image database/table.
 
 The selected database is checked again before JWT issuance. Databases missing `<tenant>_images` or a compatible `public.sml_doc_images` schema are blocked at login so users do not reach a broken confirm/upload flow.
 
@@ -86,7 +87,7 @@ When admin confirms a document, the backend:
 
 If image upload fails, status becomes `completed_image_failed` and SML lock is not attempted. Admin can retry SML images. Retrying a completed document is allowed for repair and remains idempotent.
 
-Before enabling a new SML tenant, verify that both the main database and matching image database exist. Example: tenant `stpt` requires `stpt` and `stpt_images`, both with `public.sml_doc_images`. Use the SML API maintenance command `verify-sml-tenant`; if the image DB is missing, provision it explicitly with `provision-sml-image-db` and then use PaperLess retry instead of direct SQL image inserts.
+Before enabling a new SML tenant, verify that both the main database and matching image database exist. Example: tenant `stpt` requires `stpt` and `stpt_images`, both with `public.sml_doc_images`. Use the SML API maintenance command `verify-sml-tenant`; if the image DB or table is missing, the login page can self-provision it after SML credential verification, or an admin can provision it explicitly with `provision-sml-image-db`. Use PaperLess retry instead of direct SQL image inserts.
 
 ## Local Development
 

@@ -1,5 +1,6 @@
 <script setup>
 import FloatingConfigurator from '@/components/FloatingConfigurator.vue';
+import { api } from '@/services/api';
 import { authStore } from '@/stores/auth';
 import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -11,6 +12,7 @@ const toast = useToast();
 const username = ref('');
 const password = ref('');
 const loading = ref(false);
+const provisioning = ref(false);
 const error = ref('');
 const step = ref('credentials');
 const databases = ref([]);
@@ -20,7 +22,7 @@ const authSource = ref('');
 const databaseOptions = computed(() =>
     databases.value.map((database) => ({
         label: databaseLabel(database),
-        value: database.databaseName || database.tenant || database.dataCode,
+        value: databaseValue(database),
         description: [database.dataCode, database.tenant].filter(Boolean).join(' · '),
         readiness: database.readiness || null
     }))
@@ -28,8 +30,13 @@ const databaseOptions = computed(() =>
 const selectedDatabaseOption = computed(() => databaseOptions.value.find((option) => option.value === selectedDatabase.value) || null);
 const selectedReadiness = computed(() => selectedDatabaseOption.value?.readiness || null);
 const selectedDatabaseReady = computed(() => !selectedReadiness.value || selectedReadiness.value.ok || selectedReadiness.value.status === 'unknown');
+const canProvisionSelectedDatabase = computed(() => step.value === 'database' && Boolean(selectedDatabase.value) && ['image_db_missing', 'doc_images_table_missing'].includes(selectedReadiness.value?.status));
 const credentialsComplete = computed(() => username.value.trim() !== '' && password.value !== '');
-const canSubmit = computed(() => (step.value === 'database' ? Boolean(selectedDatabase.value) && selectedDatabaseReady.value : credentialsComplete.value));
+const canSubmit = computed(() => !provisioning.value && (step.value === 'database' ? Boolean(selectedDatabase.value) && selectedDatabaseReady.value : credentialsComplete.value));
+
+function databaseValue(database) {
+    return database.databaseName || database.tenant || database.dataCode;
+}
 
 function databaseLabel(database) {
     const name = database.dataName || database.databaseName || database.tenant || database.dataCode;
@@ -43,6 +50,7 @@ function readinessLabel(readiness) {
     if (!readiness) return 'รอตรวจ';
     if (readiness.ok) return 'พร้อมใช้งาน';
     if (readiness.status === 'image_db_missing') return 'ต้องตั้งค่า image DB';
+    if (readiness.status === 'doc_images_table_missing') return 'ต้องตั้งค่า image DB';
     if (readiness.status === 'main_db_missing') return 'ไม่พบ DB หลัก';
     if (readiness.status === 'schema_mismatch') return 'schema ไม่พร้อม';
     return 'ตรวจไม่ได้';
@@ -58,10 +66,22 @@ function readinessSeverity(readiness) {
 function readinessDetail(readiness) {
     if (!readiness) return '';
     if (readiness.ok) return `ตรวจแล้วพร้อมใช้งาน${readiness.imageDatabase ? ` · ${readiness.imageDatabase}` : ''}`;
-    if (readiness.status === 'image_db_missing') return `ฐานข้อมูลนี้ยังไม่มีฐานรูป ${readiness.imageDatabase || ''} กรุณาแจ้งผู้ดูแลระบบ`;
+    if (readiness.status === 'image_db_missing') return `ฐานข้อมูลนี้ยังไม่มีฐานรูป ${readiness.imageDatabase || ''} กดตั้งค่า image DB เพื่อให้ระบบสร้างให้อัตโนมัติ`;
+    if (readiness.status === 'doc_images_table_missing') return 'ฐานข้อมูลนี้ยังไม่มีตารางรูปเอกสาร กดตั้งค่า image DB เพื่อให้ระบบสร้างให้อัตโนมัติ';
     if (readiness.status === 'main_db_missing') return 'ไม่พบฐานข้อมูล SML หลัก กรุณาแจ้งผู้ดูแลระบบ';
     if (readiness.status === 'schema_mismatch') return 'schema ตารางรูปเอกสารไม่ตรงกับมาตรฐาน กรุณาแจ้งผู้ดูแลระบบ';
     return readiness.message || 'ยังตรวจความพร้อมไม่ได้ในขณะนี้';
+}
+
+function updateSelectedDatabaseReadiness(readiness) {
+    const index = databases.value.findIndex((database) => databaseValue(database) === selectedDatabase.value);
+    if (index < 0) return;
+    const next = [...databases.value];
+    next[index] = {
+        ...next[index],
+        readiness
+    };
+    databases.value = next;
 }
 
 function goToApp() {
@@ -99,6 +119,9 @@ async function submit() {
         }
         goToApp();
     } catch (err) {
+        if (step.value === 'database' && err.payload?.readiness) {
+            updateSelectedDatabaseReadiness(err.payload.readiness);
+        }
         error.value = err.message;
         toast.add({
             severity: 'error',
@@ -108,6 +131,32 @@ async function submit() {
         });
     } finally {
         loading.value = false;
+    }
+}
+
+async function provisionSelectedDatabase() {
+    error.value = '';
+    if (!canProvisionSelectedDatabase.value) return;
+    provisioning.value = true;
+    try {
+        const result = await api.provisionSMLImageDatabase(username.value.trim(), password.value, selectedDatabase.value, authSource.value || 'sml');
+        if (result.readiness) updateSelectedDatabaseReadiness(result.readiness);
+        toast.add({
+            severity: 'success',
+            summary: result.provisioned ? 'ตั้งค่า image DB สำเร็จ' : 'Database พร้อมใช้งานแล้ว',
+            detail: result.readiness?.imageDatabase ? `${result.readiness.imageDatabase} พร้อมใช้งาน` : 'ฐานข้อมูลนี้พร้อมใช้งานใน PaperLess แล้ว',
+            life: 3500
+        });
+    } catch (err) {
+        error.value = err.message;
+        toast.add({
+            severity: 'error',
+            summary: 'ตั้งค่า image DB ไม่สำเร็จ',
+            detail: err.message,
+            life: 4500
+        });
+    } finally {
+        provisioning.value = false;
     }
 }
 </script>
@@ -177,7 +226,8 @@ async function submit() {
                                 {{ readinessDetail(selectedReadiness) }}
                             </Message>
                             <Message v-if="selectedReadiness && !selectedDatabaseReady" severity="warn" class="mb-4">
-                                ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess จึงยังไม่สามารถเข้าสู่ระบบด้วย database นี้ได้
+                                <span v-if="canProvisionSelectedDatabase">กด “ตั้งค่า image DB” ก่อน แล้วจึงเข้าสู่ PaperLess ด้วย database นี้ได้</span>
+                                <span v-else>ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess จึงยังไม่สามารถเข้าสู่ระบบด้วย database นี้ได้</span>
                             </Message>
                         </template>
 
@@ -185,6 +235,18 @@ async function submit() {
 
                         <div class="flex flex-col sm:flex-row gap-3">
                             <Button v-if="step === 'database'" type="button" label="ย้อนกลับ" icon="pi pi-arrow-left" severity="secondary" outlined class="w-full sm:w-auto" :disabled="loading" @click="resetDatabaseStep" />
+                            <Button
+                                v-if="canProvisionSelectedDatabase"
+                                type="button"
+                                label="ตั้งค่า image DB"
+                                icon="pi pi-database"
+                                severity="warn"
+                                outlined
+                                class="w-full"
+                                :loading="provisioning"
+                                :disabled="loading"
+                                @click="provisionSelectedDatabase"
+                            />
                             <Button type="submit" :label="step === 'database' ? 'เข้าสู่ PaperLess' : 'ตรวจสอบบัญชี'" :icon="step === 'database' ? 'pi pi-sign-in' : 'pi pi-arrow-right'" class="w-full" :loading="loading" :disabled="!canSubmit" />
                         </div>
                     </form>

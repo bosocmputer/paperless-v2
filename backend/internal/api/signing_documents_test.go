@@ -188,6 +188,27 @@ func TestTenantReadinessLoginMessageExplainsMissingImageDatabase(t *testing.T) {
 	if strings.Contains(strings.ToLower(message), "failed") {
 		t.Fatalf("message should be user-facing Thai copy, got %q", message)
 	}
+	if !strings.Contains(message, "ตั้งค่า image DB") {
+		t.Fatalf("message = %q, want self-service action copy", message)
+	}
+}
+
+func TestTenantReadinessCanSelfProvisionOnlyMissingImageDatabase(t *testing.T) {
+	if !tenantReadinessCanSelfProvision(models.SMLTenantReadiness{Status: "image_db_missing", Tenant: "silk"}) {
+		t.Fatal("image_db_missing should be self-provisionable")
+	}
+	if tenantReadinessCanSelfProvision(models.SMLTenantReadiness{Status: "main_db_missing", Tenant: "silk"}) {
+		t.Fatal("main_db_missing should not be self-provisionable")
+	}
+	if !tenantReadinessCanSelfProvision(models.SMLTenantReadiness{Status: "doc_images_table_missing", Tenant: "silk"}) {
+		t.Fatal("doc_images_table_missing should be self-provisionable")
+	}
+	if tenantReadinessCanSelfProvision(models.SMLTenantReadiness{Status: "schema_mismatch", Tenant: "silk"}) {
+		t.Fatal("schema_mismatch should not be self-provisionable")
+	}
+	if tenantReadinessCanSelfProvision(models.SMLTenantReadiness{Status: "image_db_missing"}) {
+		t.Fatal("missing tenant should not be self-provisionable")
+	}
 }
 
 func TestSelectSigningHistoryPDFFileDefaultsToCurrent(t *testing.T) {

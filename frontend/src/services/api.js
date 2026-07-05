@@ -99,6 +99,12 @@ export const api = {
             body: JSON.stringify({ username, password, databaseName, authSource })
         });
     },
+    provisionSMLImageDatabase(username, password, databaseName = '', authSource = '') {
+        return request('/api/auth/sml/provision-image-db', {
+            method: 'POST',
+            body: JSON.stringify({ username, password, databaseName, authSource })
+        });
+    },
     me() {
         return request('/api/auth/me');
     },

@@ -85,6 +85,8 @@ docker exec paperless-prod-sml-api ./provision-sml-image-db --tenant stpt --temp
 docker exec paperless-prod-sml-api ./verify-sml-tenant --tenant stpt --template iampcoffee_images
 ```
 
+For day-to-day use, PaperLess also supports self-service image DB setup from the login page. If SML reports that a selected database is missing `<tenant>_images` or the `public.sml_doc_images` table is absent, the user can click `ตั้งค่า image DB`; PaperLess verifies the same SML username/password/database permission again, then creates only the missing image database/table through `paperless-prod-sml-api`. Main DB missing or existing schema mismatch cases remain blocked and require admin review.
+
 Do not insert or repair `sml_doc_images` rows by direct SQL during normal operation. Use the PaperLess “ส่งรูป SML อีกครั้ง” retry action so events and lock flow remain auditable.
 
 ## Login Verification
@@ -96,7 +98,8 @@ Expected login behavior:
 1. User enters SML username/password.
 2. PaperLess asks the SML API for allowed databases and quick tenant readiness.
 3. User selects a database every login.
-4. PaperLess runs a full tenant readiness check before issuing the JWT.
+4. If only the image DB is missing, user can click `ตั้งค่า image DB`; after success the same database becomes selectable.
+5. PaperLess runs a full tenant readiness check before issuing the JWT.
 5. PaperLess creates a local user if it does not exist yet.
 6. `superadmin` maps to admin role only when the real SML `superadmin` account authenticates successfully.
 

@@ -54,6 +54,16 @@ type smlTenantReadinessResponse struct {
 	Message string                    `json:"message"`
 }
 
+type smlTenantProvisionResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Provisioned bool                      `json:"provisioned"`
+		Readiness   models.SMLTenantReadiness `json:"readiness"`
+	} `json:"data"`
+	Error   *smlAPIError `json:"error"`
+	Message string       `json:"message"`
+}
+
 type smlAuthResult struct {
 	Provider         string
 	DataGroup        string
@@ -179,6 +189,50 @@ func (s *Server) fetchSMLTenantReadiness(ctx context.Context, tenant string) (mo
 		return models.SMLTenantReadiness{}, newSMLRequestError(payload.Error, payload.Message, "SML tenant readiness failed")
 	}
 	return payload.Data, nil
+}
+
+func (s *Server) provisionSMLTenantImageDatabase(ctx context.Context, tenant string) (models.SMLTenantProvisionResponse, error) {
+	if strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) == "" || strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) == "" {
+		return models.SMLTenantProvisionResponse{}, errSMLConfigMissing
+	}
+	endpoint, err := url.Parse(s.cfg.SMLPaperlessBaseURL + "/api/v1/tenants/image-database")
+	if err != nil {
+		return models.SMLTenantProvisionResponse{}, fmt.Errorf("invalid SML base URL")
+	}
+	body, err := json.Marshal(map[string]string{
+		"tenant": store.NormalizeSMLTenant(tenant),
+	})
+	if err != nil {
+		return models.SMLTenantProvisionResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return models.SMLTenantProvisionResponse{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return models.SMLTenantProvisionResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	var payload smlTenantProvisionResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload); err != nil {
+		return models.SMLTenantProvisionResponse{}, fmt.Errorf("cannot parse SML tenant provision response")
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return models.SMLTenantProvisionResponse{}, newSMLRequestError(payload.Error, payload.Message, resp.Status)
+	}
+	if !payload.Success {
+		return models.SMLTenantProvisionResponse{}, newSMLRequestError(payload.Error, payload.Message, "SML tenant provision failed")
+	}
+	return models.SMLTenantProvisionResponse{
+		Provisioned: payload.Data.Provisioned,
+		Readiness:   payload.Data.Readiness,
+	}, nil
 }
 
 func normalizeSMLAuthDatabases(items []models.SMLAuthDatabase) []models.SMLAuthDatabase {
