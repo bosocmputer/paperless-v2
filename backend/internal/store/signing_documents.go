@@ -133,7 +133,7 @@ INSERT INTO signing_documents (
     original_file_id, current_file_id, signature_template_id, config_snapshot, template_snapshot, legal_notice_snapshot,
     signature_placement_snapshot, legal_notice_boxes_snapshot, created_by
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,'')::date,$13,$14,'draft',1,$15,$16,$17,$18::jsonb,$19::jsonb,$20::jsonb,$21::jsonb,$22::jsonb,NULLIF($23,'')::uuid)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,'')::date,$13,$14,'draft',1,$15,$16,NULLIF($17,'')::uuid,$18::jsonb,$19::jsonb,$20::jsonb,$21::jsonb,$22::jsonb,NULLIF($23,'')::uuid)
 RETURNING id::text
 `, tenant, dataGroup, dataCode, input.ScreenCode, input.Format.Code, input.Candidate.DocNo, input.Candidate.Table, input.Candidate.TransFlag,
 		input.Candidate.PartyCode, input.Candidate.PartyName, input.Candidate.PartyType, input.Candidate.DocDate,
