@@ -307,6 +307,10 @@ function previewEvidencePDF() {
 }
 
 async function generateExternal(signer) {
+    if (!canGenerateExternalToken(signer)) {
+        toast.add({ severity: 'info', summary: 'ยังสร้างลิงก์ไม่ได้', detail: signer?.status === 'waiting' ? 'ยังไม่ถึงคิวผู้เซ็นภายนอกคนนี้' : 'ผู้เซ็นภายนอกคนนี้ไม่พร้อมใช้งานแล้ว', life: 3000 });
+        return;
+    }
     try {
         copyFallbackVisible.value = false;
         copyFallbackValue.value = '';
@@ -321,6 +325,10 @@ async function generateExternal(signer) {
 
 function requestExternalToken(signer) {
     if (!signer?.id) return;
+    if (!canGenerateExternalToken(signer)) {
+        toast.add({ severity: 'info', summary: 'ยังสร้างลิงก์ไม่ได้', detail: signer?.status === 'waiting' ? 'ยังไม่ถึงคิวผู้เซ็นภายนอกคนนี้' : 'ผู้เซ็นภายนอกคนนี้ไม่พร้อมใช้งานแล้ว', life: 3000 });
+        return;
+    }
     if (!signer.externalTokenId) {
         void generateExternal(signer);
         return;
@@ -392,9 +400,15 @@ function signerLabel(signer) {
 }
 
 function externalTokenHint(signer) {
+    if (signer?.status === 'waiting') return 'ยังไม่ถึงคิว';
     if (signer?.status === 'signed') return 'เซ็นแล้ว ไม่ต้องสร้างลิงก์ใหม่';
+    if (signer?.status && signer.status !== 'pending') return 'ผู้เซ็นนี้ไม่พร้อมใช้งานแล้ว';
     if (signer?.externalTokenId) return 'มีลิงก์เดิมอยู่แล้ว หากสร้างใหม่ลิงก์เดิมจะถูกยกเลิก';
     return 'ยังไม่มีลิงก์สำหรับส่งให้ลูกค้า';
+}
+
+function canGenerateExternalToken(signer) {
+    return document.value?.status === 'in_progress' && signer?.status === 'pending';
 }
 
 function printerLabel(value) {
@@ -554,7 +568,6 @@ function movementEventView(event) {
             <Button v-if="document" label="ตรวจสอบ Flow" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
             <Button v-if="document?.status === 'draft'" label="ส่งไปเซ็น" icon="pi pi-send" severity="success" :loading="sending" @click="confirmSendDocument" />
             <Button v-if="document?.status === 'draft'" label="ยกเลิก" icon="pi pi-trash" severity="danger" outlined :loading="cancellingDocument" @click="confirmCancelDocument" />
-            <Button v-if="document?.status === 'pending_confirm'" label="ยืนยันเอกสาร" icon="pi pi-check-circle" severity="success" :loading="confirmingDocument" @click="confirmAdminConfirmDocument" />
             <Button v-if="document?.status === 'completed_evidence_failed'" label="สร้าง PDF อีกครั้ง" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
             <Button v-if="document?.status === 'completed_image_failed'" label="ส่งรูป SML อีกครั้ง" icon="pi pi-images" severity="danger" outlined :loading="retryingImages" @click="retryImages" />
             <Button v-if="document?.status === 'completed_lock_failed'" label="Lock SML อีกครั้ง" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
@@ -599,7 +612,7 @@ function movementEventView(event) {
                                                 icon="pi pi-key"
                                                 severity="secondary"
                                                 outlined
-                                                :disabled="document?.status !== 'in_progress' || signer.status === 'signed' || signer.status === 'skipped'"
+                                                :disabled="!canGenerateExternalToken(signer)"
                                                 @click="requestExternalToken(signer)"
                                             />
                                         </span>

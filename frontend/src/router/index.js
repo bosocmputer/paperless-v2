@@ -27,6 +27,20 @@ function redirectToSiblingRoute(routeName, to) {
     };
 }
 
+function isAdminRole(role) {
+    return role === 'admin' || role === 'superadmin';
+}
+
+function hasRequiredRole(requiredRole, actualRole) {
+    if (!requiredRole) return true;
+    if (requiredRole === 'admin') return isAdminRole(actualRole);
+    return actualRole === requiredRole;
+}
+
+function defaultRouteForRole(role) {
+    return role === 'user' ? { name: 'my-signing-tasks' } : { name: 'dashboard' };
+}
+
 const router = createRouter({
     history: createWebHistory(),
     routes: [
@@ -84,7 +98,7 @@ const router = createRouter({
                     path: '/admin/users',
                     name: 'users',
                     component: () => import('@/views/admin/Users.vue'),
-                    meta: { role: 'admin' }
+                    meta: { role: 'superadmin' }
                 },
                 {
                     path: '/admin/guide',
@@ -126,25 +140,25 @@ const router = createRouter({
                     path: '/config/documents',
                     name: 'document-config',
                     component: () => import('@/views/config/DocumentConfig.vue'),
-                    meta: { role: 'admin' }
+                    meta: { role: 'superadmin' }
                 },
                 {
                     path: '/config/documents/:docFormatCode/workflow',
                     name: 'document-config-workflow',
                     component: () => import('@/views/config/DocumentConfigWorkflow.vue'),
-                    meta: { role: 'admin' }
+                    meta: { role: 'superadmin' }
                 },
                 {
                     path: '/config/signature-templates',
                     name: 'signature-templates',
                     component: () => import('@/views/config/SignatureTemplateList.vue'),
-                    meta: { role: 'admin' }
+                    meta: { role: 'superadmin' }
                 },
                 {
                     path: '/config/documents/:docFormatCode/signature-template',
                     name: 'signature-template',
                     component: () => import('@/views/config/SignatureTemplateDesigner.vue'),
-                    meta: { role: 'admin' }
+                    meta: { role: 'superadmin' }
                 },
                 {
                     path: '/signing/documents/drafts',
@@ -229,7 +243,7 @@ router.beforeEach(async (to) => {
     if (to.name === 'public-signing') return true;
 
     if (to.meta.public) {
-        if (await validateSession()) return authStore.user?.role === 'user' ? { name: 'my-signing-tasks' } : { name: 'dashboard' };
+        if (await validateSession()) return defaultRouteForRole(authStore.user?.role);
         return true;
     }
 
@@ -241,7 +255,7 @@ router.beforeEach(async (to) => {
         return { name: 'my-signing-tasks' };
     }
 
-    if (authStore.user?.role === 'admin' && ADMIN_SIGNER_ROUTE_BY_USER_ROUTE[to.name]) {
+    if (isAdminRole(authStore.user?.role) && ADMIN_SIGNER_ROUTE_BY_USER_ROUTE[to.name]) {
         return redirectToSiblingRoute(ADMIN_SIGNER_ROUTE_BY_USER_ROUTE[to.name], to);
     }
 
@@ -249,8 +263,8 @@ router.beforeEach(async (to) => {
         return redirectToSiblingRoute(USER_SIGNER_ROUTE_BY_ADMIN_ROUTE[to.name], to);
     }
 
-    if (to.meta.role && authStore.user?.role !== to.meta.role) {
-        return authStore.user?.role === 'user' ? { name: 'my-signing-tasks' } : { name: 'dashboard' };
+    if (!hasRequiredRole(to.meta.role, authStore.user?.role)) {
+        return defaultRouteForRole(authStore.user?.role);
     }
 
     return true;

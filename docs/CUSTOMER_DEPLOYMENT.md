@@ -14,16 +14,15 @@ The server has other projects. Keep PaperLess isolated and expose only the appro
 
 ## Current Customer Status - 2026-07-05
 
-- Active customer test release: `20260705180548`
-- PaperLess app commit: `9b9aac0`
-- SML API commit: `b9ef4ca`
+- Active customer test release: `20260705203244`
 - Status: deployed and waiting for customer/user feedback
-- Post-deploy evidence: `/data/paperless/releases/20260705180548/postdeploy-checks.txt`
+- Post-deploy evidence: `/data/paperless/releases/20260705203244/postdeploy-checks.txt`
 
 Latest smoke results:
 
 - Web/API/SML API/PaperLess DB containers were healthy.
-- `http://45.122.49.250:8095/health/ready` returned HTTP 200.
+- `http://45.122.49.250:8095/` and `http://45.122.49.250:8095/health/ready` returned HTTP 200.
+- PaperLess API and SML API containers returned ready responses.
 - Database selection returned the customer SML database list.
 - Tenant `SILK` was verified end-to-end for login-time image DB setup: not-ready before setup, ready after setup, and login succeeded.
 
@@ -89,7 +88,7 @@ Every selectable SML tenant must have a matching image database. For example, te
 - `stpt` for ERP document data
 - `stpt_images` for image bytes
 
-Both databases must contain `public.sml_doc_images` with the same schema. Tenants created directly in PostgreSQL can miss the `_images` database, which causes PaperLess confirm to stop at `completed_image_failed`.
+Both databases must contain `public.sml_doc_images` with the same schema. Tenants created directly in PostgreSQL can miss the `_images` database, which causes PaperLess auto-finalization to stop at `completed_image_failed`.
 
 Run from the deployed SML API source/container before customer testing:
 
@@ -121,7 +120,7 @@ Expected login behavior:
 4. If only the image DB is missing, user can click `ตั้งค่า image DB`; after success the same database becomes selectable.
 5. PaperLess runs a full tenant readiness check before issuing the JWT.
 6. PaperLess creates a local user if it does not exist yet.
-7. `superadmin` maps to admin role only when the real SML `superadmin` account authenticates successfully.
+7. SML `superadmin` maps to PaperLess `superadmin`; other SML users map to PaperLess `admin`. PaperLess-local users remain `user`.
 
 Development default credentials are not assumed to work on the customer server.
 

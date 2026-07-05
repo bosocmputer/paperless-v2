@@ -141,14 +141,14 @@ async function previewFlowPDF(payload = {}) {
     const url = api.withPDFCacheKey(rawUrl, api.signingDocumentPDFCacheKey(node, version));
     const docNo = node.doc_no || 'เอกสารนี้';
     if (!url) {
-        flowNotice.value = `${docNo} ยังไม่มี PDF ใน PaperLess`;
-        toast.add({ severity: 'info', summary: 'ยังไม่มี PDF ใน PaperLess', detail: flowNotice.value, life: 3000 });
+        flowNotice.value = `${docNo} ยังไม่มีเอกสาร PDF ใน PaperLess`;
+        toast.add({ severity: 'info', summary: 'ยังไม่มีเอกสาร PDF', detail: flowNotice.value, life: 3000 });
         return;
     }
 
     flowNotice.value = '';
     pdfUrl.value = url;
-    pdfTitle.value = `${docNo} · ${version === 'final' ? 'หลักฐานการลงนาม' : 'PDF ล่าสุด'}`;
+    pdfTitle.value = `${docNo} · ${version === 'final' ? 'หลักฐานการลงนาม' : 'เอกสารใน PaperLess'}`;
     pdfDialog.value = true;
     recordFlowEvent('document_flow_pdf_open', { docFormatCode: node.doc_format_code || flowDocument.value?.docFormatCode || '', nodeCount: flowNodeCount.value });
 }

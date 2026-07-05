@@ -255,9 +255,9 @@ func (s *Server) findOrProvisionSMLUser(ctx context.Context, username string, re
 		return models.User{}, err
 	}
 
-	role := "user"
+	role := "admin"
 	if strings.EqualFold(strings.TrimSpace(username), "superadmin") || strings.EqualFold(strings.TrimSpace(result.UserCode), "superadmin") {
-		role = "admin"
+		role = "superadmin"
 	}
 	displayName := strings.TrimSpace(result.UserName)
 	if displayName == "" {

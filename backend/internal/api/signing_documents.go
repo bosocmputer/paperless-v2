@@ -283,6 +283,24 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "document_config_required", "Document config is required before sending for signature.")
 		return
 	}
+	layoutSource := "per_document_upload"
+	if actor.Role == "admin" {
+		templateID, layout, legalBoxes, issues, err := s.lockedAdminCreateLayout(r.Context(), screenCode, format.Code, uploaded.PageCount)
+		if err != nil {
+			s.logger.Error("load admin create template failed", "error", err, "docFormatCode", format.Code)
+			writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load active signature template right now.")
+			return
+		}
+		if len(issues) > 0 {
+			writeValidationIssues(w, http.StatusBadRequest, "signature_template_required", issues)
+			return
+		}
+		req.SignatureTemplateID = templateID
+		req.LayoutBoxes = layout
+		req.LegalNoticeBoxes = legalBoxes
+		req.LegalNoticeBox = &legalBoxes[0]
+		layoutSource = "active_template_locked"
+	}
 	layoutBoxes, selectedConfigs, signaturePlacements, issues := validateSigningDocumentLayout(req.LayoutBoxes, configs, uploaded.PageCount)
 	if len(issues) == 0 {
 		issues = append(issues, s.inactiveSigningLayoutUserIssues(r.Context(), selectedConfigs, layoutBoxes)...)
@@ -308,7 +326,7 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 	}
 
 	layoutSnapshot := map[string]any{
-		"source":              "per_document_upload",
+		"source":              layoutSource,
 		"signatureTemplateId": req.SignatureTemplateID,
 		"pageCount":           uploaded.PageCount,
 		"boxes":               layoutBoxes,
@@ -693,6 +711,118 @@ func normalizeSigningCreateEventMetadata(req signingCreateEventRequest) (map[str
 	return metadata, nil
 }
 
+func (s *Server) lockedAdminCreateLayout(ctx context.Context, screenCode, docFormatCode string, pageCount int) (string, []models.SignatureTemplateBoxRequest, []models.LegalNoticeBoxRequest, []models.SignatureValidationIssue, error) {
+	_, active, err := s.store.GetSignatureTemplateState(ctx, screenCode, docFormatCode)
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+	issues := []models.SignatureValidationIssue{}
+	if active == nil {
+		issues = append(issues, signatureIssue("signature_template_required", "", "Active signature template is required. Please contact superadmin."))
+		return "", nil, nil, issues, nil
+	}
+	if len(active.Boxes) == 0 {
+		issues = append(issues, signatureIssue("signature_template_boxes_required", "", "Active signature template has no signature boxes. Please contact superadmin."))
+	}
+	legalBox := legalNoticeBoxRequestFromTemplate(active.LegalNoticeBox)
+	if legalBox == nil {
+		issues = append(issues, signatureIssue("signature_template_legal_notice_required", "", "Active signature template has no legal notice box. Please contact superadmin."))
+	}
+	if len(issues) > 0 {
+		return active.ID, nil, nil, issues, nil
+	}
+	samplePageCount := 0
+	if active.SampleFile != nil {
+		samplePageCount = active.SampleFile.PageCount
+	}
+	layout := expandTemplateBoxesForDocument(boxRequestsFromTemplate(active.Boxes), samplePageCount, pageCount)
+	legalBoxes := expandLegalNoticeBoxesForDocument([]models.LegalNoticeBoxRequest{*legalBox}, samplePageCount, pageCount)
+	return active.ID, layout, legalBoxes, nil, nil
+}
+
+func expandTemplateBoxesForDocument(source []models.SignatureTemplateBoxRequest, samplePageCount, targetPageCount int) []models.SignatureTemplateBoxRequest {
+	pages := maxInt(1, targetPageCount)
+	mismatch := samplePageCount > 0 && samplePageCount != pages
+	if !mismatch {
+		out := make([]models.SignatureTemplateBoxRequest, 0, len(source))
+		for _, box := range source {
+			box.PageNo = clampPageNo(box.PageNo, pages)
+			out = append(out, box)
+		}
+		return out
+	}
+	pattern := []models.SignatureTemplateBoxRequest{}
+	for _, box := range source {
+		if box.PageNo == 0 || box.PageNo == 1 {
+			pattern = append(pattern, box)
+		}
+	}
+	if len(pattern) == 0 {
+		pattern = source
+	}
+	out := make([]models.SignatureTemplateBoxRequest, 0, len(pattern)*pages)
+	for pageNo := 1; pageNo <= pages; pageNo++ {
+		for _, box := range pattern {
+			box.PageNo = pageNo
+			out = append(out, box)
+		}
+	}
+	return out
+}
+
+func expandLegalNoticeBoxesForDocument(source []models.LegalNoticeBoxRequest, samplePageCount, targetPageCount int) []models.LegalNoticeBoxRequest {
+	pages := maxInt(1, targetPageCount)
+	mismatch := samplePageCount > 0 && samplePageCount != pages
+	if !mismatch {
+		out := make([]models.LegalNoticeBoxRequest, 0, len(source))
+		for _, box := range source {
+			box.PageNo = clampPageNo(box.PageNo, pages)
+			if strings.TrimSpace(box.Source) == "" {
+				box.Source = "preset"
+			}
+			out = append(out, box)
+		}
+		return out
+	}
+	pattern := []models.LegalNoticeBoxRequest{}
+	for _, box := range source {
+		if box.PageNo == 0 || box.PageNo == 1 {
+			pattern = append(pattern, box)
+		}
+	}
+	if len(pattern) == 0 {
+		pattern = source
+	}
+	out := make([]models.LegalNoticeBoxRequest, 0, len(pattern)*pages)
+	for pageNo := 1; pageNo <= pages; pageNo++ {
+		for _, box := range pattern {
+			box.PageNo = pageNo
+			if strings.TrimSpace(box.Source) == "" {
+				box.Source = "preset"
+			}
+			out = append(out, box)
+		}
+	}
+	return out
+}
+
+func clampPageNo(value, pageCount int) int {
+	if value < 1 {
+		return 1
+	}
+	if value > pageCount {
+		return pageCount
+	}
+	return value
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 func validateSigningDocumentLayout(boxes []models.SignatureTemplateBoxRequest, configs []models.DocumentConfigStep, pageCount int) ([]models.SignatureTemplateBoxRequest, []models.DocumentConfigStep, []models.SignaturePlacementSnapshot, []models.SignatureValidationIssue) {
 	normalized, issues := normalizeAndValidateSigningDocumentPlacements(boxes, pageCount)
 	if len(normalized) == 0 {
@@ -1031,7 +1161,7 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := currentUser(r)
-	if user.Role != "admin" {
+	if !isAdminRole(user.Role) {
 		if document.Status != "in_progress" || !documentHasSigner(document, user.Username) {
 			writeError(w, http.StatusForbidden, "forbidden", "You cannot view this document.")
 			return
@@ -1039,7 +1169,7 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 	}
 	version := strings.TrimSpace(r.URL.Query().Get("version"))
 	needsCurrentPDF := version == "" || version == "current"
-	canRefreshCurrentPDF := document.Status == "in_progress" || document.Status == "pending_confirm"
+	canRefreshCurrentPDF := document.Status == "in_progress" || document.Status == "pending_confirm" || document.Status == "auto_confirming"
 	if needsCurrentPDF && canRefreshCurrentPDF && (currentPDFNeedsLegalNoticeRefresh(document) || currentPDFNeedsSignatureTransparencyRefresh(document)) {
 		if err := s.refreshStampedPDF(r.Context(), document.ID, false); err != nil {
 			s.logger.Error("refresh legal notice pdf failed", "error", err, "documentID", document.ID)
@@ -1346,6 +1476,14 @@ func (s *Server) regenerateExternalToken(w http.ResponseWriter, r *http.Request)
 	_, err := s.store.RegenerateExternalToken(r.Context(), signerID, hashSecret(rawToken), hashSecret(otp), actor.ID, expiresAt)
 	if errors.Is(err, store.ErrSigningTaskNotFound) {
 		writeError(w, http.StatusNotFound, "signing_task_not_found", "External signing task was not found.")
+		return
+	}
+	if errors.Is(err, store.ErrExternalSignerNotTurn) {
+		writeError(w, http.StatusConflict, "external_signer_not_turn", "External signer is not the current signing step.")
+		return
+	}
+	if errors.Is(err, store.ErrExternalSignerUnavailable) {
+		writeError(w, http.StatusConflict, "external_signer_unavailable", "External signer is not available for link generation.")
 		return
 	}
 	if err != nil {
@@ -1879,6 +2017,9 @@ func (s *Server) writeTaskMutationResult(w http.ResponseWriter, r *http.Request,
 			"error": err.Error(),
 		})
 	}
+	if result.Completed {
+		s.enqueueAutoFinalize(result.DocumentID, clientIP(r), r.UserAgent())
+	}
 	document, _ := s.store.FindSigningDocumentByID(r.Context(), result.DocumentID)
 	payload := map[string]any{"document": document}
 	s.completeIdempotency(idempotencyScope, actorUserID, r, http.StatusOK, payload)
@@ -1907,6 +2048,9 @@ func (s *Server) writePublicTaskMutationResult(w http.ResponseWriter, r *http.Re
 		_ = s.store.AddSigningEvent(context.Background(), result.DocumentID, "", "", "pdf_stamp_failed", "สร้าง PDF พร้อมลายเซ็นไม่สำเร็จ", clientIP(r), r.UserAgent(), map[string]any{
 			"error": err.Error(),
 		})
+	}
+	if result.Completed {
+		s.enqueueAutoFinalize(result.DocumentID, clientIP(r), r.UserAgent())
 	}
 	document, _ := s.store.FindSigningDocumentByID(r.Context(), result.DocumentID)
 	signer, signerErr := s.store.FindSigningTaskByID(r.Context(), signerID)

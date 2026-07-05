@@ -16,6 +16,7 @@ const searchQuery = ref('');
 const form = ref(emptyForm());
 
 const roleOptions = [
+    { label: 'superadmin', value: 'superadmin' },
     { label: 'admin', value: 'admin' },
     { label: 'user', value: 'user' }
 ];
@@ -146,6 +147,7 @@ function formatDate(value) {
 }
 
 function roleSeverity(role) {
+    if (role === 'superadmin') return 'danger';
     return role === 'admin' ? 'success' : 'info';
 }
 
@@ -163,7 +165,7 @@ function normalizeSearch(value) {
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div>
                 <div class="font-semibold text-xl mb-1">ผู้ใช้งาน</div>
-                <p class="text-muted-color m-0">จัดการชื่อผู้ใช้ รหัสผ่าน และระดับสิทธิ์ admin/user</p>
+                <p class="text-muted-color m-0">จัดการชื่อผู้ใช้ รหัสผ่าน และระดับสิทธิ์ superadmin/admin/user</p>
             </div>
             <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
                 <InputText v-model="searchQuery" type="search" placeholder="ค้นหา user, ชื่อ, สิทธิ์" class="w-full sm:w-72" />

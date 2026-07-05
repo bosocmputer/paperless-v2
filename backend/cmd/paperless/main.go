@@ -43,9 +43,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	apiServer := api.NewServer(cfg, db, logger)
+	apiServer.StartAutoFinalizeSweeper(ctx)
+
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
-		Handler:           api.NewServer(cfg, db, logger).Routes(),
+		Handler:           apiServer.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      15 * time.Second,

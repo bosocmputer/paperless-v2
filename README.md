@@ -1,7 +1,7 @@
 # PaperLess
 
 PaperLess is a controlled e-signature workflow for SML-originated PDF documents.
-It receives document metadata and PDFs from SML, routes them through configured signing workflows, records audit evidence, writes signed PDF snapshots back to SML, and locks the ERP document after admin confirmation.
+It receives document metadata and PDFs from SML, routes them through configured signing workflows, records audit evidence, writes signed PDF snapshots back to SML, and locks the ERP document automatically after the final signature.
 
 ## Stack
 
@@ -17,7 +17,8 @@ It receives document metadata and PDFs from SML, routes them through configured 
 - SML login with two-step database selection on every login
 - Automatic PaperLess user provisioning from SML login
 - Tenant isolation by selected SML database while keeping one PaperLess database
-- Admin user management, workflow configuration, and signature template design
+- Superadmin user management, workflow configuration, and signature template design
+- Admin document operations with locked signature/template placements
 - Multi-page document creation with cloned signature/legal-notice placements that remain editable per page
 - Internal signer task queue, waiting queue, and signing history
 - External sign-only flow with OTP and sanitized public API surface
@@ -26,7 +27,7 @@ It receives document metadata and PDFs from SML, routes them through configured 
 - `current` PDF for signed document preview, `final` PDF for audit evidence appendix
 - Read-only PDF dialogs without browser download/print controls
 - Official print-copy flow with print events before opening printable PDF
-- Final admin confirm flow: signed PDF, SML JPEG snapshots, SML lock, retry states
+- Automatic finalization after the last signature: signed PDF, SML JPEG snapshots, SML lock, retry states
 - SML image upload writes JPEG bytes to both tenant DB and tenant `_images` DB
 - In-app admin/user guides with QA screenshots
 
@@ -40,12 +41,13 @@ Login is always two steps:
 2. PaperLess verifies SML, shows every allowed database with tenant readiness status, and requires the user to choose one.
 3. If the selected database is missing `<tenant>_images` or the `public.sml_doc_images` table, the user can click **ตั้งค่า image DB** on the login page. PaperLess re-verifies the SML username/password/database permission before asking the SML API to create only the missing image database/table.
 
-The selected database is checked again before JWT issuance. Databases missing `<tenant>_images` or a compatible `public.sml_doc_images` schema are blocked at login so users do not reach a broken confirm/upload flow.
+The selected database is checked again before JWT issuance. Databases missing `<tenant>_images` or a compatible `public.sml_doc_images` schema are blocked at login so users do not reach a broken SML finalization/upload flow.
 
 On first successful SML login, PaperLess creates the local user automatically:
 
-- `superadmin` becomes PaperLess role `admin`.
-- Other users become role `user`.
+- SML `superadmin` becomes PaperLess role `superadmin`.
+- Other SML users become role `admin`.
+- PaperLess-local users are created as role `user`.
 - Existing local PaperLess role/status/display name are preserved.
 - Inactive PaperLess users cannot log in even if SML credentials are valid.
 
@@ -76,7 +78,7 @@ Admin history preview opens `current` by default. Admin can explicitly open sign
 
 ## SML Image And Lock Flow
 
-When admin confirms a document, the backend:
+When the last signer completes a document, the backend starts a background finalization worker:
 
 1. Refreshes/generates the signed `current` PDF.
 2. Builds `final` audit PDF.
@@ -85,7 +87,7 @@ When admin confirms a document, the backend:
 5. Writes images to both tenant DB and tenant `_images` DB.
 6. Locks the ERP document in SML after image upload succeeds.
 
-If image upload fails, status becomes `completed_image_failed` and SML lock is not attempted. Admin can retry SML images. Retrying a completed document is allowed for repair and remains idempotent.
+The intermediate status is `auto_confirming`. If image upload fails, status becomes `completed_image_failed` and SML lock is not attempted. Admin can retry SML images. Retrying a completed document is allowed for repair and remains idempotent.
 
 Before enabling a new SML tenant, verify that both the main database and matching image database exist. Example: tenant `stpt` requires `stpt` and `stpt_images`, both with `public.sml_doc_images`. Use the SML API maintenance command `verify-sml-tenant`; if the image DB or table is missing, the login page can self-provision it after SML credential verification, or an admin can provision it explicitly with `provision-sml-image-db`. Use PaperLess retry instead of direct SQL image inserts.
 

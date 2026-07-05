@@ -67,7 +67,7 @@ const actionRows = computed(() => {
             currentPositionName: problemReason(doc.status),
             statusLabel: signingStatusLabel(doc.status),
             statusSeverity: signingStatusSeverity(doc.status),
-            helper: doc.status === 'pending_confirm' ? 'เซ็นครบแล้ว รอผู้ดูแลยืนยันเพื่อสร้างหลักฐานและ Lock SML' : 'เปิดเอกสารเพื่อลองสร้างหลักฐาน ส่งรูป หรือส่งสถานะกลับ SML อีกครั้ง',
+            helper: doc.status === 'pending_confirm' || doc.status === 'auto_confirming' ? 'เซ็นครบแล้ว ระบบกำลังส่งเข้า SML อัตโนมัติ' : 'เปิดเอกสารเพื่อลองสร้างหลักฐาน ส่งรูป หรือส่งสถานะกลับ SML อีกครั้ง',
             priority: 1
         });
     });
@@ -176,7 +176,8 @@ function documentLine(doc) {
 }
 
 function problemReason(status) {
-    if (status === 'pending_confirm') return 'รอยืนยันเอกสาร';
+    if (status === 'pending_confirm') return 'รอระบบส่งเข้า SML';
+    if (status === 'auto_confirming') return 'กำลังส่งเข้า SML';
     if (status === 'completed_evidence_failed') return 'สร้างไฟล์หลักฐานไม่สำเร็จ';
     if (status === 'completed_image_failed') return 'ส่งรูปเอกสารเข้า SML ไม่สำเร็จ';
     if (status === 'completed_lock_failed') return 'ส่งสถานะกลับ SML ไม่สำเร็จ';

@@ -2,10 +2,16 @@
 
 ## Customer Test Update - 2026-07-05
 
-Release `20260705180548` is deployed on the customer server at `http://45.122.49.250:8095/` and is currently waiting for user feedback.
+Release `20260705203244` is deployed on the customer server at `http://45.122.49.250:8095/` and is currently waiting for customer feedback.
 
 Updates included in the deployed customer test build:
 
+- Improved SML document search to read candidates from both `ic_trans` and `ap_ar_trans`, with contains search by document number, customer/supplier code, and customer/supplier name.
+- Added backend guard so external signer links can be generated only when the external signer is currently pending and it is their turn.
+- Added background auto-finalization after the last signer completes: PaperLess now finalizes PDF, sends SML snapshots, and locks SML without requiring a manual confirm click.
+- Added `superadmin` role and changed SML-login provisioning so SML `superadmin` becomes PaperLess `superadmin`, while other SML users become PaperLess `admin`.
+- Restricted PaperLess `admin` users from workflow/template/user management and from editing signature/legal-notice boxes during document creation.
+- Improved Flow เอกสาร actions so `ดูเอกสาร` opens the PaperLess current signed document in a read-only dialog, while `รายละเอียด` opens the document detail page.
 - Added guarded self-service image DB setup from the login database selection screen.
 - Added PaperLess backend endpoint `POST /api/auth/sml/provision-image-db` to re-verify SML credentials and database permission before provisioning.
 - Added SML API endpoint `POST /api/v1/tenants/image-database` to create only missing `<tenant>_images` / `public.sml_doc_images` resources.
@@ -37,6 +43,8 @@ This release turns PaperLess from the initial pilot stack into a production-read
 - Added official print-copy event creation before opening printable PDFs.
 - Hardened public external signing API responses and state transitions.
 - Added guarded SML image DB provisioning endpoint for login-time self-service readiness repair.
+- Added automatic SML finalization worker and sweeper for resumable PDF/SML image/lock processing after the final signature.
+- Added role enforcement for `superadmin`, `admin`, and `user` across backend permissions.
 
 ## Frontend
 
@@ -53,6 +61,7 @@ This release turns PaperLess from the initial pilot stack into a production-read
 - Added in-app admin guide and user guide with screenshots.
 - Kept the user guide accessible from an icon in signer topbar and also available inside admin.
 - Added login database readiness action so users can set up a missing image DB/table without waiting for an admin when the main tenant DB already exists.
+- Updated document Flow actions so admins can preview signed PaperLess documents in a dialog without leaving the Flow context.
 
 ## SML Integration
 
@@ -63,19 +72,21 @@ This release turns PaperLess from the initial pilot stack into a production-read
 - SML lock runs only after image upload succeeds.
 - Retry remains idempotent and replaces rows by document number.
 - Tenant readiness distinguishes user-repairable image DB/table gaps from admin-only main DB/schema problems.
+- Document candidate search supports SML tables `ic_trans` and `ap_ar_trans` and joins AR/AP master names for customer/supplier lookup.
 
 ## QA Status
 
 Validated flows include:
 
 - Admin login and database selection.
-- Admin create/send/confirm/history.
+- Admin create/send/auto-finalize/history.
 - Internal signer mobile queue, signing, flow dialog, and history.
 - External signer OTP and sign-only flow.
 - Current PDF vs final evidence PDF behavior.
 - Official print copy creation.
 - SML image upload and lock retry behavior.
 - Customer deployment smoke on port `8095`.
+- Customer release `20260705203244` smoke: web `/`, `/health/live`, and `/health/ready` returned HTTP 200; API and SML API containers reported ready.
 
 Run before release:
 

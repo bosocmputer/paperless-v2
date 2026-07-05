@@ -160,13 +160,11 @@ function smlSeverity(node) {
 }
 
 function currentPdfLabel(node) {
-    if (node.hasFinalPdf) return 'มีหลักฐานการลงนาม';
-    if (node.hasCurrentPdf) return 'มี PDF ล่าสุด';
-    return 'ยังไม่มี PDF';
+    if (node.hasCurrentPdf) return 'มีเอกสารใน PaperLess';
+    return 'ยังไม่มีเอกสาร';
 }
 
 function currentPdfSeverity(node) {
-    if (node.hasFinalPdf) return 'success';
     if (node.hasCurrentPdf) return 'info';
     return 'secondary';
 }
@@ -218,6 +216,10 @@ function openPaperless(node) {
     if (node.canOpenPaperless && node.paperlessDocumentId) openDocument(node.paperlessDocumentId);
 }
 
+function canPreviewCurrentPDF(node = {}) {
+    return !!(node.canViewCurrentPdf || node.hasCurrentPdf || node.currentPdfUrl);
+}
+
 function startUpload(node) {
     if (!node?.doc_no || !node?.doc_format_code) return;
     router.push({
@@ -233,12 +235,28 @@ function previewPDF(node, version) {
     const rawUrl = version === 'final' ? node.signedPdfUrl : node.currentPdfUrl;
     const url = api.withPDFCacheKey(rawUrl, api.signingDocumentPDFCacheKey(node, version));
     if (!url) {
-        toast.add({ severity: 'warn', summary: 'ยังไม่มี PDF', detail: version === 'final' ? 'เอกสารยังไม่มีหลักฐานการลงนาม' : 'เอกสารยังไม่มี PDF ล่าสุด', life: 3000 });
+        toast.add({ severity: 'warn', summary: 'ยังไม่มีเอกสาร PDF', detail: version === 'final' ? 'เอกสารยังไม่มีหลักฐานการลงนาม' : 'เอกสารนี้ยังไม่มี PDF ใน PaperLess', life: 3000 });
         return;
     }
     recordEvent('document_flow_pdf_open', { nodeCount: nodes.value.length, docFormatCode: node?.doc_format_code || docFormatCode.value });
     pdfUrl.value = url;
-    pdfTitle.value = `${node?.doc_no || 'เอกสาร'} · ${version === 'final' ? 'หลักฐานการลงนาม' : 'PDF ล่าสุด'}`;
+    pdfTitle.value = `${node?.doc_no || 'เอกสาร'} · ${version === 'final' ? 'หลักฐานการลงนาม' : 'เอกสารใน PaperLess'}`;
+    pdfDialog.value = true;
+}
+
+function previewCurrentPDF(node) {
+    previewPDF(node, 'current');
+}
+
+function previewReferencePDF(doc = {}) {
+    const url = api.withPDFCacheKey(doc.currentPdfUrl, api.signingDocumentPDFCacheKey(doc, 'current'));
+    if (!url) {
+        toast.add({ severity: 'warn', summary: 'ยังไม่มีเอกสาร PDF', detail: 'เอกสารนี้ยังไม่มี PDF ใน PaperLess', life: 3000 });
+        return;
+    }
+    recordEvent('document_flow_pdf_open', { nodeCount: nodes.value.length, docFormatCode: doc?.docFormatCode || docFormatCode.value });
+    pdfUrl.value = url;
+    pdfTitle.value = `${doc?.docNo || 'เอกสาร'} · เอกสารใน PaperLess`;
     pdfDialog.value = true;
 }
 
@@ -428,10 +446,9 @@ function recordEvent(event, extra = {}) {
                     <Column header="จัดการ" style="min-width: 16rem">
                         <template #body="{ data }">
                             <div class="flex flex-wrap gap-2">
-                                <Button icon="pi pi-info-circle" rounded outlined severity="secondary" aria-label="ข้อมูล SML" @click="openInfo(data)" />
-                                <Button v-if="data.canOpenPaperless" icon="pi pi-external-link" rounded outlined severity="secondary" aria-label="เปิดเอกสาร" @click="openPaperless(data)" />
-                                <Button v-if="data.canViewCurrentPdf" icon="pi pi-file-pdf" rounded outlined severity="secondary" aria-label="ดู PDF ล่าสุด" @click="previewPDF(data, 'current')" />
-                                <Button v-if="data.canViewSignedPdf" icon="pi pi-shield" rounded outlined severity="success" aria-label="ดูหลักฐานการลงนาม" @click="previewPDF(data, 'final')" />
+                                <Button icon="pi pi-info-circle" label="ข้อมูล" size="small" outlined severity="secondary" @click="openInfo(data)" />
+                                <Button v-if="canPreviewCurrentPDF(data)" icon="pi pi-file-pdf" label="ดูเอกสาร" size="small" outlined severity="secondary" @click="previewCurrentPDF(data)" />
+                                <Button v-if="data.canOpenPaperless" icon="pi pi-external-link" label="รายละเอียด" size="small" outlined severity="secondary" @click="openPaperless(data)" />
                                 <Button v-if="!data.paperlessStatus" label="ส่งเข้า PaperLess" icon="pi pi-send" size="small" @click="startUpload(data)" />
                             </div>
                         </template>
@@ -478,15 +495,18 @@ function recordEvent(event, extra = {}) {
                     </Column>
                     <Column header="PDF" style="min-width: 11rem">
                         <template #body="{ data }">
-                            <Tag :value="data.hasFinalPdf ? 'มีหลักฐานการลงนาม' : data.hasCurrentPdf ? 'มี PDF ล่าสุด' : 'ยังไม่มี PDF'" :severity="data.hasFinalPdf ? 'success' : data.hasCurrentPdf ? 'info' : 'secondary'" />
+                            <Tag :value="data.hasCurrentPdf ? 'มีเอกสารใน PaperLess' : 'ยังไม่มีเอกสาร'" :severity="data.hasCurrentPdf ? 'info' : 'secondary'" />
                         </template>
                     </Column>
                     <Column header="อัปเดตล่าสุด" style="min-width: 12rem">
                         <template #body="{ data }">{{ formatThaiDateTime(data.updatedAt) }}</template>
                     </Column>
-                    <Column header="จัดการ" style="width: 7rem">
+                    <Column header="จัดการ" style="min-width: 14rem">
                         <template #body="{ data }">
-                            <Button icon="pi pi-external-link" rounded outlined severity="secondary" aria-label="เปิดเอกสาร PaperLess" @click="openDocument(data.id)" />
+                            <div class="flex flex-wrap gap-2">
+                                <Button v-if="data.canViewCurrentPdf || data.hasCurrentPdf || data.currentPdfUrl" icon="pi pi-file-pdf" label="ดูเอกสาร" size="small" outlined severity="secondary" @click="previewReferencePDF(data)" />
+                                <Button icon="pi pi-external-link" label="รายละเอียด" size="small" outlined severity="secondary" @click="openDocument(data.id)" />
+                            </div>
                         </template>
                     </Column>
                 </DataTable>

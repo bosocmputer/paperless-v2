@@ -356,7 +356,7 @@ WHERE ($1 = '' OR sml_tenant = $1)
   AND lower(doc_format_code) = lower($2)
   AND doc_no = $3
 ORDER BY
-  CASE WHEN status IN ('draft', 'in_progress', 'pending_confirm', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed') THEN 0 ELSE 1 END,
+  CASE WHEN status IN ('draft', 'in_progress', 'pending_confirm', 'auto_confirming', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed') THEN 0 ELSE 1 END,
   updated_at DESC,
   created_at DESC
 LIMIT 20
@@ -407,7 +407,7 @@ func statusesForSigningDocumentQueue(queue string) []string {
 	case "draft":
 		return []string{"draft"}
 	case "active":
-		return []string{"in_progress", "pending_confirm", "completed_evidence_failed", "completed_image_failed", "completed_lock_failed", "rejected"}
+		return []string{"in_progress", "pending_confirm", "auto_confirming", "completed_evidence_failed", "completed_image_failed", "completed_lock_failed", "rejected"}
 	case "history":
 		return []string{"completed"}
 	default:
@@ -441,7 +441,7 @@ func buildSigningDocumentDuplicateCheckResult(refs []models.SigningDocumentRefer
 
 func isBlockingSigningDocumentDuplicateStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "draft", "in_progress", "pending_confirm", "completed_evidence_failed", "completed_image_failed", "completed_lock_failed":
+	case "draft", "in_progress", "pending_confirm", "auto_confirming", "completed_evidence_failed", "completed_image_failed", "completed_lock_failed":
 		return true
 	default:
 		return false
@@ -455,7 +455,9 @@ func signingDocumentDuplicateStatusLabel(status string) string {
 	case "in_progress":
 		return "เอกสารรอเซ็น"
 	case "pending_confirm":
-		return "รอยืนยัน"
+		return "รอส่งเข้า SML"
+	case "auto_confirming":
+		return "กำลังส่งเข้า SML"
 	case "completed_evidence_failed":
 		return "สร้าง PDF หลักฐานไม่สำเร็จ"
 	case "completed_image_failed":
@@ -555,6 +557,93 @@ func (s *Store) PrepareSigningDocumentConfirmation(ctx context.Context, document
 	return s.FindSigningDocumentByID(ctx, documentID)
 }
 
+func (s *Store) ClaimSigningDocumentAutoFinalize(ctx context.Context, documentID, ipAddress, userAgent string, staleBefore time.Time) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var locked bool
+	if err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtext('paperless:auto-finalize'), hashtext($1))`, documentID).Scan(&locked); err != nil {
+		return false, err
+	}
+	if !locked {
+		return false, nil
+	}
+
+	var status string
+	var updatedAt time.Time
+	if err := tx.QueryRow(ctx, `
+SELECT status, updated_at
+FROM signing_documents
+WHERE id = $1
+FOR UPDATE
+`, documentID).Scan(&status, &updatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrSigningDocumentNotFound
+		}
+		return false, err
+	}
+	if status != "pending_confirm" && !(status == "auto_confirming" && updatedAt.Before(staleBefore)) {
+		return false, nil
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE signing_documents
+SET status = 'auto_confirming', updated_at = now()
+WHERE id = $1
+`, documentID); err != nil {
+		return false, err
+	}
+	action := "document_auto_confirm_started"
+	message := "เอกสารเซ็นครบแล้ว ระบบเริ่มส่งเข้า SML อัตโนมัติ"
+	if status == "auto_confirming" {
+		action = "document_auto_confirm_resumed"
+		message = "ระบบกลับมาส่งเอกสารเข้า SML อัตโนมัติอีกครั้ง"
+	}
+	if err := insertSigningEvent(ctx, tx, documentID, "", "", action, message, ipAddress, userAgent, map[string]any{"previousStatus": status}); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) ListSigningDocumentsForAutoFinalize(ctx context.Context, limit int, staleBefore time.Time) ([]string, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	tenant := tenantFilterValue(ctx)
+	rows, err := s.pool.Query(ctx, `
+SELECT id::text
+FROM signing_documents
+WHERE ($1 = '' OR sml_tenant = $1)
+  AND (
+    status = 'pending_confirm'
+    OR (status = 'auto_confirming' AND updated_at < $2)
+  )
+ORDER BY
+  CASE status WHEN 'pending_confirm' THEN 0 ELSE 1 END,
+  updated_at ASC
+LIMIT $3
+`, tenant, staleBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *Store) CancelSigningDocument(ctx context.Context, documentID, actorID, ipAddress, userAgent string) (models.SigningDocument, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -620,8 +709,8 @@ GROUP BY status
 			dashboard.Totals.Draft = count
 		case "in_progress":
 			dashboard.Totals.InProgress = count
-		case "pending_confirm":
-			dashboard.Totals.PendingConfirm = count
+		case "pending_confirm", "auto_confirming":
+			dashboard.Totals.PendingConfirm += count
 		case "rejected":
 			dashboard.Totals.Rejected = count
 		case "completed":
@@ -648,7 +737,7 @@ GROUP BY status
 
 	needsAttention, err := s.listSigningDocumentsByQuery(ctx, `
 WHERE (`+tenantSQLPredicate("d", tenant, 1)+`)
-  AND d.status IN ('pending_confirm', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed')
+  AND d.status IN ('pending_confirm', 'auto_confirming', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed')
 ORDER BY d.updated_at DESC, d.created_at DESC
 LIMIT 5
 `, tenant)
@@ -1450,17 +1539,25 @@ func (s *Store) RegenerateExternalToken(ctx context.Context, signerID, tokenHash
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var documentID string
+	var documentID, signerStatus, documentStatus string
 	if err := tx.QueryRow(ctx, `
-SELECT document_id::text
-FROM signing_document_signers
-WHERE id = $1 AND signer_type = 'external'
-  AND ($2 = '' OR EXISTS (SELECT 1 FROM signing_documents d WHERE d.id = signing_document_signers.document_id AND d.sml_tenant = $2))
-`, signerID, tenant).Scan(&documentID); err != nil {
+SELECT sg.document_id::text, sg.status, d.status
+FROM signing_document_signers sg
+JOIN signing_documents d ON d.id = sg.document_id
+WHERE sg.id = $1 AND sg.signer_type = 'external'
+  AND ($2 = '' OR d.sml_tenant = $2)
+FOR UPDATE OF sg, d
+`, signerID, tenant).Scan(&documentID, &signerStatus, &documentStatus); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrSigningTaskNotFound
 		}
 		return "", err
+	}
+	if documentStatus != "in_progress" || signerStatus == "waiting" {
+		return "", ErrExternalSignerNotTurn
+	}
+	if signerStatus != "pending" {
+		return "", ErrExternalSignerUnavailable
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -1914,7 +2011,7 @@ WHERE id = $1
 `, signer.DocumentID); err != nil {
 			return false, err
 		}
-		if err := insertSigningEvent(ctx, tx, signer.DocumentID, "", "", "document_ready_to_confirm", "เอกสารเซ็นครบแล้ว รอผู้ดูแลยืนยัน", "", "", nil); err != nil {
+		if err := insertSigningEvent(ctx, tx, signer.DocumentID, "", "", "document_ready_to_confirm", "เอกสารเซ็นครบแล้ว ระบบจะส่งเข้า SML อัตโนมัติ", "", "", nil); err != nil {
 			return false, err
 		}
 		return true, nil

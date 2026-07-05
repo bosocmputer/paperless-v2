@@ -4,6 +4,8 @@ This manual summarizes the production workflow. The in-app guides under admin an
 
 ## Admin Flow
 
+SML `superadmin` becomes PaperLess `superadmin` and can manage users, workflow, and signature templates. Other SML users become PaperLess `admin` and can create/send documents, but cannot edit workflow or signature box placement templates.
+
 ### 1. Log In
 
 1. Open PaperLess.
@@ -21,7 +23,7 @@ The selected database scopes documents, dashboard counts, workflows, templates, 
 4. Place signature boxes and legal notice boxes.
 5. Save the template.
 
-For PDFs with more pages than the template, PaperLess clones the first-page pattern to every uploaded PDF page. Admin can still edit, delete, or add boxes per page before saving the document.
+For PDFs with more pages than the template, PaperLess clones the first-page pattern to every uploaded PDF page. Superadmin can edit, delete, or add boxes per page before saving the document. Admin uses the published template boxes as read-only placement.
 
 ### 3. Create Signing Document
 
@@ -41,15 +43,11 @@ The list shows document status and who the document is waiting for. For document
 
 Use `Flow เอกสาร` to inspect related SML flow without leaving the current page.
 
-### 5. Confirm Completed Signing
+### 5. Completed Signing And SML
 
-After all required signers are complete:
+After all required signers are complete, PaperLess automatically generates the final audit PDF, uploads JPEG snapshots to SML, and locks the ERP document in the background.
 
-1. Open the document detail.
-2. Review the current signed PDF.
-3. Confirm the document.
-
-PaperLess will generate the final audit PDF, upload JPEG snapshots to SML, and lock the ERP document. If image upload fails, use retry. If lock fails after images succeed, retry lock from the detail page.
+Use the document list/detail to monitor `กำลังส่งเข้า SML`. If image upload fails, use retry. If lock fails after images succeed, retry lock from the detail page.
 
 ### 6. Review History And Evidence
 

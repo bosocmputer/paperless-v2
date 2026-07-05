@@ -327,7 +327,8 @@ function waitingSummary(doc) {
         const first = signerDisplayName(signers[0]);
         return signers.length > 1 ? `รอ: ${first} +${signers.length - 1} คน` : `รอ: ${first}`;
     }
-    if (doc?.status === 'pending_confirm') return 'เซ็นครบแล้ว รอผู้ดูแลยืนยัน';
+    if (doc?.status === 'pending_confirm') return 'เซ็นครบแล้ว รอระบบส่งเข้า SML';
+    if (doc?.status === 'auto_confirming') return 'กำลังสร้าง PDF และส่งเข้า SML';
     if (doc?.status === 'completed_evidence_failed') return 'ต้องสร้าง PDF หลักฐานอีกครั้ง';
     if (doc?.status === 'completed_image_failed') return 'ต้องส่งรูปเอกสารเข้า SML อีกครั้ง';
     if (doc?.status === 'completed_lock_failed') return 'ต้อง Lock SML อีกครั้ง';
@@ -358,6 +359,10 @@ function openExternalSignerFromRow(doc) {
 
 function requestExternalToken(signer, doc = externalSignerDocument.value) {
     if (!signer?.id) return;
+    if (signer.status !== 'pending') {
+        toast.add({ severity: 'info', summary: 'ยังสร้างลิงก์ไม่ได้', detail: signer.status === 'waiting' ? 'ยังไม่ถึงคิวผู้เซ็นภายนอกคนนี้' : 'ผู้เซ็นภายนอกคนนี้ไม่พร้อมใช้งานแล้ว', life: 3000 });
+        return;
+    }
     if (!signer.externalTokenId) {
         void generateExternalToken(signer, doc);
         return;
@@ -497,16 +502,6 @@ function selectInput(event) {
                             aria-label="ส่งไปเซ็น"
                             :loading="isTransitioning(data.id)"
                             @click="confirmSend(data)"
-                        />
-                        <Button
-                            v-if="data.status === 'pending_confirm'"
-                            icon="pi pi-check-circle"
-                            rounded
-                            outlined
-                            severity="success"
-                            aria-label="ยืนยันเอกสาร"
-                            :loading="isTransitioning(data.id)"
-                            @click="confirmAdminConfirm(data)"
                         />
                         <Button
                             v-if="canGenerateExternalFromList(data)"

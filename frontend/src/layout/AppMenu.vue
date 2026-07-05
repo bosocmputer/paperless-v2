@@ -4,6 +4,8 @@ import { ADMIN_SIGNER_MENU_KEYS, SIGNING_DOCUMENT_MENU_KEYS } from '@/utils/sign
 import { computed } from 'vue';
 import AppMenuItem from './AppMenuItem.vue';
 
+const isSuperAdmin = computed(() => authStore.user?.role === 'superadmin');
+
 const model = computed(() => {
     if (authStore.user?.role === 'user') {
         return [
@@ -25,7 +27,7 @@ const model = computed(() => {
         ];
     }
 
-    return [
+    const sections = [
         {
             label: 'Admin Console',
             items: [
@@ -74,8 +76,10 @@ const model = computed(() => {
                     activeMatch: '/admin/signing/history'
                 }
             ]
-        },
-        {
+        }
+    ];
+    if (isSuperAdmin.value) {
+        sections.push({
             label: 'ตั้งค่าเอกสาร',
             items: [
                 {
@@ -85,15 +89,21 @@ const model = computed(() => {
                     activeMatch: '/config/documents'
                 }
             ]
-        },
+        });
+    }
+    sections.push(
         {
             label: 'ระบบ',
             items: [
-                {
-                    label: 'ผู้ใช้งาน',
-                    icon: 'pi pi-fw pi-users',
-                    to: '/admin/users'
-                },
+                ...(isSuperAdmin.value
+                    ? [
+                          {
+                              label: 'ผู้ใช้งาน',
+                              icon: 'pi pi-fw pi-users',
+                              to: '/admin/users'
+                          }
+                      ]
+                    : []),
                 {
                     label: 'คู่มือการใช้งาน',
                     icon: 'pi pi-fw pi-book',
@@ -106,7 +116,8 @@ const model = computed(() => {
                 }
             ]
         }
-    ];
+    );
+    return sections;
 });
 </script>
 

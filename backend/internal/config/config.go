@@ -61,7 +61,7 @@ func Load() (Config, error) {
 			DisplayName: getenv("SEED_SUPERADMIN_NAME", "System Administrator"),
 			Username:    getenv("SEED_SUPERADMIN_USERNAME", "superadmin"),
 			Password:    getenv("SEED_SUPERADMIN_PASSWORD", "superadmin"),
-			Role:        "admin",
+			Role:        "superadmin",
 		},
 	}
 

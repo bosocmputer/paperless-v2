@@ -16,7 +16,7 @@ const route = useRoute();
 const search = ref('');
 const selectedShot = ref(null);
 
-const isAdminView = computed(() => authStore.user?.role === 'admin' || route.meta.guideAudience === 'admin');
+const isAdminView = computed(() => authStore.user?.role === 'admin' || authStore.user?.role === 'superadmin' || route.meta.guideAudience === 'admin');
 const quickLinks = computed(() => {
     if (isAdminView.value) return [];
     return [

@@ -133,18 +133,17 @@ function openPaperless(node) {
     if (node.canOpenPaperless && node.paperlessDocumentId) emit('open-document', node.paperlessDocumentId);
 }
 
+function canPreviewCurrentPDF(node = {}) {
+    return !!(node.canViewCurrentPdf || node.hasCurrentPdf || node.currentPdfUrl);
+}
+
 function previewPDF(node, version) {
     emit('node-click', node);
     emit('preview-pdf', { node, version, url: version === 'final' ? node.signedPdfUrl : node.currentPdfUrl });
 }
 
-function previewBestPDF(node) {
-    emit('node-click', node);
-    if (node.canViewCurrentPdf || node.hasCurrentPdf || node.currentPdfUrl) {
-        emit('preview-pdf', { node, version: 'current', url: node.currentPdfUrl });
-        return;
-    }
-    emit('preview-pdf', { node, version: 'final', url: node.signedPdfUrl });
+function previewCurrentPDF(node) {
+    previewPDF(node, 'current');
 }
 </script>
 
@@ -210,6 +209,11 @@ function previewBestPDF(node) {
                                 <Tag :value="statusLabel(item)" :severity="item.paperlessStatus ? signingStatusSeverity(item.paperlessStatus) : lockSeverity(item)" />
                                 <Tag v-if="item.matchCount > 1" :value="`${item.matchCount} รายการใน PaperLess`" severity="warn" />
                             </div>
+                            <div v-if="admin" class="flow-card-actions" @click.stop>
+                                <Button icon="pi pi-info-circle" label="ข้อมูล" size="small" outlined severity="secondary" @click="openInfo(item)" />
+                                <Button v-if="canPreviewCurrentPDF(item)" icon="pi pi-file-pdf" label="ดูเอกสาร" size="small" outlined severity="secondary" @click="previewCurrentPDF(item)" />
+                                <Button v-if="item.canOpenPaperless" icon="pi pi-external-link" label="รายละเอียด" size="small" outlined severity="secondary" @click="openPaperless(item)" />
+                            </div>
                         </template>
                     </Card>
                 </div>
@@ -219,7 +223,7 @@ function previewBestPDF(node) {
         <DataTable v-if="showTable && !compact && nodes.length" :value="nodes" responsiveLayout="scroll" stripedRows class="mt-4">
             <Column field="doc_no" header="เลขที่เอกสาร" style="min-width: 11rem">
                 <template #body="{ data }">
-                    <Button :label="data.doc_no" link class="p-0" @click="previewBestPDF(data)" />
+                    <Button :label="data.doc_no" link class="p-0" @click="openInfo(data)" />
                 </template>
             </Column>
             <Column field="doc_format_code" header="ชนิด" style="min-width: 7rem" />
@@ -243,17 +247,16 @@ function previewBestPDF(node) {
             <Column header="PDF" style="min-width: 10rem">
                 <template #body="{ data }">
                     <div class="flex gap-2 flex-wrap">
-                        <Tag :value="data.hasCurrentPdf ? 'มี PDF ล่าสุด' : 'ไม่มี PDF'" :severity="data.hasCurrentPdf ? 'info' : 'secondary'" />
-                        <Tag :value="data.hasFinalPdf ? 'มีหลักฐานการลงนาม' : 'ยังไม่มีหลักฐาน'" :severity="data.hasFinalPdf ? 'success' : 'secondary'" />
+                        <Tag :value="data.hasCurrentPdf ? 'มีเอกสารใน PaperLess' : 'ยังไม่มีเอกสาร'" :severity="data.hasCurrentPdf ? 'info' : 'secondary'" />
                     </div>
                 </template>
             </Column>
             <Column header="จัดการ" style="min-width: 13rem">
                 <template #body="{ data }">
                     <div class="flex gap-2 flex-wrap">
-                        <Button icon="pi pi-info-circle" rounded outlined severity="secondary" aria-label="ดูข้อมูล SML" @click="openInfo(data)" />
-                        <Button v-if="admin && data.canOpenPaperless" icon="pi pi-external-link" rounded outlined severity="secondary" aria-label="เปิด PaperLess" @click="openPaperless(data)" />
-                        <Button v-if="admin && data.canViewSignedPdf" icon="pi pi-shield" rounded outlined severity="success" aria-label="ดูหลักฐานการลงนาม" @click="previewPDF(data, 'final')" />
+                        <Button icon="pi pi-info-circle" label="ข้อมูล" size="small" outlined severity="secondary" @click="openInfo(data)" />
+                        <Button v-if="admin && canPreviewCurrentPDF(data)" icon="pi pi-file-pdf" label="ดูเอกสาร" size="small" outlined severity="secondary" @click="previewCurrentPDF(data)" />
+                        <Button v-if="admin && data.canOpenPaperless" icon="pi pi-external-link" label="รายละเอียด" size="small" outlined severity="secondary" @click="openPaperless(data)" />
                     </div>
                 </template>
             </Column>
@@ -352,6 +355,13 @@ function previewBestPDF(node) {
 .flow-doc-no {
     color: var(--primary-color);
     font-weight: 700;
+}
+
+.flow-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.85rem;
 }
 
 @media screen and (max-width: 960px) {

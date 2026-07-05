@@ -2,17 +2,18 @@
 
 ## Current Customer Test Status - 2026-07-05
 
-Status: deployed to the customer server and waiting for user feedback.
+Status: deployed to the customer server and waiting for customer feedback.
 
 - Customer URL: `http://45.122.49.250:8095/`
-- Customer release evidence: `/data/paperless/releases/20260705180548/postdeploy-checks.txt`
-- PaperLess app commit tested: `9b9aac0`
-- SML API commit tested: `b9ef4ca`
+- Customer release evidence: `/data/paperless/releases/20260705203244/postdeploy-checks.txt`
+- Customer image tag tested: `20260705203244`
 
-Customer smoke passed on release `20260705180548`:
+Customer smoke passed on release `20260705203244`:
 
 - `paperless-prod-web`, `paperless-prod-api`, `paperless-prod-sml-api`, and `paperless-prod-db` were healthy/running.
-- `/health/ready` returned HTTP 200.
+- Web `/`, `/health/live`, and `/health/ready` returned HTTP 200.
+- PaperLess API container returned `{"status":"ready"}`.
+- SML API container returned ready for database `iampcoffee`.
 - SML login/database selection returned the customer database list.
 - Self-service image DB setup was verified with tenant `SILK`: before setup it returned tenant-not-ready, after setup login succeeded and JWT was issued.
 
@@ -48,6 +49,12 @@ Main production blockers found during QA were fixed:
 - User history opens `current` signed PDF by default.
 - Login page no longer displays provider/data group text.
 - Visible product name is PaperLess.
+- SML document search supports both `ic_trans` and `ap_ar_trans`, including partial document number and AR/AP name lookup.
+- External signer links are only available when the external signer is pending and it is their turn.
+- Completed documents auto-finalize to SML without a manual admin confirm click.
+- Role model now separates `superadmin`, `admin`, and `user`, with workflow/template/user configuration limited to `superadmin`.
+- Admin document creation can use templates but cannot edit signature/legal-notice boxes.
+- Flow เอกสาร can open the signed PaperLess document in a read-only dialog and keep detail navigation separate.
 
 ## Validation Commands
 
@@ -63,8 +70,8 @@ Run on customer server after deploy:
 ```bash
 docker ps --filter "name=paperless-prod"
 curl -fsS http://127.0.0.1:8095/
-curl -fsS http://127.0.0.1:8095/api/live
-curl -fsS http://127.0.0.1:8095/api/ready
+curl -fsS http://127.0.0.1:8095/health/live
+curl -fsS http://127.0.0.1:8095/health/ready
 ```
 
 ## Manual Regression Checklist
@@ -76,7 +83,7 @@ curl -fsS http://127.0.0.1:8095/api/ready
 - Template boxes clone to every uploaded page and remain independently editable.
 - Internal signer can sign from mobile width.
 - External signer cannot reject, attach files, print, download, or open admin views.
-- After signing completes, admin confirm uploads images before SML lock.
+- After signing completes, PaperLess auto-finalization uploads images before SML lock.
 - SML image rows contain JPEG bytes in tenant and `_images` databases.
 - Login self-service image DB setup works for a tenant that is missing only the `_images` DB/table.
 - Admin history preview excludes evidence appendix.

@@ -82,15 +82,19 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "cannot_disable_self", "You cannot disable your own account.")
 		return
 	}
-	if current.Role == "admin" && (req.Role != "admin" || req.Status != "active") {
-		adminCount, err := s.store.CountActiveAdmins(r.Context())
+	if actor.ID == id && current.Role == "superadmin" && req.Role != "superadmin" {
+		writeError(w, http.StatusBadRequest, "cannot_demote_self", "You cannot remove your own superadmin role.")
+		return
+	}
+	if current.Role == "superadmin" && (req.Role != "superadmin" || req.Status != "active") {
+		adminCount, err := s.store.CountActiveSuperAdmins(r.Context())
 		if err != nil {
-			s.logger.Error("count admins failed", "error", err)
+			s.logger.Error("count superadmins failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "user_update_failed", "Cannot update user right now.")
 			return
 		}
 		if adminCount <= 1 {
-			writeError(w, http.StatusBadRequest, "last_admin", "At least one active admin is required.")
+			writeError(w, http.StatusBadRequest, "last_superadmin", "At least one active superadmin is required.")
 			return
 		}
 	}
@@ -147,15 +151,15 @@ func (s *Server) deactivateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "cannot_disable_self", "You cannot disable your own account.")
 		return
 	}
-	if user.Role == "admin" && user.Status == "active" {
-		adminCount, err := s.store.CountActiveAdmins(r.Context())
+	if user.Role == "superadmin" && user.Status == "active" {
+		adminCount, err := s.store.CountActiveSuperAdmins(r.Context())
 		if err != nil {
-			s.logger.Error("count admins failed", "error", err)
+			s.logger.Error("count superadmins failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "user_deactivate_failed", "Cannot deactivate user right now.")
 			return
 		}
 		if adminCount <= 1 {
-			writeError(w, http.StatusBadRequest, "last_admin", "At least one active admin is required.")
+			writeError(w, http.StatusBadRequest, "last_superadmin", "At least one active superadmin is required.")
 			return
 		}
 	}
@@ -250,8 +254,8 @@ func validateUpdateUser(req models.UpdateUserRequest) string {
 }
 
 func validateUserFields(role, status string) string {
-	if role != "admin" && role != "user" {
-		return "Role must be admin or user."
+	if role != "superadmin" && role != "admin" && role != "user" {
+		return "Role must be superadmin, admin, or user."
 	}
 	if status != "active" && status != "inactive" {
 		return "Status must be active or inactive."

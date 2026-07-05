@@ -67,6 +67,8 @@ var (
 	ErrSigningDocumentInvalidStatus   = errors.New("signing document status does not allow this action")
 	ErrSigningTaskNotFound            = errors.New("signing task not found")
 	ErrSigningTaskUnavailable         = errors.New("signing task is not available")
+	ErrExternalSignerNotTurn          = errors.New("external signer is not the active turn")
+	ErrExternalSignerUnavailable      = errors.New("external signer is unavailable")
 	ErrExternalTokenNotFound          = errors.New("external signing token not found")
 	ErrExternalTokenInvalid           = errors.New("external signing token invalid")
 	ErrIdempotencyInProgress          = errors.New("idempotency key is already in progress")
@@ -109,11 +111,18 @@ CREATE TABLE IF NOT EXISTS users (
     display_name TEXT NOT NULL,
     username TEXT NOT NULL,
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+    role TEXT NOT NULL CHECK (role IN ('superadmin', 'admin', 'user')),
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE users
+DROP CONSTRAINT IF EXISTS users_role_check;
+
+ALTER TABLE users
+ADD CONSTRAINT users_role_check
+CHECK (role IN ('superadmin', 'admin', 'user'));
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (lower(username));
 
@@ -128,6 +137,35 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    key TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE key = '20260705_sml_role_redesign') THEN
+        UPDATE users
+        SET role = 'superadmin', updated_at = now()
+        WHERE lower(username) = 'superadmin'
+          AND role = 'admin';
+
+        UPDATE users u
+        SET role = 'admin', updated_at = now()
+        WHERE u.role = 'user'
+          AND EXISTS (
+              SELECT 1
+                FROM audit_logs a
+               WHERE a.target_type = 'user'
+                 AND a.target_id = u.id::text
+                 AND a.action = 'auth.user_auto_provisioned'
+                 AND a.metadata->>'source' = 'sml'
+          );
+
+        INSERT INTO schema_migrations (key) VALUES ('20260705_sml_role_redesign');
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS document_config_steps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -276,7 +314,7 @@ CREATE TABLE IF NOT EXISTS signing_documents (
     doc_date DATE,
     total_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
     sml_is_lock_record INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'rejected', 'completed', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'cancelled')),
+    status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'auto_confirming', 'rejected', 'completed', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'cancelled')),
     current_version INTEGER NOT NULL DEFAULT 1 CHECK (current_version > 0),
     original_file_id UUID REFERENCES uploaded_files(id),
     current_file_id UUID REFERENCES uploaded_files(id),
@@ -317,13 +355,13 @@ DROP CONSTRAINT IF EXISTS signing_documents_status_check;
 
 ALTER TABLE signing_documents
 ADD CONSTRAINT signing_documents_status_check
-CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'rejected', 'completed', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'cancelled'));
+CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'auto_confirming', 'rejected', 'completed', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'cancelled'));
 
 DROP INDEX IF EXISTS signing_documents_active_doc_unique_idx;
 
 CREATE UNIQUE INDEX signing_documents_active_doc_unique_idx
 ON signing_documents (sml_tenant, lower(doc_format_code), doc_no)
-WHERE status IN ('draft', 'in_progress', 'pending_confirm', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed');
+WHERE status IN ('draft', 'in_progress', 'pending_confirm', 'auto_confirming', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed');
 
 DROP INDEX IF EXISTS signing_documents_search_idx;
 
@@ -508,7 +546,7 @@ func (s *Store) EnsureSuperAdmin(ctx context.Context, seed models.SeedUser) erro
 		seed.DisplayName = seed.Username
 	}
 	if seed.Role == "" {
-		seed.Role = "admin"
+		seed.Role = "superadmin"
 	}
 
 	var existingID string
@@ -627,6 +665,12 @@ RETURNING id::text, display_name, username, password_hash, role, status, created
 func (s *Store) CountActiveAdmins(ctx context.Context) (int, error) {
 	var count int
 	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE role = 'admin' AND status = 'active'`).Scan(&count)
+	return count, err
+}
+
+func (s *Store) CountActiveSuperAdmins(ctx context.Context) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE role = 'superadmin' AND status = 'active'`).Scan(&count)
 	return count, err
 }
 

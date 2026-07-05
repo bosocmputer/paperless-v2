@@ -80,12 +80,27 @@ func currentSession(r *http.Request) (models.AuthSession, bool) {
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return s.requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, _ := currentUser(r)
-		if user.Role != "admin" {
+		if !isAdminRole(user.Role) {
 			writeError(w, http.StatusForbidden, "forbidden", "Admin permission is required.")
 			return
 		}
 		next.ServeHTTP(w, r)
 	}))
+}
+
+func (s *Server) requireSuperAdmin(next http.Handler) http.Handler {
+	return s.requireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, _ := currentUser(r)
+		if user.Role != "superadmin" {
+			writeError(w, http.StatusForbidden, "forbidden", "Superadmin permission is required.")
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
+func isAdminRole(role string) bool {
+	return role == "admin" || role == "superadmin"
 }
 
 func (s *Server) recover(next http.Handler) http.Handler {

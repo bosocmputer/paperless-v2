@@ -1,5 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
+import { authStore } from '@/stores/auth';
 import { formatDocumentDate, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
 import DocumentLayoutDesigner from './components/DocumentLayoutDesigner.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -41,6 +42,7 @@ let openedAt = Date.now();
 let createFinished = false;
 let duplicateCheckSeq = 0;
 let layoutContextSeq = 0;
+let candidateSearchSeq = 0;
 const bypassLeaveConfirm = ref(false);
 
 const wizardSteps = [
@@ -67,18 +69,24 @@ const blockingDuplicateDocument = computed(() => duplicateCheck.value?.blockingD
 const duplicateWarningDocuments = computed(() => duplicateCheck.value?.previousDocuments || []);
 const workflowContextLoaded = computed(() => !!form.value.docFormatCode && workflowContextDocFormatCode.value === form.value.docFormatCode);
 const workflowMissing = computed(() => workflowContextLoaded.value && !workflowLoadError.value && (form.value.configs || []).length === 0);
+const isSuperAdmin = computed(() => authStore.user?.role === 'superadmin');
+const adminLayoutLocked = computed(() => authStore.user?.role === 'admin');
+const adminTemplateMissing = computed(() => adminLayoutLocked.value && workflowContextLoaded.value && !workflowLoadError.value && !workflowMissing.value && !form.value.presetTemplate);
 const workflowBlockingReason = computed(() => {
     if (!form.value.docFormatCode) return '';
     if (loadingLayoutContext.value) return 'กำลังโหลด Workflow ของชนิดเอกสารนี้';
     if (workflowLoadError.value) return `โหลด Workflow ไม่สำเร็จ: ${workflowLoadError.value}`;
-    if (workflowMissing.value) return 'ยังไม่ได้กำหนด Workflow สำหรับชนิดเอกสารนี้ กรุณาตั้งค่า Workflow ก่อนสร้างเอกสาร';
+    if (workflowMissing.value) return adminLayoutLocked.value ? 'ยังไม่ได้กำหนด Workflow สำหรับชนิดเอกสารนี้ กรุณาติดต่อ superadmin' : 'ยังไม่ได้กำหนด Workflow สำหรับชนิดเอกสารนี้ กรุณาตั้งค่า Workflow ก่อนสร้างเอกสาร';
     return '';
 });
-const canSearchSMLDocuments = computed(() => !!form.value.docFormatCode && workflowContextLoaded.value && !workflowBlockingReason.value);
+const adminTemplateBlockingReason = computed(() => (adminTemplateMissing.value ? 'ยังไม่ได้ตั้งค่า template กรอบลายเซ็นสำหรับชนิดเอกสารนี้ กรุณาติดต่อ superadmin' : ''));
+const setupBlockingReason = computed(() => workflowBlockingReason.value || adminTemplateBlockingReason.value);
+const canSearchSMLDocuments = computed(() => !!form.value.docFormatCode && workflowContextLoaded.value && !setupBlockingReason.value);
 const candidateEmptyMessage = computed(() => {
     if (!form.value.docFormatCode) return 'เลือกชนิดเอกสารก่อน';
     if (loadingLayoutContext.value) return 'กำลังโหลด Workflow ก่อนค้นหาเอกสาร';
     if (workflowMissing.value) return 'ต้องตั้งค่า Workflow ของชนิดเอกสารนี้ก่อนค้นหาเอกสาร';
+    if (adminTemplateMissing.value) return 'ต้องตั้งค่า template กรอบลายเซ็นก่อนค้นหาเอกสาร';
     if (workflowLoadError.value) return 'โหลด Workflow ไม่สำเร็จ กรุณาลองใหม่';
     return form.value.search?.length >= 2 ? 'ไม่พบเอกสาร' : 'พิมพ์อย่างน้อย 2 ตัวอักษรเพื่อค้นหา';
 });
@@ -210,23 +218,29 @@ async function loadPage() {
 
 async function searchCandidates(page = 1) {
     if (!canSearchSMLDocuments.value) return;
+    const requestedDocFormatCode = form.value.docFormatCode;
+    const requestedSearch = form.value.search;
+    const seq = candidateSearchSeq + 1;
+    candidateSearchSeq = seq;
     searchingCandidates.value = true;
     try {
         const result = await api.listSMLDocumentCandidates({
-            docFormatCode: form.value.docFormatCode,
-            search: form.value.search,
+            docFormatCode: requestedDocFormatCode,
+            search: requestedSearch,
             page,
             size: 20
         });
+        if (seq !== candidateSearchSeq || requestedDocFormatCode !== form.value.docFormatCode || requestedSearch !== form.value.search) return;
         const rows = result.documents || [];
         candidates.value = page === 1 ? rows : [...candidates.value, ...rows];
         candidatePage.value = result.page || page;
         candidateTotal.value = result.total || 0;
         candidateHasMore.value = !!result.hasMore;
     } catch (err) {
+        if (seq !== candidateSearchSeq) return;
         toast.add({ severity: 'error', summary: 'ค้นหาเอกสาร SML ไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
-        searchingCandidates.value = false;
+        if (seq === candidateSearchSeq) searchingCandidates.value = false;
     }
 }
 
@@ -238,7 +252,7 @@ function loadMoreCandidates() {
 function selectCandidate(candidate) {
     if (!canSearchSMLDocuments.value) {
         recordCreateEvent('validation_blocked');
-        toast.add({ severity: 'warn', summary: 'ยังเลือกเอกสารไม่ได้', detail: workflowBlockingReason.value || 'กรุณาตั้งค่า Workflow ก่อน', life: 3200 });
+        toast.add({ severity: 'warn', summary: 'ยังเลือกเอกสารไม่ได้', detail: setupBlockingReason.value || 'กรุณาตั้งค่า Workflow ก่อน', life: 3200 });
         return;
     }
     form.value.selectedCandidate = candidate;
@@ -363,7 +377,7 @@ async function loadLayoutContext() {
         const [configsResult, templateResult] = await Promise.all([api.listDocumentConfigs({ docFormatCode: requestedDocFormatCode }), api.getSignatureTemplateState(requestedDocFormatCode).catch(() => ({}))]);
         if (seq !== layoutContextSeq || requestedDocFormatCode !== form.value.docFormatCode) return;
         form.value.configs = configsResult.configs || [];
-        form.value.presetTemplate = templateResult.active || templateResult.draft || null;
+        form.value.presetTemplate = adminLayoutLocked.value ? templateResult.active || null : templateResult.active || templateResult.draft || null;
         workflowContextDocFormatCode.value = requestedDocFormatCode;
         if (form.value.configs.length === 0) {
             resetCandidateSearch();
@@ -564,7 +578,7 @@ async function submitDocument() {
 function blockedReasonForStep(index) {
     if (index === 0) {
         if (!form.value.docFormatCode) return 'เลือกชนิดเอกสารก่อน';
-        if (workflowBlockingReason.value) return workflowBlockingReason.value;
+        if (setupBlockingReason.value) return setupBlockingReason.value;
         if (!form.value.selectedCandidate) return 'เลือกเลขเอกสารจากผลค้นหา SML ก่อน';
         if (checkingDuplicate.value) return 'กำลังตรวจสอบเอกสารซ้ำใน PaperLess';
         if (blockingDuplicateDocument.value) return duplicateCheck.value?.message || 'เอกสารนี้มีอยู่ใน PaperLess แล้ว กรุณาเปิดเอกสารเดิมแทนการสร้างซ้ำ';
@@ -640,6 +654,7 @@ function validateLayout() {
 }
 
 function resetCandidateSearch() {
+    candidateSearchSeq += 1;
     form.value.search = '';
     form.value.docNo = '';
     form.value.selectedCandidate = null;
@@ -932,13 +947,13 @@ function makeLegalNoticeBoxKey() {
                                     <small class="text-muted-color">ระบบไม่เลือกให้อัตโนมัติ เพื่อป้องกันส่งเอกสารผิดชนิด</small>
                                 </div>
                                 <div class="col-span-12 min-w-0 lg:col-span-8">
-                                    <label class="block font-bold mb-3">ค้นหาเลขเอกสารจาก SML</label>
+                                    <label class="block font-bold mb-3">ค้นหาเลขเอกสาร / รหัส / ชื่อลูกค้า / เจ้าหนี้</label>
                                     <IconField>
                                         <InputIcon><i class="pi pi-search" /></InputIcon>
-                                        <InputText v-model="form.search" placeholder="เช่น PO2606" fluid :disabled="!canSearchSMLDocuments" />
+                                        <InputText v-model="form.search" placeholder="พิมพ์บางส่วนของเลขเอกสาร รหัสคู่ค้า หรือชื่อ" fluid :disabled="!canSearchSMLDocuments" />
                                     </IconField>
                                     <small class="text-muted-color">
-                                        {{ canSearchSMLDocuments ? 'ต้องเลือกจากผลค้นหา SML เท่านั้น ระบบไม่รับเลขเอกสารที่พิมพ์เอง' : workflowBlockingReason || 'ต้องเลือกชนิดเอกสารก่อน' }}
+                                        {{ canSearchSMLDocuments ? 'ต้องเลือกจากผลค้นหา SML เท่านั้น ระบบไม่รับเลขเอกสารที่พิมพ์เอง' : setupBlockingReason || 'ต้องเลือกชนิดเอกสารก่อน' }}
                                     </small>
                                 </div>
                             </div>
@@ -948,13 +963,17 @@ function makeLegalNoticeBoxKey() {
                                 <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                                     <div>
                                         <div class="font-bold">ยังไม่ได้กำหนด Workflow สำหรับชนิดเอกสารนี้</div>
-                                        <div class="mt-1">กรุณาตั้งค่า Workflow ของ {{ selectedDocFormatLabel }} ก่อนค้นหาเอกสารและสร้างเอกสาร PaperLess</div>
+                                        <div class="mt-1">{{ adminLayoutLocked ? 'กรุณาติดต่อ superadmin ให้ตั้งค่า Workflow ก่อนสร้างเอกสาร PaperLess' : `กรุณาตั้งค่า Workflow ของ ${selectedDocFormatLabel} ก่อนค้นหาเอกสารและสร้างเอกสาร PaperLess` }}</div>
                                     </div>
-                                    <div class="flex flex-wrap gap-2">
+                                    <div v-if="isSuperAdmin" class="flex flex-wrap gap-2">
                                         <Button label="ตั้งค่า Workflow" icon="pi pi-file-edit" severity="warn" @click="goToWorkflowConfig" />
                                         <Button label="ดูรายการ Workflow" icon="pi pi-list" severity="secondary" outlined @click="goToWorkflowList" />
                                     </div>
                                 </div>
+                            </Message>
+                            <Message v-else-if="adminTemplateMissing" severity="warn" :closable="false">
+                                <div class="font-bold">ยังไม่ได้ตั้งค่า template กรอบลายเซ็น</div>
+                                <div class="mt-1">กรุณาติดต่อ superadmin ให้ตั้งค่าและ publish template ของ {{ selectedDocFormatLabel }} ก่อนสร้างเอกสาร PaperLess</div>
                             </Message>
                             <Message v-else-if="workflowLoadError" severity="error" :closable="false">
                                 <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -964,7 +983,7 @@ function makeLegalNoticeBoxKey() {
                                     </div>
                                     <div class="flex flex-wrap gap-2">
                                         <Button label="ลองโหลดใหม่" icon="pi pi-refresh" severity="secondary" outlined :loading="loadingLayoutContext" @click="loadLayoutContext" />
-                                        <Button label="ไปตั้งค่า Workflow" icon="pi pi-file-edit" severity="secondary" outlined @click="goToWorkflowConfig" />
+                                        <Button v-if="isSuperAdmin" label="ไปตั้งค่า Workflow" icon="pi pi-file-edit" severity="secondary" outlined @click="goToWorkflowConfig" />
                                     </div>
                                 </div>
                             </Message>
@@ -1075,6 +1094,7 @@ function makeLegalNoticeBoxKey() {
 
                         <Message v-if="!form.uploadedFile" severity="info">อัปโหลด PDF ก่อน แล้วระบบจะแสดงพื้นที่วางกรอบลายเซ็นในหน้านี้ทันที</Message>
                         <Message v-if="loadingLayoutContext" severity="info">กำลังโหลด Workflow และกรอบเริ่มต้น...</Message>
+                        <Message v-if="adminLayoutLocked && form.uploadedFile" severity="info">สิทธิ์ admin ใช้กรอบจาก template เท่านั้น หากต้องการแก้ตำแหน่งกรอบให้ติดต่อ superadmin</Message>
 
                         <DocumentLayoutDesigner
                             v-if="activeStep === 1 && form.fileUrl"
@@ -1086,6 +1106,7 @@ function makeLegalNoticeBoxKey() {
                             :configs="form.configs"
                             :presetTemplate="form.presetTemplate"
                             :fullHeight="designerMode"
+                            :readOnly="adminLayoutLocked"
                             @apply-preset="onApplyPreset"
                             @event="onDesignerEvent"
                             @validation-change="onDesignerValidationChange"

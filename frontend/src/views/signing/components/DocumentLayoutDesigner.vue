@@ -17,7 +17,8 @@ const props = defineProps({
     legalNoticeBox: { type: Object, default: null },
     legalNoticeBoxes: { type: Array, default: () => [] },
     presetTemplate: { type: Object, default: null },
-    fullHeight: { type: Boolean, default: false }
+    fullHeight: { type: Boolean, default: false },
+    readOnly: { type: Boolean, default: false }
 });
 
 const emit = defineEmits(['update:modelValue', 'update:legalNoticeBox', 'update:legalNoticeBoxes', 'apply-preset', 'event', 'validation-change']);
@@ -100,7 +101,7 @@ const validationIssues = computed(() => {
     return [...new Set(issues)];
 });
 
-const canApplyPreset = computed(() => (!!props.presetTemplate?.boxes?.length || !!props.presetTemplate?.legalNoticeBox) && !!props.pdfUrl);
+const canApplyPreset = computed(() => !props.readOnly && (!!props.presetTemplate?.boxes?.length || !!props.presetTemplate?.legalNoticeBox) && !!props.pdfUrl);
 
 const stepRows = computed(() =>
     [...props.configs]
@@ -108,9 +109,10 @@ const stepRows = computed(() =>
         .map((step) => {
             const stepBoxes = boxes.value.filter((box) => box.positionCode === step.positionCode);
             const users = stepUsers(step);
-            let canAdd = !!props.pdfUrl;
+            let canAdd = !!props.pdfUrl && !props.readOnly;
             let addReason = '';
             if (!props.pdfUrl) addReason = 'ต้องอัปโหลด PDF ก่อน';
+            if (props.readOnly) addReason = 'ใช้กรอบจาก template เท่านั้น';
             if (step.conditionType === 2 && users.length === 0) {
                 canAdd = false;
                 addReason = 'ยังไม่มี user ใน Workflow';
@@ -227,7 +229,7 @@ function setZoom(value) {
 }
 
 function applyPreset() {
-    if (!canApplyPreset.value) return;
+    if (props.readOnly || !canApplyPreset.value) return;
     const hasExisting = boxes.value.length > 0 || legalNotices.value.length > 0;
     if (hasExisting) {
         confirm.require({
@@ -273,7 +275,7 @@ function applyPresetNow() {
 }
 
 function addLegalNoticeBox() {
-    if (!props.pdfUrl) return;
+    if (props.readOnly || !props.pdfUrl) return;
     const box = {
         clientKey: makeLegalNoticeKey(),
         pageNo: currentPage.value,
@@ -290,14 +292,14 @@ function addLegalNoticeBox() {
 }
 
 function deleteLegalNoticeBox(box = selectedLegalNotice.value) {
-    if (!box) return;
+    if (props.readOnly || !box) return;
     emitLegalNoticeBoxes(legalNotices.value.filter((item) => item.clientKey !== box.clientKey));
     if (selectedBoxKey.value === box.clientKey) selectedBoxKey.value = '';
     emit('event', 'legal_notice_box_delete');
 }
 
 function addBox(step) {
-    if (!props.pdfUrl) return;
+    if (props.readOnly || !props.pdfUrl) return;
     const users = stepUsers(step);
     const existing = boxes.value.filter((box) => box.positionCode === step.positionCode);
     let signerType = 'any';
@@ -334,17 +336,19 @@ function addBox(step) {
 }
 
 function deleteBox(box) {
+    if (props.readOnly) return;
     emitBoxes(boxes.value.filter((item) => item.clientKey !== box.clientKey));
     if (selectedBoxKey.value === box.clientKey) selectedBoxKey.value = '';
     emit('event', 'box_delete');
 }
 
 function updateSelected(field, value) {
-    if (!selectedItem.value) return;
+    if (props.readOnly || !selectedItem.value) return;
     updateBox(selectedItem.value.clientKey, { [field]: value });
 }
 
 function updateBox(key, patch) {
+    if (props.readOnly) return;
     if (isLegalNoticeKey(key)) {
         updateLegalNoticeBox(key, patch);
         return;
@@ -431,6 +435,7 @@ function isLegalNoticeOverflow(key) {
 }
 
 function startPointer(event, box, mode) {
+    if (props.readOnly) return;
     if (!renderedSize.value.width || !renderedSize.value.height) return;
     if (box.boxType === 'legal_notice') selectLegalNoticeBox(box);
     else selectBox(box);
@@ -560,7 +565,7 @@ defineExpose({ validationIssues, totalBoxes });
 </script>
 
 <template>
-    <div class="layout-designer" :class="{ 'layout-designer-full': fullHeight }">
+    <div class="layout-designer" :class="{ 'layout-designer-full': fullHeight, 'layout-designer-readonly': props.readOnly }">
         <div class="pdf-pane">
             <div class="layout-toolbar">
                 <div class="toolbar-group">
@@ -592,8 +597,8 @@ defineExpose({ validationIssues, totalBoxes });
                         @pointerdown.stop="startPointer($event, legalBox, 'move')"
                     >
                         <span :ref="(el) => setLegalNoticePreviewRef(legalBox.clientKey, el)" class="legal-notice-preview-text">{{ legalNoticePreviewText }}</span>
-                        <i class="pi pi-trash" @pointerdown.stop @click.stop="deleteLegalNoticeBox(legalBox)"></i>
-                        <b @pointerdown.stop="startPointer($event, legalBox, 'resize')"></b>
+                        <i v-if="!props.readOnly" class="pi pi-trash" @pointerdown.stop @click.stop="deleteLegalNoticeBox(legalBox)"></i>
+                        <b v-if="!props.readOnly" @pointerdown.stop="startPointer($event, legalBox, 'resize')"></b>
                     </button>
                     <button
                         v-for="box in currentPageBoxes"
@@ -606,8 +611,8 @@ defineExpose({ validationIssues, totalBoxes });
                         @pointerdown.stop="startPointer($event, box, 'move')"
                     >
                         <span class="signature-layout-label">{{ box.label || box.signerUser || box.positionCode }}</span>
-                        <i class="pi pi-trash" @pointerdown.stop @click.stop="deleteBox(box)"></i>
-                        <b @pointerdown.stop="startPointer($event, box, 'resize')"></b>
+                        <i v-if="!props.readOnly" class="pi pi-trash" @pointerdown.stop @click.stop="deleteBox(box)"></i>
+                        <b v-if="!props.readOnly" @pointerdown.stop="startPointer($event, box, 'resize')"></b>
                     </button>
                 </div>
             </div>
@@ -619,10 +624,10 @@ defineExpose({ validationIssues, totalBoxes });
                 <div v-if="!selectedItem" class="empty-hint">เลือกกรอบจาก PDF หรือเพิ่มกรอบจากขั้นตอนด้านล่าง</div>
                 <div v-else class="selected-form">
                     <label>ข้อความบนกรอบ</label>
-                    <InputText :modelValue="selectedItem.label" :disabled="selectedIsLegalNotice" @update:modelValue="updateSelected('label', $event)" />
+                    <InputText :modelValue="selectedItem.label" :disabled="selectedIsLegalNotice || props.readOnly" @update:modelValue="updateSelected('label', $event)" />
                     <small v-if="selectedIsLegalNotice" class="text-muted-color">{{ legalNoticeText }}</small>
                     <label>หน้า</label>
-                    <InputNumber :modelValue="selectedItem.pageNo" :min="1" :max="props.pageCount || 1" showButtons @update:modelValue="updateSelected('pageNo', $event || 1)" />
+                    <InputNumber :modelValue="selectedItem.pageNo" :min="1" :max="props.pageCount || 1" showButtons :disabled="props.readOnly" @update:modelValue="updateSelected('pageNo', $event || 1)" />
                     <label v-if="!selectedIsLegalNotice && selectedStep?.conditionType === 2">User ผู้เซ็น</label>
                     <Select
                         v-if="!selectedIsLegalNotice && selectedStep?.conditionType === 2"
@@ -630,6 +635,7 @@ defineExpose({ validationIssues, totalBoxes });
                         :options="stepUsers(selectedStep).map((user) => ({ label: signerLabel(user), value: user }))"
                         optionLabel="label"
                         optionValue="value"
+                        :disabled="props.readOnly"
                         @update:modelValue="updateSelected('signerUser', $event)"
                     />
                 </div>
@@ -641,7 +647,7 @@ defineExpose({ validationIssues, totalBoxes });
                         <div class="section-title">ข้อความกฎหมาย</div>
                         <small>{{ legalNotices.length ? `${legalNotices.length} กรอบ / ${countPagesWithBoxes(legalNotices)} หน้า` : 'ต้องวางก่อนส่งเซ็น' }}</small>
                     </div>
-                    <Button label="เพิ่มกรอบ" icon="pi pi-plus" size="small" :disabled="!props.pdfUrl" @click="addLegalNoticeBox" />
+                    <Button label="เพิ่มกรอบ" icon="pi pi-plus" size="small" :disabled="!props.pdfUrl || props.readOnly" @click="addLegalNoticeBox" />
                 </div>
                 <Message v-if="!legalNotices.length" severity="warn" class="mb-3">ต้องวางกรอบข้อความกฎหมายบน PDF ก่อนส่งเซ็น</Message>
                 <Message v-else-if="legalNoticeOverflowKeys.size" severity="warn" class="mb-3">{{ legalNoticeOverflowMessage() }}</Message>
@@ -650,7 +656,7 @@ defineExpose({ validationIssues, totalBoxes });
                         หน้า {{ box.pageNo }} · {{ box.label || 'ข้อความกฎหมาย' }}
                     </button>
                 </div>
-                <Button v-if="selectedIsLegalNotice" class="mt-3" label="ลบกรอบข้อความกฎหมาย" icon="pi pi-trash" severity="danger" outlined size="small" @click="deleteLegalNoticeBox()" />
+                <Button v-if="selectedIsLegalNotice && !props.readOnly" class="mt-3" label="ลบกรอบข้อความกฎหมาย" icon="pi pi-trash" severity="danger" outlined size="small" @click="deleteLegalNoticeBox()" />
             </div>
 
             <div class="inspector-section">
@@ -911,6 +917,12 @@ defineExpose({ validationIssues, totalBoxes });
 .step-boxes button.selected {
     border-color: #f59e0b;
     background: rgba(245, 158, 11, 0.12);
+}
+.layout-designer-readonly .signature-layout-box {
+    cursor: pointer;
+}
+.layout-designer-readonly .signature-layout-box:hover {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 35%, transparent);
 }
 @media (max-width: 980px) {
     .layout-designer {
