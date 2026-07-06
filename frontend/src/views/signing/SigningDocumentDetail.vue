@@ -639,7 +639,7 @@ function movementEventView(event) {
                         </TabPanel>
                         <TabPanel value="references">
                             <div class="info-block">
-                                <DocumentReferenceCheck :document="document" :loader="loadReferenceCheck" @open-document="openFlowDocument" />
+                                <DocumentReferenceCheck :document="document" :loader="loadReferenceCheck" compact @open-document="openFlowDocument" />
                             </div>
                         </TabPanel>
                         <TabPanel value="print">

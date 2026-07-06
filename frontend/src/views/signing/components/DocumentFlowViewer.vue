@@ -70,6 +70,12 @@ function referenceStatusMeta(node = {}) {
     return { label: 'ยังไม่เข้า PaperLess', severity: 'danger', icon: 'pi pi-exclamation-triangle' };
 }
 
+function referenceStatusClass(node = {}) {
+    if (node.paperlessStatus === 'completed') return 'completed';
+    if (node.paperlessStatus || canPreviewCurrentPDF(node)) return 'in-progress';
+    return 'missing';
+}
+
 function lockSeverity(node) {
     return node.is_lock_record === 1 ? 'success' : 'secondary';
 }
@@ -240,7 +246,59 @@ function previewCurrentPDF(node) {
             </template>
         </Timeline>
 
-        <DataTable v-if="showTable && useTableFirst && nodes.length" :value="nodes" responsiveLayout="scroll" stripedRows :paginator="nodes.length > 10" :rows="10" class="mt-2">
+        <div v-else class="flow-compact-list">
+            <div
+                v-for="(item, index) in timelineItems"
+                :key="flowNodeKey(item)"
+                class="flow-compact-item"
+                :class="[`flow-${referenceStatusClass(item)}`, { selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }]"
+            >
+                <div class="flow-compact-rail">
+                    <button
+                        type="button"
+                        class="flow-compact-marker"
+                        :aria-label="`เลือกเอกสาร ${item.doc_no || ''}`"
+                        @click="selectFlowNode(item)"
+                    >
+                        {{ index + 1 }}
+                    </button>
+                </div>
+                <div class="flow-compact-card">
+                    <div class="flow-compact-head">
+                        <div class="min-w-0">
+                            <div class="flow-compact-title">{{ documentTypeLabel(item) }}</div>
+                            <div class="flow-compact-doc">{{ item.doc_no || '-' }}</div>
+                        </div>
+                        <div class="flow-compact-tags">
+                            <Tag v-if="item.isRoot" value="เอกสารที่ค้นหา" severity="info" />
+                            <Tag :value="referenceStatusMeta(item).label" :severity="referenceStatusMeta(item).severity" :icon="referenceStatusMeta(item).icon" />
+                        </div>
+                    </div>
+                    <div class="flow-compact-subtitle">
+                        <span>{{ relationText(item) }}</span>
+                        <span v-if="item.party_name || item.party_code">· {{ item.party_name || item.party_code }}</span>
+                    </div>
+                    <dl class="flow-compact-meta">
+                        <dt>วันที่</dt>
+                        <dd>{{ formatDocumentDateTime(item) }}</dd>
+                        <dt>มูลค่า</dt>
+                        <dd>{{ formatAmount(item.total_amount) }}</dd>
+                        <dt>ต้นทาง</dt>
+                        <dd>{{ sourceDocNo(item) }}</dd>
+                    </dl>
+                    <Message v-if="isMissingPaperLessPdf(item)" severity="error" class="mt-2" :closable="false">
+                        {{ missingPaperLessPdfMessage }}
+                    </Message>
+                    <div v-if="admin" class="flow-compact-actions">
+                        <Button icon="pi pi-info-circle" label="ข้อมูล" size="small" outlined severity="secondary" @click="openInfo(item)" />
+                        <Button v-if="canPreviewCurrentPDF(item)" icon="pi pi-file-pdf" label="ดูเอกสาร" size="small" outlined severity="secondary" @click="previewCurrentPDF(item)" />
+                        <Button v-if="item.canOpenPaperless" icon="pi pi-external-link" label="รายละเอียด" size="small" outlined severity="secondary" @click="openPaperless(item)" />
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <DataTable v-if="showTable && !useTableFirst && !compact && nodes.length" :value="nodes" responsiveLayout="scroll" stripedRows class="mt-4">
             <Column field="doc_no" header="เลขที่เอกสาร" style="min-width: 11rem">
                 <template #body="{ data }">
                     <Button :label="data.doc_no" link class="p-0" @click="openInfo(data)" />
@@ -384,6 +442,150 @@ function previewCurrentPDF(node) {
     margin-top: 0.85rem;
 }
 
+.flow-compact-list {
+    display: grid;
+    gap: 0;
+    padding: 0.25rem 0.15rem 0.5rem;
+}
+
+.flow-compact-item {
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    gap: 0.75rem;
+    position: relative;
+}
+
+.flow-compact-item:not(:last-child) {
+    padding-bottom: 0.8rem;
+}
+
+.flow-compact-rail {
+    position: relative;
+    display: flex;
+    justify-content: center;
+}
+
+.flow-compact-rail::after {
+    content: '';
+    position: absolute;
+    top: 2rem;
+    bottom: -0.8rem;
+    width: 2px;
+    background: var(--surface-border);
+}
+
+.flow-compact-item:last-child .flow-compact-rail::after {
+    display: none;
+}
+
+.flow-compact-marker {
+    position: relative;
+    z-index: 1;
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 999px;
+    background: var(--surface-card);
+    color: var(--text-color);
+    font-weight: 700;
+}
+
+.flow-completed .flow-compact-marker {
+    border-color: var(--green-500);
+    color: var(--green-700);
+}
+
+.flow-in-progress .flow-compact-marker {
+    border-color: var(--orange-500);
+    color: var(--orange-700);
+}
+
+.flow-missing .flow-compact-marker {
+    border-color: var(--red-500);
+    color: var(--red-700);
+}
+
+.flow-compact-card {
+    min-width: 0;
+    border: 1px solid var(--surface-border);
+    border-left-width: 4px;
+    border-radius: 8px;
+    background: var(--surface-card);
+    padding: 0.8rem;
+}
+
+.flow-compact-item.selected .flow-compact-card,
+.flow-compact-item.root .flow-compact-card {
+    border-color: var(--primary-color);
+}
+
+.flow-completed .flow-compact-card {
+    border-left-color: var(--green-500);
+}
+
+.flow-in-progress .flow-compact-card {
+    border-left-color: var(--orange-500);
+}
+
+.flow-missing .flow-compact-card {
+    border-left-color: var(--red-500);
+}
+
+.flow-compact-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.flow-compact-title {
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+.flow-compact-doc {
+    color: var(--primary-color);
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.flow-compact-tags,
+.flow-compact-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    justify-content: flex-end;
+}
+
+.flow-compact-subtitle {
+    margin-top: 0.25rem;
+    color: var(--text-color-secondary);
+    font-size: 0.9rem;
+    overflow-wrap: anywhere;
+}
+
+.flow-compact-meta {
+    display: grid;
+    grid-template-columns: repeat(3, auto minmax(0, 1fr));
+    gap: 0.35rem 0.55rem;
+    margin: 0.7rem 0 0;
+    font-size: 0.9rem;
+}
+
+.flow-compact-meta dt {
+    color: var(--text-color-secondary);
+}
+
+.flow-compact-meta dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.flow-compact-actions {
+    margin-top: 0.7rem;
+}
+
 @media screen and (max-width: 960px) {
     .document-flow-timeline:deep(.p-timeline-event:nth-child(even)) {
         flex-direction: row !important;
@@ -404,8 +606,18 @@ function previewCurrentPDF(node) {
 
 @media (max-width: 640px) {
     .flow-metadata-grid,
-    .metadata-grid {
+    .metadata-grid,
+    .flow-compact-meta {
         grid-template-columns: 1fr;
+    }
+
+    .flow-compact-head {
+        flex-direction: column;
+    }
+
+    .flow-compact-tags,
+    .flow-compact-actions {
+        justify-content: flex-start;
     }
 }
 </style>

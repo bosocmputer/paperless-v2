@@ -184,7 +184,7 @@ function recordFlowEvent(event, extra = {}) {
         maximizable
         class="document-flow-dialog"
         :header="flowHeader"
-        :style="{ width: 'min(82rem, 96vw)', height: 'min(82vh, 48rem)' }"
+        :style="{ width: 'min(72rem, 94vw)', height: 'min(78vh, 44rem)' }"
         :breakpoints="{ '960px': '98vw', '640px': '100vw' }"
         @hide="closeFlowDialog"
     >
