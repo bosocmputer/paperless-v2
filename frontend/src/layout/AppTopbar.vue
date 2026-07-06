@@ -3,13 +3,20 @@ import { authStore } from '@/stores/auth';
 import { useLayout } from '@/layout/composables/layout';
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
-import AppConfigurator from './AppConfigurator.vue';
 
 const router = useRouter();
-const { toggleMenu, toggleDarkMode, isDarkTheme } = useLayout();
-const showThemeConfigurator = import.meta.env.DEV || import.meta.env.VITE_ENABLE_THEME_CONFIG === 'true';
+const { toggleMenu } = useLayout();
 const homeRoute = computed(() => (authStore.user?.role === 'user' ? { name: 'my-signing-tasks' } : { name: 'dashboard' }));
 const consoleLabel = computed(() => (authStore.user?.role === 'user' ? 'งานรอเซ็น' : 'ภาพรวมผู้ดูแล'));
+const displayName = computed(() => authStore.user?.displayName || authStore.user?.username || 'ผู้ใช้งาน');
+const roleLabel = computed(() => {
+    const labels = {
+        superadmin: 'Superadmin',
+        admin: 'Admin',
+        user: 'User'
+    };
+    return labels[authStore.user?.role] || authStore.user?.role || '';
+});
 
 async function logout() {
     await authStore.logout();
@@ -35,23 +42,6 @@ async function logout() {
         </div>
 
         <div class="layout-topbar-actions">
-            <div class="layout-config-menu">
-                <button type="button" class="layout-topbar-action" @click="toggleDarkMode" aria-label="Toggle dark mode">
-                    <i :class="['pi', { 'pi-moon': isDarkTheme, 'pi-sun': !isDarkTheme }]"></i>
-                </button>
-                <div v-if="showThemeConfigurator" class="relative">
-                    <button
-                        v-styleclass="{ selector: '@next', enterFromClass: 'hidden', enterActiveClass: 'p-anchored-overlay-enter-active', leaveToClass: 'hidden', leaveActiveClass: 'p-anchored-overlay-leave-active', hideOnOutsideClick: true }"
-                        type="button"
-                        class="layout-topbar-action layout-topbar-action-highlight"
-                        aria-label="Theme settings"
-                    >
-                        <i class="pi pi-palette"></i>
-                    </button>
-                    <AppConfigurator />
-                </div>
-            </div>
-
             <button
                 class="layout-topbar-menu-button layout-topbar-action"
                 v-styleclass="{ selector: '@next', enterFromClass: 'hidden', enterActiveClass: 'p-anchored-overlay-enter-active', leaveToClass: 'hidden', leaveActiveClass: 'p-anchored-overlay-leave-active', hideOnOutsideClick: true }"
@@ -62,15 +52,11 @@ async function logout() {
 
             <div class="layout-topbar-menu hidden lg:block">
                 <div class="layout-topbar-menu-content">
-                    <span class="layout-topbar-action">
-                        <i class="pi pi-user"></i>
-                        <span>{{ authStore.user?.displayName }}</span>
+                    <span class="topbar-user-summary">
+                        <strong>{{ displayName }}</strong>
+                        <small v-if="roleLabel">{{ roleLabel }}</small>
                     </span>
-                    <span class="layout-topbar-action">
-                        <i class="pi pi-shield"></i>
-                        <span>{{ authStore.user?.role }}</span>
-                    </span>
-                    <button type="button" class="layout-topbar-action" aria-label="ออกจากระบบ" @click="logout">
+                    <button type="button" class="layout-topbar-action topbar-logout-action" aria-label="ออกจากระบบ" @click="logout">
                         <i class="pi pi-sign-out"></i>
                         <span>ออกจากระบบ</span>
                     </button>
