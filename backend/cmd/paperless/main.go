@@ -46,12 +46,18 @@ func main() {
 	apiServer := api.NewServer(cfg, db, logger)
 	apiServer.StartAutoFinalizeSweeper(ctx)
 
+	readTimeout := 30 * time.Second
+	writeTimeout := cfg.SMLPaperlessTimeout + 15*time.Second
+	if writeTimeout < 60*time.Second {
+		writeTimeout = 60 * time.Second
+	}
+
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           apiServer.Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
 
