@@ -178,14 +178,11 @@ function recordFlowEvent(event, extra = {}) {
 </script>
 
 <template>
-    <Dialog
+    <Drawer
         v-model:visible="dialogVisible"
-        modal
-        maximizable
-        class="document-flow-dialog"
+        position="full"
+        class="document-flow-drawer"
         :header="flowHeader"
-        :style="{ width: 'min(64rem, 94vw)', maxHeight: 'min(78vh, 36rem)' }"
-        :breakpoints="{ '960px': '98vw', '640px': '100vw' }"
         @hide="closeFlowDialog"
     >
         <div class="flow-dialog-layout">
@@ -223,11 +220,12 @@ function recordFlowEvent(event, extra = {}) {
                     @preview-pdf="previewFlowPDF"
                 />
             </div>
+
+            <div class="flow-dialog-actions">
+                <Button label="ปิด" severity="secondary" outlined @click="closeFlowDialog" />
+            </div>
         </div>
-        <template #footer>
-            <Button label="ปิด" severity="secondary" outlined @click="closeFlowDialog" />
-        </template>
-    </Dialog>
+    </Drawer>
 
     <ReadOnlyPdfDialog v-model:visible="pdfDialog" :url="pdfUrl" :title="pdfTitle" />
 </template>
@@ -235,8 +233,8 @@ function recordFlowEvent(event, extra = {}) {
 <style scoped>
 .flow-dialog-layout {
     display: flex;
+    height: 100%;
     min-height: 0;
-    max-height: calc(78vh - 7rem);
     flex-direction: column;
     gap: 0.55rem;
 }
@@ -247,14 +245,23 @@ function recordFlowEvent(event, extra = {}) {
 
 .flow-dialog-viewer {
     min-height: 0;
-    max-height: min(48vh, 22rem);
+    flex: 1 1 auto;
     overflow-y: auto;
     overflow-x: hidden;
     padding: 0.05rem 0.1rem 0.4rem;
 }
 
+.flow-dialog-actions {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--surface-border);
+}
+
 .flow-loading {
     min-height: 18rem;
+    flex: 1 1 auto;
     display: grid;
     place-items: center;
     align-content: center;
@@ -262,42 +269,27 @@ function recordFlowEvent(event, extra = {}) {
     color: var(--text-color-secondary);
 }
 
-:global(.document-flow-dialog.p-dialog) {
-    max-width: 98vw;
-    max-height: 92vh;
+:global(.document-flow-drawer.p-drawer) {
     display: flex;
     flex-direction: column;
 }
 
-:global(.document-flow-dialog .p-dialog-content) {
+:global(.document-flow-drawer .p-drawer-content) {
     display: flex;
+    flex: 1 1 auto;
     min-height: 0;
     flex-direction: column;
     overflow: hidden;
-    padding-block: 0.55rem;
+    padding: 0.55rem 1rem 0.8rem;
 }
 
-:global(.document-flow-dialog .p-dialog-header) {
+:global(.document-flow-drawer .p-drawer-header) {
     padding: 0.75rem 1rem 0.45rem;
 }
 
-:global(.document-flow-dialog .p-dialog-footer) {
-    padding: 0.5rem 1rem 0.7rem;
-}
-
 @media (max-width: 640px) {
-    :global(.document-flow-dialog.p-dialog) {
-        width: 100vw !important;
-        height: 100dvh !important;
-        max-width: 100vw;
-        max-height: 100dvh;
-        margin: 0;
-        border-radius: 0;
-    }
-
-    :global(.document-flow-dialog .p-dialog-header),
-    :global(.document-flow-dialog .p-dialog-content),
-    :global(.document-flow-dialog .p-dialog-footer) {
+    :global(.document-flow-drawer .p-drawer-header),
+    :global(.document-flow-drawer .p-drawer-content) {
         padding-inline: 0.75rem;
     }
 
