@@ -203,6 +203,9 @@ function openPaperless(item = {}) {
 
 <style scoped>
 .reference-check {
+    --reference-success: var(--p-green-500, #22c55e);
+    --reference-warning: var(--p-orange-500, #f97316);
+    --reference-danger: var(--p-red-500, #ef4444);
     display: grid;
     gap: 0.65rem;
 }
@@ -262,15 +265,15 @@ function openPaperless(item = {}) {
 }
 
 .reference-item.status-completed {
-    border-color: color-mix(in srgb, var(--green-500) 42%, var(--surface-border));
-    border-left-color: var(--green-500);
-    background: color-mix(in srgb, var(--green-500) 4%, var(--surface-card));
+    border-color: color-mix(in srgb, var(--reference-success) 42%, var(--surface-border));
+    border-left-color: var(--reference-success);
+    background: color-mix(in srgb, var(--reference-success) 4%, var(--surface-card));
 }
 
 .reference-item.status-in_progress {
-    border-color: color-mix(in srgb, var(--orange-500) 42%, var(--surface-border));
-    border-left-color: var(--orange-500);
-    background: color-mix(in srgb, var(--orange-500) 4%, var(--surface-card));
+    border-color: color-mix(in srgb, var(--reference-warning) 42%, var(--surface-border));
+    border-left-color: var(--reference-warning);
+    background: color-mix(in srgb, var(--reference-warning) 4%, var(--surface-card));
 }
 
 .reference-item.status-missing,
@@ -281,9 +284,9 @@ function openPaperless(item = {}) {
 .reference-item.status-completed_evidence_failed,
 .reference-item.status-completed_image_failed,
 .reference-item.status-completed_lock_failed {
-    border-color: color-mix(in srgb, var(--red-500) 38%, var(--surface-border));
-    border-left-color: var(--red-500);
-    background: color-mix(in srgb, var(--red-500) 3%, var(--surface-card));
+    border-color: color-mix(in srgb, var(--reference-danger) 38%, var(--surface-border));
+    border-left-color: var(--reference-danger);
+    background: color-mix(in srgb, var(--reference-danger) 3%, var(--surface-card));
 }
 
 .reference-item-main {

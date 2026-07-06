@@ -375,6 +375,15 @@ function previewCurrentPDF(node) {
 </template>
 
 <style scoped>
+.document-flow-viewer {
+    --flow-success: var(--p-green-500, #22c55e);
+    --flow-success-strong: var(--p-green-700, #15803d);
+    --flow-warning: var(--p-orange-500, #f97316);
+    --flow-warning-strong: var(--p-orange-700, #c2410c);
+    --flow-danger: var(--p-red-500, #ef4444);
+    --flow-danger-strong: var(--p-red-700, #b91c1c);
+}
+
 .flow-empty {
     min-height: 8rem;
     border: 1px dashed var(--surface-border);
@@ -416,21 +425,21 @@ function previewCurrentPDF(node) {
 }
 
 .flow-document-card.flow-completed {
-    border-color: color-mix(in srgb, var(--green-500) 42%, var(--surface-border));
-    border-left-color: var(--green-500);
-    background: color-mix(in srgb, var(--green-500) 4%, var(--surface-card));
+    border-color: color-mix(in srgb, var(--flow-success) 42%, var(--surface-border));
+    border-left-color: var(--flow-success);
+    background: color-mix(in srgb, var(--flow-success) 4%, var(--surface-card));
 }
 
 .flow-document-card.flow-in-progress {
-    border-color: color-mix(in srgb, var(--orange-500) 42%, var(--surface-border));
-    border-left-color: var(--orange-500);
-    background: color-mix(in srgb, var(--orange-500) 4%, var(--surface-card));
+    border-color: color-mix(in srgb, var(--flow-warning) 42%, var(--surface-border));
+    border-left-color: var(--flow-warning);
+    background: color-mix(in srgb, var(--flow-warning) 4%, var(--surface-card));
 }
 
 .flow-document-card.flow-missing {
-    border-color: color-mix(in srgb, var(--red-500) 38%, var(--surface-border));
-    border-left-color: var(--red-500);
-    background: color-mix(in srgb, var(--red-500) 3%, var(--surface-card));
+    border-color: color-mix(in srgb, var(--flow-danger) 38%, var(--surface-border));
+    border-left-color: var(--flow-danger);
+    background: color-mix(in srgb, var(--flow-danger) 3%, var(--surface-card));
 }
 
 .flow-metadata-grid,
@@ -499,15 +508,15 @@ function previewCurrentPDF(node) {
 }
 
 .flow-completed .flow-compact-rail::after {
-    background: color-mix(in srgb, var(--green-500) 45%, var(--surface-border));
+    background: color-mix(in srgb, var(--flow-success) 45%, var(--surface-border));
 }
 
 .flow-in-progress .flow-compact-rail::after {
-    background: color-mix(in srgb, var(--orange-500) 45%, var(--surface-border));
+    background: color-mix(in srgb, var(--flow-warning) 45%, var(--surface-border));
 }
 
 .flow-missing .flow-compact-rail::after {
-    background: color-mix(in srgb, var(--red-500) 42%, var(--surface-border));
+    background: color-mix(in srgb, var(--flow-danger) 42%, var(--surface-border));
 }
 
 .flow-compact-item:last-child .flow-compact-rail::after {
@@ -528,21 +537,21 @@ function previewCurrentPDF(node) {
 }
 
 .flow-completed .flow-compact-marker {
-    border-color: var(--green-500);
-    background: color-mix(in srgb, var(--green-500) 13%, var(--surface-card));
-    color: var(--green-700);
+    border-color: var(--flow-success);
+    background: color-mix(in srgb, var(--flow-success) 13%, var(--surface-card));
+    color: var(--flow-success-strong);
 }
 
 .flow-in-progress .flow-compact-marker {
-    border-color: var(--orange-500);
-    background: color-mix(in srgb, var(--orange-500) 13%, var(--surface-card));
-    color: var(--orange-700);
+    border-color: var(--flow-warning);
+    background: color-mix(in srgb, var(--flow-warning) 13%, var(--surface-card));
+    color: var(--flow-warning-strong);
 }
 
 .flow-missing .flow-compact-marker {
-    border-color: var(--red-500);
-    background: color-mix(in srgb, var(--red-500) 11%, var(--surface-card));
-    color: var(--red-700);
+    border-color: var(--flow-danger);
+    background: color-mix(in srgb, var(--flow-danger) 11%, var(--surface-card));
+    color: var(--flow-danger-strong);
 }
 
 .flow-compact-card {
@@ -560,21 +569,21 @@ function previewCurrentPDF(node) {
 }
 
 .flow-completed .flow-compact-card {
-    border-color: color-mix(in srgb, var(--green-500) 42%, var(--surface-border));
-    border-left-color: var(--green-500);
-    background: color-mix(in srgb, var(--green-500) 4%, var(--surface-card));
+    border-color: color-mix(in srgb, var(--flow-success) 42%, var(--surface-border));
+    border-left-color: var(--flow-success);
+    background: color-mix(in srgb, var(--flow-success) 4%, var(--surface-card));
 }
 
 .flow-in-progress .flow-compact-card {
-    border-color: color-mix(in srgb, var(--orange-500) 42%, var(--surface-border));
-    border-left-color: var(--orange-500);
-    background: color-mix(in srgb, var(--orange-500) 4%, var(--surface-card));
+    border-color: color-mix(in srgb, var(--flow-warning) 42%, var(--surface-border));
+    border-left-color: var(--flow-warning);
+    background: color-mix(in srgb, var(--flow-warning) 4%, var(--surface-card));
 }
 
 .flow-missing .flow-compact-card {
-    border-color: color-mix(in srgb, var(--red-500) 38%, var(--surface-border));
-    border-left-color: var(--red-500);
-    background: color-mix(in srgb, var(--red-500) 3%, var(--surface-card));
+    border-color: color-mix(in srgb, var(--flow-danger) 38%, var(--surface-border));
+    border-left-color: var(--flow-danger);
+    background: color-mix(in srgb, var(--flow-danger) 3%, var(--surface-card));
 }
 
 .flow-compact-head {
@@ -672,10 +681,10 @@ function previewCurrentPDF(node) {
     align-items: flex-start;
     gap: 0.35rem;
     margin-top: 0.28rem;
-    border: 1px solid color-mix(in srgb, var(--red-500) 36%, var(--surface-border));
+    border: 1px solid color-mix(in srgb, var(--flow-danger) 36%, var(--surface-border));
     border-radius: 6px;
-    background: color-mix(in srgb, var(--red-500) 8%, var(--surface-card));
-    color: var(--red-700);
+    background: color-mix(in srgb, var(--flow-danger) 8%, var(--surface-card));
+    color: var(--flow-danger-strong);
     font-size: 0.82rem;
     font-weight: 600;
     line-height: 1.3;
