@@ -95,7 +95,7 @@ function openPaperless(item = {}) {
         <div class="reference-head">
             <div>
                 <div class="font-semibold">ตรวจสอบเอกสารอ้างอิง</div>
-                <small class="text-muted-color">ดูว่าเอกสารก่อนหน้าจาก SML ถูกนำเข้าและเซ็นครบใน PaperLess แล้วหรือยัง</small>
+                <small v-if="!compact" class="text-muted-color">ดูว่าเอกสารก่อนหน้าจาก SML ถูกนำเข้าและเซ็นครบใน PaperLess แล้วหรือยัง</small>
             </div>
             <div class="reference-actions">
                 <div class="reference-summary">
@@ -127,26 +127,27 @@ function openPaperless(item = {}) {
             <div v-else class="reference-list">
                 <div v-for="item in items" :key="`${docNo(item)}-${sourceLabel(item)}`" class="reference-item" :class="`status-${item.paperlessStatus || 'missing'}`">
                     <div class="reference-item-main">
-                        <Tag :value="statusMeta(item).label" :severity="statusMeta(item).severity" :icon="statusMeta(item).icon" />
-                        <div class="reference-doc-line">
-                            <Button v-if="item.canOpenPaperless" link class="p-0 font-bold text-left" @click="openPaperless(item)">{{ docNo(item) }}</Button>
-                            <strong v-else>{{ docNo(item) }}</strong>
+                        <div class="reference-item-top">
+                            <Tag :value="statusMeta(item).label" :severity="statusMeta(item).severity" :icon="statusMeta(item).icon" />
+                            <div class="reference-doc-line">
+                                <Button v-if="item.canOpenPaperless" link class="p-0 font-bold text-left" @click="openPaperless(item)">{{ docNo(item) }}</Button>
+                                <strong v-else>{{ docNo(item) }}</strong>
+                            </div>
                         </div>
-                        <small class="text-muted-color">{{ docFormat(item) }}</small>
-                        <dl class="reference-meta">
-                            <dt>วันที่</dt>
-                            <dd>{{ docDate(item) }}</dd>
-                            <dt>อ้างอิงจาก</dt>
-                            <dd>{{ sourceLabel(item) }}</dd>
-                        </dl>
+                        <div class="reference-meta-line">
+                            <span>{{ docDate(item) }}</span>
+                            <span>{{ docFormat(item) }}</span>
+                            <span>จาก {{ sourceLabel(item) }}</span>
+                        </div>
                     </div>
                     <Button
-                        :label="item.canOpenPaperless ? 'รายละเอียด' : 'ยังไม่มี PDF'"
                         :icon="item.canOpenPaperless ? 'pi pi-external-link' : 'pi pi-ban'"
                         size="small"
+                        rounded
                         outlined
                         :severity="item.canOpenPaperless ? 'secondary' : 'danger'"
                         :disabled="!item.canOpenPaperless"
+                        :aria-label="item.canOpenPaperless ? 'เปิดรายละเอียด' : 'ยังไม่มี PDF'"
                         @click="openPaperless(item)"
                     />
                 </div>
@@ -200,7 +201,7 @@ function openPaperless(item = {}) {
 <style scoped>
 .reference-check {
     display: grid;
-    gap: 0.85rem;
+    gap: 0.65rem;
 }
 
 .reference-head {
@@ -224,13 +225,16 @@ function openPaperless(item = {}) {
 }
 
 .reference-empty {
-    min-height: 8rem;
+    min-height: 5.25rem;
+    border: 1px dashed var(--surface-border);
+    border-radius: 8px;
     display: grid;
     place-items: center;
     align-content: center;
     gap: 0.5rem;
     color: var(--text-color-secondary);
     text-align: center;
+    padding: 0.85rem;
 }
 
 .reference-compact {
@@ -239,27 +243,28 @@ function openPaperless(item = {}) {
 
 .reference-list {
     display: grid;
-    gap: 0.65rem;
+    gap: 0.45rem;
 }
 
 .reference-item {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
+    gap: 0.6rem;
     border: 1px solid var(--surface-border);
-    border-left-width: 4px;
     border-radius: 8px;
-    padding: 0.75rem;
+    padding: 0.5rem 0.6rem;
     background: var(--surface-card);
 }
 
 .reference-item.status-completed {
-    border-left-color: var(--green-500);
+    border-color: color-mix(in srgb, var(--green-500) 42%, var(--surface-border));
+    background: color-mix(in srgb, var(--green-500) 4%, var(--surface-card));
 }
 
 .reference-item.status-in_progress {
-    border-left-color: var(--orange-500);
+    border-color: color-mix(in srgb, var(--orange-500) 42%, var(--surface-border));
+    background: color-mix(in srgb, var(--orange-500) 4%, var(--surface-card));
 }
 
 .reference-item.status-missing,
@@ -270,49 +275,70 @@ function openPaperless(item = {}) {
 .reference-item.status-completed_evidence_failed,
 .reference-item.status-completed_image_failed,
 .reference-item.status-completed_lock_failed {
-    border-left-color: var(--red-500);
+    border-color: color-mix(in srgb, var(--red-500) 38%, var(--surface-border));
+    background: color-mix(in srgb, var(--red-500) 3%, var(--surface-card));
 }
 
 .reference-item-main {
     min-width: 0;
     display: grid;
-    gap: 0.35rem;
+    gap: 0.22rem;
+}
+
+.reference-item-top {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.reference-item-top:deep(.p-tag) {
+    padding: 0.18rem 0.38rem;
+    font-size: 0.72rem;
+    white-space: nowrap;
 }
 
 .reference-doc-line {
     min-width: 0;
     overflow-wrap: anywhere;
+    font-size: 0.95rem;
 }
 
-.reference-meta {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 0.25rem 0.5rem;
-    margin: 0.15rem 0 0;
-    font-size: 0.85rem;
-}
-
-.reference-meta dt {
+.reference-meta-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.7rem;
     color: var(--text-color-secondary);
-}
-
-.reference-meta dd {
-    margin: 0;
-    min-width: 0;
+    font-size: 0.82rem;
     overflow-wrap: anywhere;
 }
 
+.reference-item > :deep(.p-button.p-button-sm) {
+    width: 1.9rem;
+    height: 1.9rem;
+    padding: 0;
+    flex: 0 0 auto;
+}
+
 .compact .reference-head {
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
+    gap: 0.75rem;
 }
 
 .compact .reference-actions {
-    width: 100%;
+    width: auto;
     justify-content: space-between;
+    align-items: center;
 }
 
 .compact .reference-summary {
-    justify-content: flex-start;
+    justify-content: flex-end;
+}
+
+.compact .reference-summary:deep(.p-tag) {
+    padding: 0.18rem 0.4rem;
+    font-size: 0.72rem;
 }
 
 @media (max-width: 720px) {
@@ -327,6 +353,26 @@ function openPaperless(item = {}) {
 
     .reference-item {
         flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .compact .reference-head {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .compact .reference-actions {
+        width: 100%;
+    }
+
+    .compact .reference-summary {
+        justify-content: flex-start;
+    }
+
+    .reference-item-top {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 0.35rem;
     }
 }
 </style>

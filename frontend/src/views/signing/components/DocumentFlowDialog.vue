@@ -184,12 +184,12 @@ function recordFlowEvent(event, extra = {}) {
         maximizable
         class="document-flow-dialog"
         :header="flowHeader"
-        :style="{ width: 'min(72rem, 94vw)', height: 'min(78vh, 44rem)' }"
+        :style="{ width: 'min(64rem, 94vw)', maxHeight: 'min(78vh, 36rem)' }"
         :breakpoints="{ '960px': '98vw', '640px': '100vw' }"
         @hide="closeFlowDialog"
     >
         <div class="flow-dialog-layout">
-            <div class="flow-dialog-toolbar flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div class="flow-dialog-toolbar flex flex-col md:flex-row md:items-center justify-between gap-2">
                 <div class="min-w-0">
                     <div class="font-semibold">Flow เอกสาร</div>
                     <small class="text-muted-color">ดูความสัมพันธ์จาก SML และเปิด PDF ของเอกสารที่มีใน PaperLess</small>
@@ -236,9 +236,9 @@ function recordFlowEvent(event, extra = {}) {
 .flow-dialog-layout {
     display: flex;
     min-height: 0;
-    height: 100%;
+    max-height: calc(78vh - 7rem);
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.55rem;
 }
 
 .flow-dialog-toolbar {
@@ -247,10 +247,10 @@ function recordFlowEvent(event, extra = {}) {
 
 .flow-dialog-viewer {
     min-height: 0;
-    flex: 1 1 auto;
+    max-height: min(48vh, 22rem);
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 0.15rem 0.1rem 0.65rem;
+    padding: 0.05rem 0.1rem 0.4rem;
 }
 
 .flow-loading {
@@ -265,23 +265,24 @@ function recordFlowEvent(event, extra = {}) {
 :global(.document-flow-dialog.p-dialog) {
     max-width: 98vw;
     max-height: 92vh;
+    display: flex;
+    flex-direction: column;
 }
 
 :global(.document-flow-dialog .p-dialog-content) {
     display: flex;
     min-height: 0;
-    flex: 1 1 auto;
     flex-direction: column;
     overflow: hidden;
-    padding-block: 0.75rem;
+    padding-block: 0.55rem;
 }
 
 :global(.document-flow-dialog .p-dialog-header) {
-    padding: 0.9rem 1rem 0.65rem;
+    padding: 0.75rem 1rem 0.45rem;
 }
 
 :global(.document-flow-dialog .p-dialog-footer) {
-    padding: 0.65rem 1rem 0.85rem;
+    padding: 0.5rem 1rem 0.7rem;
 }
 
 @media (max-width: 640px) {
@@ -301,7 +302,14 @@ function recordFlowEvent(event, extra = {}) {
     }
 
     .flow-dialog-viewer {
+        max-height: none;
+        flex: 1 1 auto;
         padding-bottom: 0.5rem;
+    }
+
+    .flow-dialog-layout {
+        height: 100%;
+        max-height: none;
     }
 }
 </style>
