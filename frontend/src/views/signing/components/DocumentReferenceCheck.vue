@@ -5,7 +5,9 @@ import { computed, onMounted, ref, watch } from 'vue';
 const props = defineProps({
     document: { type: Object, default: null },
     loader: { type: Function, required: true },
-    compact: { type: Boolean, default: false }
+    compact: { type: Boolean, default: false },
+    openInNewTab: { type: Boolean, default: false },
+    documentRouteResolver: { type: Function, default: null }
 });
 
 const emit = defineEmits(['open-document']);
@@ -86,6 +88,11 @@ function docDate(item = {}) {
 function openPaperless(item = {}) {
     const id = item.paperlessDocumentId || item.paperless_document_id;
     if (!id || !item.canOpenPaperless) return;
+    if (props.openInNewTab) {
+        const url = props.documentRouteResolver ? props.documentRouteResolver(id) : `/signing/documents/${encodeURIComponent(id)}`;
+        const opened = window.open(url, '_blank', 'noopener,noreferrer');
+        if (opened) return;
+    }
     emit('open-document', id);
 }
 </script>
@@ -93,10 +100,6 @@ function openPaperless(item = {}) {
 <template>
     <div class="reference-check" :class="{ compact }">
         <div class="reference-head">
-            <div>
-                <div class="font-semibold">ตรวจสอบเอกสารอ้างอิง</div>
-                <small v-if="!compact" class="text-muted-color">ดูว่าเอกสารก่อนหน้าจาก SML ถูกนำเข้าและเซ็นครบใน PaperLess แล้วหรือยัง</small>
-            </div>
             <div class="reference-actions">
                 <div class="reference-summary">
                     <Tag v-for="item in summaryItems" :key="item.label" :value="`${item.label} ${item.value}`" :severity="item.severity" />
@@ -207,7 +210,7 @@ function openPaperless(item = {}) {
 .reference-head {
     display: flex;
     align-items: flex-start;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 1rem;
 }
 
@@ -252,6 +255,7 @@ function openPaperless(item = {}) {
     justify-content: space-between;
     gap: 0.6rem;
     border: 1px solid var(--surface-border);
+    border-left-width: 4px;
     border-radius: 8px;
     padding: 0.5rem 0.6rem;
     background: var(--surface-card);
@@ -259,11 +263,13 @@ function openPaperless(item = {}) {
 
 .reference-item.status-completed {
     border-color: color-mix(in srgb, var(--green-500) 42%, var(--surface-border));
+    border-left-color: var(--green-500);
     background: color-mix(in srgb, var(--green-500) 4%, var(--surface-card));
 }
 
 .reference-item.status-in_progress {
     border-color: color-mix(in srgb, var(--orange-500) 42%, var(--surface-border));
+    border-left-color: var(--orange-500);
     background: color-mix(in srgb, var(--orange-500) 4%, var(--surface-card));
 }
 
@@ -276,6 +282,7 @@ function openPaperless(item = {}) {
 .reference-item.status-completed_image_failed,
 .reference-item.status-completed_lock_failed {
     border-color: color-mix(in srgb, var(--red-500) 38%, var(--surface-border));
+    border-left-color: var(--red-500);
     background: color-mix(in srgb, var(--red-500) 3%, var(--surface-card));
 }
 

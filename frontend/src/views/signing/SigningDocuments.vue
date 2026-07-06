@@ -123,6 +123,10 @@ function openDetail(doc) {
     router.push({ name: 'signing-document-detail', params: { id: doc.id }, query: { from_queue: queue.value } });
 }
 
+function referenceDocumentUrl(documentId) {
+    return router.resolve({ name: 'signing-document-detail', params: { id: documentId }, query: { from_queue: queue.value } }).href;
+}
+
 function openDocumentFlow(doc, options = {}) {
     const docNo = String(doc?.docNo || doc?.doc_no || '').trim().toUpperCase();
     if (!docNo) return;
@@ -556,8 +560,8 @@ function selectInput(event) {
 
         <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="(documentId) => openDetail({ id: documentId })" />
 
-        <Dialog v-model:visible="referenceDialog" modal header="ตรวจสอบเอกสารอ้างอิง" :style="{ width: 'min(78rem, 96vw)' }" :breakpoints="{ '960px': '96vw', '640px': '100vw' }">
-            <DocumentReferenceCheck :document="referenceDocument" :loader="loadReferenceCheckForDialog" compact @open-document="(documentId) => openDetail({ id: documentId })" />
+        <Dialog v-model:visible="referenceDialog" modal header="" :style="{ width: 'min(78rem, 96vw)' }" :breakpoints="{ '960px': '96vw', '640px': '100vw' }">
+            <DocumentReferenceCheck :document="referenceDocument" :loader="loadReferenceCheckForDialog" compact open-in-new-tab :document-route-resolver="referenceDocumentUrl" @open-document="(documentId) => openDetail({ id: documentId })" />
         </Dialog>
 
         <ReadOnlyPdfDialog v-model:visible="readonlyPdfDialog" :url="readonlyPdfUrl" :title="readonlyPdfTitle" />

@@ -206,7 +206,7 @@ function previewCurrentPDF(node) {
                     @keydown.enter.prevent="selectFlowNode(item)"
                     @keydown.space.prevent="selectFlowNode(item)"
                 >
-                    <Card class="mt-4 flow-document-card" :class="{ selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }">
+                    <Card class="mt-4 flow-document-card" :class="[`flow-${referenceStatusClass(item)}`, { selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }]">
                         <template #title>
                             <div class="flex items-center justify-between gap-2">
                                 <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{{ documentTypeLabel(item) }}</span>
@@ -400,15 +400,37 @@ function previewCurrentPDF(node) {
 
 .flow-document-card {
     border: 1px solid var(--surface-border);
+    border-left-width: 4px;
+    background: var(--surface-card);
 }
 
 .flow-document-card.root,
 .flow-document-card.selected {
-    border-color: var(--primary-color);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary-color) 42%, transparent);
 }
 
 .flow-document-card.selected {
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary-color) 65%, transparent);
+    box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, var(--primary-color) 42%, transparent),
+        0 0 0 1px color-mix(in srgb, var(--primary-color) 40%, transparent);
+}
+
+.flow-document-card.flow-completed {
+    border-color: color-mix(in srgb, var(--green-500) 42%, var(--surface-border));
+    border-left-color: var(--green-500);
+    background: color-mix(in srgb, var(--green-500) 4%, var(--surface-card));
+}
+
+.flow-document-card.flow-in-progress {
+    border-color: color-mix(in srgb, var(--orange-500) 42%, var(--surface-border));
+    border-left-color: var(--orange-500);
+    background: color-mix(in srgb, var(--orange-500) 4%, var(--surface-card));
+}
+
+.flow-document-card.flow-missing {
+    border-color: color-mix(in srgb, var(--red-500) 38%, var(--surface-border));
+    border-left-color: var(--red-500);
+    background: color-mix(in srgb, var(--red-500) 3%, var(--surface-card));
 }
 
 .flow-metadata-grid,
@@ -476,6 +498,18 @@ function previewCurrentPDF(node) {
     background: var(--surface-border);
 }
 
+.flow-completed .flow-compact-rail::after {
+    background: color-mix(in srgb, var(--green-500) 45%, var(--surface-border));
+}
+
+.flow-in-progress .flow-compact-rail::after {
+    background: color-mix(in srgb, var(--orange-500) 45%, var(--surface-border));
+}
+
+.flow-missing .flow-compact-rail::after {
+    background: color-mix(in srgb, var(--red-500) 42%, var(--surface-border));
+}
+
 .flow-compact-item:last-child .flow-compact-rail::after {
     display: none;
 }
@@ -514,6 +548,7 @@ function previewCurrentPDF(node) {
 .flow-compact-card {
     min-width: 0;
     border: 1px solid var(--surface-border);
+    border-left-width: 4px;
     border-radius: 8px;
     background: var(--surface-card);
     padding: 0.42rem 0.55rem;
@@ -521,21 +556,24 @@ function previewCurrentPDF(node) {
 
 .flow-compact-item.selected .flow-compact-card,
 .flow-compact-item.root .flow-compact-card {
-    border-color: var(--primary-color);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary-color) 38%, transparent);
 }
 
 .flow-completed .flow-compact-card {
     border-color: color-mix(in srgb, var(--green-500) 42%, var(--surface-border));
+    border-left-color: var(--green-500);
     background: color-mix(in srgb, var(--green-500) 4%, var(--surface-card));
 }
 
 .flow-in-progress .flow-compact-card {
     border-color: color-mix(in srgb, var(--orange-500) 42%, var(--surface-border));
+    border-left-color: var(--orange-500);
     background: color-mix(in srgb, var(--orange-500) 4%, var(--surface-card));
 }
 
 .flow-missing .flow-compact-card {
     border-color: color-mix(in srgb, var(--red-500) 38%, var(--surface-border));
+    border-left-color: var(--red-500);
     background: color-mix(in srgb, var(--red-500) 3%, var(--surface-card));
 }
 

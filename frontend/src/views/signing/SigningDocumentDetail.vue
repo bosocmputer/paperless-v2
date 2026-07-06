@@ -451,6 +451,14 @@ function openFlowDocument(documentId) {
     });
 }
 
+function referenceDocumentUrl(documentId) {
+    return router.resolve({
+        name: 'signing-document-detail',
+        params: { id: documentId },
+        query: { from_queue: currentDetailQueue() }
+    }).href;
+}
+
 function movementEventView(event) {
     const action = String(event?.action || '');
     const metadata = event?.metadata || {};
@@ -639,7 +647,7 @@ function movementEventView(event) {
                         </TabPanel>
                         <TabPanel value="references">
                             <div class="info-block">
-                                <DocumentReferenceCheck :document="document" :loader="loadReferenceCheck" compact @open-document="openFlowDocument" />
+                                <DocumentReferenceCheck :document="document" :loader="loadReferenceCheck" compact open-in-new-tab :document-route-resolver="referenceDocumentUrl" @open-document="openFlowDocument" />
                             </div>
                         </TabPanel>
                         <TabPanel value="print">
