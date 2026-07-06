@@ -85,13 +85,25 @@ function docDate(item = {}) {
     return formatDocumentDate(item.doc_date || item.docDate);
 }
 
+function openUrlInNewTab(url) {
+    if (!url) return;
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+}
+
 function openPaperless(item = {}) {
     const id = item.paperlessDocumentId || item.paperless_document_id;
     if (!id || !item.canOpenPaperless) return;
     if (props.openInNewTab) {
         const url = props.documentRouteResolver ? props.documentRouteResolver(id) : `/signing/documents/${encodeURIComponent(id)}`;
-        const opened = window.open(url, '_blank', 'noopener,noreferrer');
-        if (opened) return;
+        openUrlInNewTab(url);
+        return;
     }
     emit('open-document', id);
 }
@@ -133,7 +145,7 @@ function openPaperless(item = {}) {
                         <div class="reference-item-top">
                             <Tag :value="statusMeta(item).label" :severity="statusMeta(item).severity" :icon="statusMeta(item).icon" />
                             <div class="reference-doc-line">
-                                <Button v-if="item.canOpenPaperless" link class="p-0 font-bold text-left" @click="openPaperless(item)">{{ docNo(item) }}</Button>
+                                <Button v-if="item.canOpenPaperless" link class="p-0 font-bold text-left" @click.stop="openPaperless(item)">{{ docNo(item) }}</Button>
                                 <strong v-else>{{ docNo(item) }}</strong>
                             </div>
                         </div>
@@ -151,7 +163,7 @@ function openPaperless(item = {}) {
                         :severity="item.canOpenPaperless ? 'secondary' : 'danger'"
                         :disabled="!item.canOpenPaperless"
                         :aria-label="item.canOpenPaperless ? 'เปิดรายละเอียด' : 'ยังไม่มี PDF'"
-                        @click="openPaperless(item)"
+                        @click.stop="openPaperless(item)"
                     />
                 </div>
             </div>
@@ -174,7 +186,7 @@ function openPaperless(item = {}) {
             </Column>
             <Column header="เลขที่เอกสาร" style="min-width: 13rem">
                 <template #body="{ data }">
-                    <Button v-if="data.canOpenPaperless" link class="p-0 font-bold text-left" @click="openPaperless(data)">{{ docNo(data) }}</Button>
+                    <Button v-if="data.canOpenPaperless" link class="p-0 font-bold text-left" @click.stop="openPaperless(data)">{{ docNo(data) }}</Button>
                     <strong v-else>{{ docNo(data) }}</strong>
                 </template>
             </Column>
@@ -193,7 +205,7 @@ function openPaperless(item = {}) {
                         outlined
                         :severity="data.canOpenPaperless ? 'secondary' : 'danger'"
                         :disabled="!data.canOpenPaperless"
-                        @click="openPaperless(data)"
+                        @click.stop="openPaperless(data)"
                     />
                 </template>
             </Column>
