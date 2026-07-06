@@ -6,7 +6,8 @@ const props = defineProps({
     graph: { type: Object, default: null },
     admin: { type: Boolean, default: false },
     compact: { type: Boolean, default: false },
-    showTable: { type: Boolean, default: true }
+    showTable: { type: Boolean, default: true },
+    tableFirst: { type: Boolean, default: false }
 });
 
 const emit = defineEmits(['open-document', 'preview-pdf', 'node-click']);
@@ -19,6 +20,7 @@ const nodes = computed(() => props.graph?.nodes || []);
 const edges = computed(() => props.graph?.edges || []);
 const warnings = computed(() => props.graph?.warnings || []);
 const rootDocNo = computed(() => props.graph?.root?.doc_no || props.graph?.root?.docNo || '');
+const useTableFirst = computed(() => props.tableFirst || props.compact || nodes.value.length > 5);
 const timelineItems = computed(() =>
     nodes.value.map((node) => ({
         ...node,
@@ -33,6 +35,7 @@ const selectedFlowNode = computed(() => {
     return timelineItems.value.find((node) => node.isRoot) || timelineItems.value[0] || null;
 });
 const selectedFlowNodeKey = computed(() => (selectedFlowNode.value ? flowNodeKey(selectedFlowNode.value) : ''));
+const missingPaperLessPdfMessage = 'เอกสารนี้มีข้อมูลจาก SML แต่ยังไม่มี PDF ใน PaperLess';
 
 function flowNodeKey(node = {}) {
     return `${node.doc_format_code || node.docFormatCode || 'doc'}-${node.doc_no || node.docNo || ''}`;
@@ -55,6 +58,16 @@ function sourceSeverity(node) {
 function statusLabel(node) {
     if (node.paperlessStatus) return signingStatusLabel(node.paperlessStatus);
     return node.is_lock_record === 1 ? 'Lock ใน SML' : 'ยังไม่ Lock';
+}
+
+function referenceStatusMeta(node = {}) {
+    if (node.paperlessStatus === 'completed') {
+        return { label: 'เซ็นครบแล้ว', severity: 'success', icon: 'pi pi-check-circle' };
+    }
+    if (node.paperlessStatus || canPreviewCurrentPDF(node)) {
+        return { label: 'กำลังเซ็น/ยังไม่เสร็จ', severity: 'warn', icon: 'pi pi-clock' };
+    }
+    return { label: 'ยังไม่เข้า PaperLess', severity: 'danger', icon: 'pi pi-exclamation-triangle' };
 }
 
 function lockSeverity(node) {
@@ -137,6 +150,10 @@ function canPreviewCurrentPDF(node = {}) {
     return !!(node.canViewCurrentPdf || node.hasCurrentPdf || node.currentPdfUrl);
 }
 
+function isMissingPaperLessPdf(node = {}) {
+    return !canPreviewCurrentPDF(node);
+}
+
 function previewPDF(node, version) {
     emit('node-click', node);
     emit('preview-pdf', { node, version, url: version === 'final' ? node.signedPdfUrl : node.currentPdfUrl });
@@ -158,7 +175,7 @@ function previewCurrentPDF(node) {
             <span>ยังไม่พบเอกสารประกอบจาก SML</span>
         </div>
 
-        <Timeline v-else :value="timelineItems" align="alternate" :data-key="'doc_no'" class="document-flow-timeline" :class="{ compact }">
+        <Timeline v-else-if="!useTableFirst" :value="timelineItems" align="alternate" :data-key="'doc_no'" class="document-flow-timeline" :class="{ compact }">
             <template #opposite="{ item }">
                 <small class="text-muted-color">{{ formatDocumentDateTime(item) }}</small>
             </template>
@@ -204,6 +221,9 @@ function previewCurrentPDF(node) {
                                 <dt>เอกสารต้นทาง</dt>
                                 <dd>{{ sourceDocNo(item) }}</dd>
                             </dl>
+                            <Message v-if="isMissingPaperLessPdf(item)" severity="error" class="mt-3" :closable="false">
+                                {{ missingPaperLessPdfMessage }}
+                            </Message>
                             <div class="flex flex-wrap gap-2 mt-3">
                                 <Tag :value="sourceLabel(item)" :severity="sourceSeverity(item)" />
                                 <Tag :value="statusLabel(item)" :severity="item.paperlessStatus ? signingStatusSeverity(item.paperlessStatus) : lockSeverity(item)" />
@@ -220,7 +240,7 @@ function previewCurrentPDF(node) {
             </template>
         </Timeline>
 
-        <DataTable v-if="showTable && !compact && nodes.length" :value="nodes" responsiveLayout="scroll" stripedRows class="mt-4">
+        <DataTable v-if="showTable && useTableFirst && nodes.length" :value="nodes" responsiveLayout="scroll" stripedRows :paginator="nodes.length > 10" :rows="10" class="mt-2">
             <Column field="doc_no" header="เลขที่เอกสาร" style="min-width: 11rem">
                 <template #body="{ data }">
                     <Button :label="data.doc_no" link class="p-0" @click="openInfo(data)" />
@@ -241,7 +261,7 @@ function previewCurrentPDF(node) {
             </Column>
             <Column header="PaperLess" style="min-width: 12rem">
                 <template #body="{ data }">
-                    <Tag :value="data.paperlessStatus ? signingStatusLabel(data.paperlessStatus) : 'ยังไม่มีใน PaperLess'" :severity="data.paperlessStatus ? signingStatusSeverity(data.paperlessStatus) : 'secondary'" />
+                    <Tag :value="referenceStatusMeta(data).label" :severity="referenceStatusMeta(data).severity" :icon="referenceStatusMeta(data).icon" />
                 </template>
             </Column>
             <Column header="PDF" style="min-width: 10rem">
@@ -264,7 +284,7 @@ function previewCurrentPDF(node) {
 
         <Dialog v-model:visible="detailVisible" modal header="ข้อมูลเอกสารจาก SML" :style="{ width: 'min(42rem, 94vw)' }">
             <div v-if="selectedNode" class="grid gap-3">
-                <Message v-if="!selectedNode.paperlessStatus" severity="info">เอกสารนี้มีข้อมูลจาก SML แต่ยังไม่มี PDF ใน PaperLess</Message>
+                <Message v-if="isMissingPaperLessPdf(selectedNode)" severity="error" :closable="false">{{ missingPaperLessPdfMessage }}</Message>
                 <Message v-if="selectedNode.matchCount > 1" severity="warn">พบเอกสารนี้ใน PaperLess มากกว่า 1 รายการ ระบบเลือกเอกสารที่อัปเดตล่าสุดเป็นค่าเริ่มต้น</Message>
                 <dl class="metadata-grid">
                     <dt>เลขที่เอกสาร</dt>

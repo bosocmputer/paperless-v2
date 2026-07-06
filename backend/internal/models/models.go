@@ -281,6 +281,54 @@ type SMLRelatedDocumentsGraph struct {
 	Truncated bool                        `json:"truncated"`
 }
 
+type SMLDocumentReferences struct {
+	Document  SMLRelatedDocumentNode      `json:"document"`
+	Items     []SMLDocumentReferenceItem  `json:"items"`
+	Summary   SMLDocumentReferenceSummary `json:"summary"`
+	Warnings  []SMLRelatedDocumentWarning `json:"warnings,omitempty"`
+	Total     int                         `json:"total"`
+	Truncated bool                        `json:"truncated"`
+}
+
+type SMLDocumentReferenceItem struct {
+	DocNo               string                     `json:"doc_no"`
+	DocDate             string                     `json:"doc_date,omitempty"`
+	DocTime             string                     `json:"doc_time,omitempty"`
+	DocFormatCode       string                     `json:"doc_format_code,omitempty"`
+	DocFormatName       string                     `json:"doc_format_name,omitempty"`
+	TransFlag           int                        `json:"trans_flag,omitempty"`
+	TransFlagMenu       string                     `json:"trans_flag_menu,omitempty"`
+	TransFlagNameTH     string                     `json:"trans_flag_name_th,omitempty"`
+	TransFlagNameEN     string                     `json:"trans_flag_name_en,omitempty"`
+	TransType           int                        `json:"trans_type,omitempty"`
+	Table               string                     `json:"table,omitempty"`
+	PartyCode           string                     `json:"party_code,omitempty"`
+	PartyName           string                     `json:"party_name,omitempty"`
+	PartyType           string                     `json:"party_type,omitempty"`
+	TotalAmount         float64                    `json:"total_amount,omitempty"`
+	IsLockRecord        int                        `json:"is_lock_record,omitempty"`
+	SourceTable         string                     `json:"source_table"`
+	SourceColumn        string                     `json:"source_column"`
+	PaperlessDocumentID string                     `json:"paperlessDocumentId,omitempty"`
+	PaperlessStatus     string                     `json:"paperlessStatus"`
+	CanOpenPaperless    bool                       `json:"canOpenPaperless"`
+	HasCurrentPDF       bool                       `json:"hasCurrentPdf"`
+	HasFinalPDF         bool                       `json:"hasFinalPdf"`
+	CanViewCurrentPDF   bool                       `json:"canViewCurrentPdf"`
+	CanViewSignedPDF    bool                       `json:"canViewSignedPdf"`
+	CurrentPDFURL       string                     `json:"currentPdfUrl,omitempty"`
+	SignedPDFURL        string                     `json:"signedPdfUrl,omitempty"`
+	MatchCount          int                        `json:"matchCount"`
+	PaperlessMatches    []SigningDocumentReference `json:"paperlessMatches,omitempty"`
+}
+
+type SMLDocumentReferenceSummary struct {
+	Total      int `json:"total"`
+	Missing    int `json:"missing"`
+	InProgress int `json:"inProgress"`
+	Completed  int `json:"completed"`
+}
+
 type SMLRelatedDocumentNode struct {
 	DocNo               string                     `json:"doc_no"`
 	DocDate             string                     `json:"doc_date"`
@@ -331,6 +379,7 @@ type SigningDocumentReference struct {
 	DocNo             string    `json:"docNo"`
 	DocFormatCode     string    `json:"docFormatCode"`
 	Status            string    `json:"status"`
+	CreatedBy         string    `json:"-"`
 	HasCurrentPDF     bool      `json:"hasCurrentPdf"`
 	HasFinalPDF       bool      `json:"hasFinalPdf"`
 	CanOpenPaperless  bool      `json:"canOpenPaperless"`

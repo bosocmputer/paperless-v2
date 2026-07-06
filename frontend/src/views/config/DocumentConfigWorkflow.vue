@@ -205,8 +205,8 @@ function requestRemoveStep(step) {
     });
 }
 
-function moveStep(index, direction) {
-    const source = steps.value.findIndex((step) => step.key === filteredSteps.value[index]?.key);
+function moveStepByKey(stepKey, direction) {
+    const source = steps.value.findIndex((step) => step.key === stepKey);
     if (source < 0) return;
     const nextIndex = source + direction;
     if (nextIndex < 0 || nextIndex >= steps.value.length) return;
@@ -495,18 +495,18 @@ function normalizeCode(value) {
                 <div class="py-6 text-center text-muted-color">{{ searchQuery ? 'ไม่พบขั้นตอนที่ค้นหา' : 'ยังไม่มีขั้นตอนใน Workflow นี้' }}</div>
             </template>
 
-            <Column field="sequenceNo" header="ลำดับ" sortable style="width: 7rem">
+            <Column field="sequenceNo" header="ลำดับ" style="width: 7rem">
                 <template #body="{ data }">
                     <Tag :value="data.sequenceNo" severity="secondary" />
                 </template>
             </Column>
-            <Column header="Position" sortable sortField="positionCode" style="min-width: 16rem">
+            <Column header="Position" style="min-width: 16rem">
                 <template #body="{ data }">
                     <div class="font-medium text-surface-900 dark:text-surface-0">{{ data.positionCode }} - {{ data.positionName }}</div>
                     <div class="text-sm text-muted-color">{{ routePreview(data) }}</div>
                 </template>
             </Column>
-            <Column header="เงื่อนไข" sortable sortField="conditionType" style="min-width: 10rem">
+            <Column header="เงื่อนไข" style="min-width: 10rem">
                 <template #body="{ data }">
                     <Tag :severity="conditionMeta(data.conditionType).severity" :value="conditionMeta(data.conditionType).short" />
                 </template>
@@ -525,12 +525,12 @@ function normalizeCode(value) {
                 </template>
             </Column>
             <Column header="จัดการ" :exportable="false" style="min-width: 13rem">
-                <template #body="{ data, index }">
+                <template #body="{ data }">
                     <div class="flex gap-2">
-                        <Button icon="pi pi-arrow-up" severity="secondary" rounded outlined aria-label="เลื่อนขึ้น" :disabled="data.sequenceNo === 1 || searchQuery" @click="moveStep(index, -1)" />
-                        <Button icon="pi pi-arrow-down" severity="secondary" rounded outlined aria-label="เลื่อนลง" :disabled="data.sequenceNo === steps.length || searchQuery" @click="moveStep(index, 1)" />
-                        <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ไขขั้นตอน" @click="openEditStep(data)" />
-                        <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบขั้นตอน" @click="requestRemoveStep(data)" />
+                        <Button icon="pi pi-arrow-up" severity="secondary" rounded outlined aria-label="เลื่อนขึ้น" :disabled="data.sequenceNo === 1 || searchQuery" @click.stop="moveStepByKey(data.key, -1)" />
+                        <Button icon="pi pi-arrow-down" severity="secondary" rounded outlined aria-label="เลื่อนลง" :disabled="data.sequenceNo === steps.length || searchQuery" @click.stop="moveStepByKey(data.key, 1)" />
+                        <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ไขขั้นตอน" @click.stop="openEditStep(data)" />
+                        <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบขั้นตอน" @click.stop="requestRemoveStep(data)" />
                     </div>
                 </template>
             </Column>

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -62,5 +63,28 @@ func TestBuildSigningDocumentDuplicateCheckResultPrefersLatestBlockingDocument(t
 	}
 	if len(result.PreviousDocuments) != 1 || result.PreviousDocuments[0].ID != "doc-old" {
 		t.Fatalf("expected finished document to remain as previous context, got %#v", result.PreviousDocuments)
+	}
+}
+
+func TestSigningDocumentListWhereFiltersDraftByCreator(t *testing.T) {
+	where, args := signingDocumentListWhere(context.Background(), SigningDocumentListQuery{
+		Queue:           "draft",
+		CreatedByUserID: "user-1",
+	})
+	if !strings.Contains(where, "d.status IN") || !strings.Contains(where, "d.created_by = $2") {
+		t.Fatalf("where = %q, want draft status and creator filter", where)
+	}
+	if len(args) != 2 || args[0] != "draft" || args[1] != "user-1" {
+		t.Fatalf("args = %#v, want draft and creator", args)
+	}
+}
+
+func TestSigningDocumentListWhereDoesNotFilterActiveByCreatorUnlessRequested(t *testing.T) {
+	where, args := signingDocumentListWhere(context.Background(), SigningDocumentListQuery{Queue: "active"})
+	if strings.Contains(where, "created_by") {
+		t.Fatalf("where = %q, active queue should not be creator scoped", where)
+	}
+	if len(args) == 0 {
+		t.Fatal("active queue should still include status args")
 	}
 }

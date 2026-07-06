@@ -56,10 +56,11 @@ type CreatePrintEventInput struct {
 }
 
 type SigningDocumentListQuery struct {
-	Queue  string
-	Search string
-	Page   int
-	Size   int
+	Queue           string
+	Search          string
+	Page            int
+	Size            int
+	CreatedByUserID string
 }
 
 type SigningDocumentListResult struct {
@@ -350,7 +351,7 @@ func (s *Store) CheckSigningDocumentDuplicate(ctx context.Context, docFormatCode
 SELECT id::text, doc_no, doc_format_code, status,
        current_file_id IS NOT NULL AS has_current_pdf,
        final_file_id IS NOT NULL AS has_final_pdf,
-       created_at, updated_at
+       COALESCE(created_by::text, ''), created_at, updated_at
 FROM signing_documents
 WHERE ($1 = '' OR sml_tenant = $1)
   AND lower(doc_format_code) = lower($2)
@@ -394,6 +395,10 @@ func signingDocumentListWhere(ctx context.Context, query SigningDocumentListQuer
 		args = append(args, "%"+strings.ToLower(query.Search)+"%")
 		placeholder := fmt.Sprintf("$%d", len(args))
 		clauses = append(clauses, "(lower(d.doc_no) LIKE "+placeholder+" OR lower(d.doc_format_code) LIKE "+placeholder+" OR lower(d.party_name) LIKE "+placeholder+" OR lower(d.party_code) LIKE "+placeholder+" OR lower(d.status) LIKE "+placeholder+")")
+	}
+	if strings.TrimSpace(query.CreatedByUserID) != "" {
+		args = append(args, strings.TrimSpace(query.CreatedByUserID))
+		clauses = append(clauses, fmt.Sprintf("d.created_by = $%d", len(args)))
 	}
 
 	if len(clauses) == 0 {
@@ -485,8 +490,8 @@ func (s *Store) SendSigningDocument(ctx context.Context, documentID, actorID, ip
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var status string
-	if err := tx.QueryRow(ctx, `SELECT status FROM signing_documents WHERE id = $1 FOR UPDATE`, documentID).Scan(&status); err != nil {
+	var status, createdBy string
+	if err := tx.QueryRow(ctx, `SELECT status, COALESCE(created_by::text, '') FROM signing_documents WHERE id = $1 FOR UPDATE`, documentID).Scan(&status, &createdBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.SigningDocument{}, ErrSigningDocumentNotFound
 		}
@@ -494,6 +499,9 @@ func (s *Store) SendSigningDocument(ctx context.Context, documentID, actorID, ip
 	}
 	if status != "draft" {
 		return models.SigningDocument{}, ErrSigningDocumentInvalidStatus
+	}
+	if strings.TrimSpace(createdBy) == "" || strings.TrimSpace(createdBy) != strings.TrimSpace(actorID) {
+		return models.SigningDocument{}, ErrSigningDocumentNotFound
 	}
 
 	var firstStepID string
@@ -651,12 +659,15 @@ func (s *Store) CancelSigningDocument(ctx context.Context, documentID, actorID, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var status string
-	if err := tx.QueryRow(ctx, `SELECT status FROM signing_documents WHERE id = $1 FOR UPDATE`, documentID).Scan(&status); err != nil {
+	var status, createdBy string
+	if err := tx.QueryRow(ctx, `SELECT status, COALESCE(created_by::text, '') FROM signing_documents WHERE id = $1 FOR UPDATE`, documentID).Scan(&status, &createdBy); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.SigningDocument{}, ErrSigningDocumentNotFound
 		}
 		return models.SigningDocument{}, err
+	}
+	if status == "draft" && (strings.TrimSpace(createdBy) == "" || strings.TrimSpace(createdBy) != strings.TrimSpace(actorID)) {
+		return models.SigningDocument{}, ErrSigningDocumentNotFound
 	}
 	if status == "completed" || status == "cancelled" {
 		return models.SigningDocument{}, ErrSigningDocumentInvalidStatus
@@ -936,7 +947,7 @@ func (s *Store) ListSigningDocumentReferencesByDocNos(ctx context.Context, docNo
 SELECT id::text, doc_no, doc_format_code, status,
        current_file_id IS NOT NULL AS has_current_pdf,
        final_file_id IS NOT NULL AS has_final_pdf,
-       created_at, updated_at
+       COALESCE(created_by::text, ''), created_at, updated_at
 FROM signing_documents
 WHERE doc_no = ANY($1)
   AND ($2 = '' OR sml_tenant = $2)
@@ -953,7 +964,7 @@ func scanSigningDocumentReferenceRows(rows pgx.Rows) ([]models.SigningDocumentRe
 	items := []models.SigningDocumentReference{}
 	for rows.Next() {
 		var item models.SigningDocumentReference
-		if err := rows.Scan(&item.ID, &item.DocNo, &item.DocFormatCode, &item.Status, &item.HasCurrentPDF, &item.HasFinalPDF, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.DocNo, &item.DocFormatCode, &item.Status, &item.HasCurrentPDF, &item.HasFinalPDF, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
+	"github.com/bosocmputer/paperless-v2/backend/internal/store"
 	"github.com/phpdave11/gofpdf"
 )
 
@@ -132,6 +133,71 @@ func TestSanitizeRelatedDocumentsForSignerRemovesOpenIds(t *testing.T) {
 	}
 }
 
+func TestClassifyPaperlessReferenceStatus(t *testing.T) {
+	completedUpdatedAt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		refs       []models.SigningDocumentReference
+		wantStatus string
+		wantID     string
+	}{
+		{name: "no match", refs: nil, wantStatus: "missing"},
+		{
+			name:       "document without current pdf is missing",
+			refs:       []models.SigningDocumentReference{{ID: "doc-1", Status: "completed", HasCurrentPDF: false}},
+			wantStatus: "missing",
+			wantID:     "doc-1",
+		},
+		{
+			name:       "active document with current pdf is in progress",
+			refs:       []models.SigningDocumentReference{{ID: "doc-2", Status: "pending_confirm", HasCurrentPDF: true}},
+			wantStatus: "in_progress",
+			wantID:     "doc-2",
+		},
+		{
+			name: "completed document wins over active",
+			refs: []models.SigningDocumentReference{
+				{ID: "doc-active", Status: "in_progress", HasCurrentPDF: true},
+				{ID: "doc-completed", Status: "completed", HasCurrentPDF: true, UpdatedAt: completedUpdatedAt},
+			},
+			wantStatus: "completed",
+			wantID:     "doc-completed",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStatus, gotRef := classifyPaperlessReferenceStatus(tc.refs)
+			if gotStatus != tc.wantStatus {
+				t.Fatalf("status = %q, want %q", gotStatus, tc.wantStatus)
+			}
+			if tc.wantID == "" {
+				if gotRef != nil {
+					t.Fatalf("selected = %#v, want nil", gotRef)
+				}
+				return
+			}
+			if gotRef == nil || gotRef.ID != tc.wantID {
+				t.Fatalf("selected = %#v, want id %q", gotRef, tc.wantID)
+			}
+		})
+	}
+}
+
+func TestPrepareReferenceMatchForAdminScrubsOtherUserDraft(t *testing.T) {
+	ref := prepareReferenceMatchForAdmin(models.SigningDocumentReference{
+		ID:            "draft-doc",
+		Status:        "draft",
+		CreatedBy:     "other-user",
+		HasCurrentPDF: true,
+		HasFinalPDF:   true,
+		UpdatedAt:     time.Now(),
+	}, true, "actor-user")
+
+	if ref.ID != "" || ref.CanOpenPaperless || ref.CanViewCurrentPDF || ref.CurrentPDFURL != "" {
+		t.Fatalf("other user draft should not expose open fields: %#v", ref)
+	}
+}
+
 func TestSigningDocumentPDFURLIncludesStableCacheKey(t *testing.T) {
 	updatedAt := time.Date(2026, 7, 1, 11, 9, 34, 305444000, time.FixedZone("ICT", 7*60*60))
 	got := signingDocumentPDFURL("doc-1", "current", updatedAt)
@@ -142,6 +208,68 @@ func TestSigningDocumentPDFURLIncludesStableCacheKey(t *testing.T) {
 	withoutTimestamp := signingDocumentPDFURL("doc-1", "final", time.Time{})
 	if withoutTimestamp != "/api/signing-documents/doc-1/pdf?version=final" {
 		t.Fatalf("pdf url without timestamp = %q", withoutTimestamp)
+	}
+}
+
+func TestPrepareSigningDocumentDuplicateResponseScrubsOtherUserDraft(t *testing.T) {
+	result := store.SigningDocumentDuplicateCheckResult{
+		CanCreate: false,
+		Message:   "เอกสารนี้มีอยู่ใน PaperLess แล้ว",
+		BlockingDocument: &models.SigningDocumentReference{
+			ID:            "secret-doc-id",
+			DocNo:         "PO26060001",
+			DocFormatCode: "PO",
+			Status:        "draft",
+			CreatedBy:     "other-user",
+			HasCurrentPDF: true,
+			HasFinalPDF:   true,
+			UpdatedAt:     time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC),
+		},
+	}
+
+	got := prepareSigningDocumentDuplicateResponse(result, "actor-user")
+	if got.BlockingDocument == nil {
+		t.Fatal("expected blocking document")
+	}
+	if got.BlockingDocument.ID != "" || got.BlockingDocument.CanOpenPaperless || got.BlockingDocument.CurrentPDFURL != "" || got.BlockingDocument.SignedPDFURL != "" {
+		t.Fatalf("other user draft should not expose open fields: %#v", got.BlockingDocument)
+	}
+	if !strings.Contains(got.Message, "ผู้สร้างเอกสาร") {
+		t.Fatalf("message = %q, want owner-safe guidance", got.Message)
+	}
+}
+
+func TestPrepareSigningDocumentDuplicateResponseKeepsOwnDraftOpenable(t *testing.T) {
+	updatedAt := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
+	result := store.SigningDocumentDuplicateCheckResult{
+		CanCreate: false,
+		BlockingDocument: &models.SigningDocumentReference{
+			ID:            "own-doc-id",
+			DocNo:         "PO26060001",
+			DocFormatCode: "PO",
+			Status:        "draft",
+			CreatedBy:     "actor-user",
+			HasCurrentPDF: true,
+			UpdatedAt:     updatedAt,
+		},
+	}
+
+	got := prepareSigningDocumentDuplicateResponse(result, "actor-user")
+	if got.BlockingDocument == nil || !got.BlockingDocument.CanOpenPaperless || got.BlockingDocument.CurrentPDFURL == "" {
+		t.Fatalf("own draft should remain openable: %#v", got.BlockingDocument)
+	}
+}
+
+func TestCanAccessSigningDocumentAsAdminRestrictsDraftOwner(t *testing.T) {
+	actor := models.User{ID: "actor-user", Role: "admin"}
+	if !canAccessSigningDocumentAsAdmin(models.SigningDocument{Status: "draft", CreatedBy: "actor-user"}, actor) {
+		t.Fatal("owner should access own draft")
+	}
+	if canAccessSigningDocumentAsAdmin(models.SigningDocument{Status: "draft", CreatedBy: "other-user"}, actor) {
+		t.Fatal("admin should not access another user's draft")
+	}
+	if !canAccessSigningDocumentAsAdmin(models.SigningDocument{Status: "in_progress", CreatedBy: "other-user"}, actor) {
+		t.Fatal("active document should keep admin tenant-wide visibility")
 	}
 }
 

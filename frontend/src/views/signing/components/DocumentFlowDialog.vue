@@ -184,7 +184,7 @@ function recordFlowEvent(event, extra = {}) {
         maximizable
         class="document-flow-dialog"
         :header="flowHeader"
-        :style="{ width: 'min(118rem, 98vw)', height: 'min(88vh, 58rem)' }"
+        :style="{ width: 'min(82rem, 96vw)', height: 'min(82vh, 48rem)' }"
         :breakpoints="{ '960px': '98vw', '640px': '100vw' }"
         @hide="closeFlowDialog"
     >
@@ -217,7 +217,8 @@ function recordFlowEvent(event, extra = {}) {
                     :graph="flowGraph"
                     admin
                     compact
-                    :show-table="false"
+                    show-table
+                    table-first
                     @open-document="(documentId) => emit('open-document', documentId)"
                     @preview-pdf="previewFlowPDF"
                 />

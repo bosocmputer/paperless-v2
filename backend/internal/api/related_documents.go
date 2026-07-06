@@ -21,6 +21,13 @@ type smlRelatedDocumentsResponse struct {
 	Message string                          `json:"message"`
 }
 
+type smlDocumentReferencesResponse struct {
+	Success bool                         `json:"success"`
+	Data    models.SMLDocumentReferences `json:"data"`
+	Error   *smlAPIError                 `json:"error"`
+	Message string                       `json:"message"`
+}
+
 var documentFlowEventNames = map[string]bool{
 	"document_flow_open":         true,
 	"document_flow_search":       true,
@@ -72,6 +79,7 @@ func (s *Server) recordDocumentFlowEvent(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) getSigningDocumentRelatedDocuments(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
 	document, err := s.store.FindSigningDocumentByID(r.Context(), strings.TrimSpace(r.PathValue("id")))
 	if errors.Is(err, store.ErrSigningDocumentNotFound) {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
@@ -82,11 +90,54 @@ func (s *Server) getSigningDocumentRelatedDocuments(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
+	if !canAccessSigningDocumentAsAdmin(document, actor) {
+		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
+		return
+	}
 	graph, ok := s.writeRelatedDocuments(w, r.WithContext(store.WithSMLTenant(r.Context(), document.SMLTenant)), document.DocFormatCode, document.DocNo, true)
 	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"relatedDocuments": graph})
+}
+
+func (s *Server) getSigningDocumentReferenceCheck(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
+	document, err := s.store.FindSigningDocumentByID(r.Context(), strings.TrimSpace(r.PathValue("id")))
+	if errors.Is(err, store.ErrSigningDocumentNotFound) {
+		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("load signing document for reference check failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	if !canAccessSigningDocumentAsAdmin(document, actor) {
+		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.SMLPaperlessTimeout)
+	defer cancel()
+	result, err := s.fetchSMLDocumentReferences(store.WithSMLTenant(ctx, document.SMLTenant), document.DocFormatCode, document.DocNo)
+	if errors.Is(err, errSMLConfigMissing) {
+		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML Paperless API is not configured.")
+		return
+	}
+	if err != nil {
+		s.logger.Warn("fetch sml document references failed", "error", err, "docFormatCode", document.DocFormatCode, "docNo", document.DocNo)
+		code, status, message := smlLookupErrorView(err)
+		writeError(w, status, code, message)
+		return
+	}
+	result, err = s.enrichDocumentReferenceCheck(r.Context(), result, true, actor.ID)
+	if err != nil {
+		s.logger.Error("enrich document reference check failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "reference_check_enrich_failed", "Cannot prepare reference check right now.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"referenceCheck": result})
 }
 
 func (s *Server) getMySigningTaskRelatedDocuments(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +192,8 @@ func (s *Server) writeRelatedDocuments(w http.ResponseWriter, r *http.Request, d
 		writeError(w, status, code, message)
 		return models.SMLRelatedDocumentsGraph{}, false
 	}
-	graph, err = s.enrichRelatedDocuments(r.Context(), graph, admin)
+	actor, _ := currentUser(r)
+	graph, err = s.enrichRelatedDocuments(r.Context(), graph, admin, actor.ID)
 	if err != nil {
 		s.logger.Error("enrich related documents failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "related_documents_enrich_failed", "Cannot prepare related documents right now.")
@@ -196,7 +248,49 @@ func (s *Server) fetchSMLRelatedDocuments(ctx context.Context, docFormatCode, do
 	return payload.Data, nil
 }
 
-func (s *Server) enrichRelatedDocuments(ctx context.Context, graph models.SMLRelatedDocumentsGraph, canOpen bool) (models.SMLRelatedDocumentsGraph, error) {
+func (s *Server) fetchSMLDocumentReferences(ctx context.Context, docFormatCode, docNo string) (models.SMLDocumentReferences, error) {
+	tenant, ok := s.hasSMLAPIConfig(ctx)
+	if !ok {
+		return models.SMLDocumentReferences{}, errSMLConfigMissing
+	}
+	endpoint, err := url.Parse(s.cfg.SMLPaperlessBaseURL + "/api/v1/documents/" + url.PathEscape(docNo) + "/references")
+	if err != nil {
+		return models.SMLDocumentReferences{}, fmt.Errorf("invalid SML base URL")
+	}
+	query := endpoint.Query()
+	if strings.TrimSpace(docFormatCode) != "" {
+		query.Set("doc_format_code", docFormatCode)
+	}
+	endpoint.RawQuery = query.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return models.SMLDocumentReferences{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
+	req.Header.Set("X-Tenant", tenant)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return models.SMLDocumentReferences{}, err
+	}
+	defer resp.Body.Close()
+
+	var payload smlDocumentReferencesResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&payload); err != nil {
+		return models.SMLDocumentReferences{}, fmt.Errorf("cannot parse SML response")
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return models.SMLDocumentReferences{}, errors.New(smlErrorMessage(payload.Error, payload.Message, resp.Status))
+	}
+	if !payload.Success {
+		return models.SMLDocumentReferences{}, errors.New(smlErrorMessage(payload.Error, payload.Message, "SML request failed"))
+	}
+	return payload.Data, nil
+}
+
+func (s *Server) enrichRelatedDocuments(ctx context.Context, graph models.SMLRelatedDocumentsGraph, canOpen bool, actorID string) (models.SMLRelatedDocumentsGraph, error) {
 	docNos := make([]string, 0, len(graph.Nodes))
 	for _, node := range graph.Nodes {
 		docNos = append(docNos, node.DocNo)
@@ -208,14 +302,23 @@ func (s *Server) enrichRelatedDocuments(ctx context.Context, graph models.SMLRel
 	byKey := map[string][]models.SigningDocumentReference{}
 	byDocNo := map[string][]models.SigningDocumentReference{}
 	for _, ref := range refs {
-		ref.CanOpenPaperless = canOpen
-		ref.CanViewCurrentPDF = canOpen && ref.HasCurrentPDF
-		ref.CanViewSignedPDF = canOpen && ref.HasFinalPDF
-		if canOpen {
+		canOpenRef := canOpen && !isOtherUserDraftReference(ref, actorID)
+		if !canOpenRef && isOtherUserDraftReference(ref, actorID) {
+			ref.ID = ""
+			ref.HasCurrentPDF = false
+			ref.HasFinalPDF = false
+		}
+		ref.CanOpenPaperless = canOpenRef
+		ref.CanViewCurrentPDF = canOpenRef && ref.HasCurrentPDF
+		ref.CanViewSignedPDF = canOpenRef && ref.HasFinalPDF
+		if canOpenRef {
 			ref.CurrentPDFURL = signingDocumentPDFURL(ref.ID, "current", ref.UpdatedAt)
 			if ref.HasFinalPDF {
 				ref.SignedPDFURL = signingDocumentPDFURL(ref.ID, "final", ref.UpdatedAt)
 			}
+		} else {
+			ref.CurrentPDFURL = ""
+			ref.SignedPDFURL = ""
 		}
 		key := relatedReferenceKey(ref.DocFormatCode, ref.DocNo)
 		docNoKey := strings.ToUpper(strings.TrimSpace(ref.DocNo))
@@ -232,7 +335,7 @@ func (s *Server) enrichRelatedDocuments(ctx context.Context, graph models.SMLRel
 		}
 		ref := matches[0]
 		graph.Nodes[i].PaperlessStatus = ref.Status
-		graph.Nodes[i].CanOpenPaperless = canOpen
+		graph.Nodes[i].CanOpenPaperless = ref.CanOpenPaperless
 		graph.Nodes[i].HasCurrentPDF = ref.HasCurrentPDF
 		graph.Nodes[i].HasFinalPDF = ref.HasFinalPDF
 		graph.Nodes[i].CanViewCurrentPDF = ref.CanViewCurrentPDF
@@ -241,7 +344,7 @@ func (s *Server) enrichRelatedDocuments(ctx context.Context, graph models.SMLRel
 		graph.Nodes[i].SignedPDFURL = ref.SignedPDFURL
 		graph.Nodes[i].MatchCount = len(matches)
 		graph.Nodes[i].PaperlessMatches = matches
-		if canOpen {
+		if ref.CanOpenPaperless {
 			graph.Nodes[i].PaperlessDocumentID = ref.ID
 		}
 		if len(matches) > 1 {
@@ -266,6 +369,110 @@ func (s *Server) enrichRelatedDocuments(ctx context.Context, graph models.SMLRel
 		}
 	}
 	return graph, nil
+}
+
+func (s *Server) enrichDocumentReferenceCheck(ctx context.Context, result models.SMLDocumentReferences, canOpen bool, actorID string) (models.SMLDocumentReferences, error) {
+	docNos := make([]string, 0, len(result.Items))
+	for _, item := range result.Items {
+		docNos = append(docNos, item.DocNo)
+	}
+	refs, err := s.store.ListSigningDocumentReferencesByDocNos(ctx, docNos)
+	if err != nil {
+		return result, err
+	}
+	byKey := map[string][]models.SigningDocumentReference{}
+	byDocNo := map[string][]models.SigningDocumentReference{}
+	for _, ref := range refs {
+		ref = prepareReferenceMatchForAdmin(ref, canOpen, actorID)
+		key := relatedReferenceKey(ref.DocFormatCode, ref.DocNo)
+		docNoKey := strings.ToUpper(strings.TrimSpace(ref.DocNo))
+		byKey[key] = append(byKey[key], ref)
+		byDocNo[docNoKey] = append(byDocNo[docNoKey], ref)
+	}
+
+	summary := models.SMLDocumentReferenceSummary{Total: len(result.Items)}
+	for i := range result.Items {
+		matches := byKey[relatedReferenceKey(result.Items[i].DocFormatCode, result.Items[i].DocNo)]
+		if len(matches) == 0 {
+			matches = byDocNo[strings.ToUpper(strings.TrimSpace(result.Items[i].DocNo))]
+		}
+		status, selected := classifyPaperlessReferenceStatus(matches)
+		result.Items[i].PaperlessStatus = status
+		result.Items[i].MatchCount = len(matches)
+		result.Items[i].PaperlessMatches = matches
+		switch status {
+		case "completed":
+			summary.Completed++
+		case "in_progress":
+			summary.InProgress++
+		default:
+			summary.Missing++
+		}
+		if selected == nil {
+			continue
+		}
+		result.Items[i].PaperlessDocumentID = selected.ID
+		result.Items[i].CanOpenPaperless = selected.CanOpenPaperless
+		result.Items[i].HasCurrentPDF = selected.HasCurrentPDF
+		result.Items[i].HasFinalPDF = selected.HasFinalPDF
+		result.Items[i].CanViewCurrentPDF = selected.CanViewCurrentPDF
+		result.Items[i].CanViewSignedPDF = selected.CanViewSignedPDF
+		result.Items[i].CurrentPDFURL = selected.CurrentPDFURL
+		result.Items[i].SignedPDFURL = selected.SignedPDFURL
+	}
+	result.Summary = summary
+	result.Total = len(result.Items)
+	return result, nil
+}
+
+func prepareReferenceMatchForAdmin(ref models.SigningDocumentReference, canOpen bool, actorID string) models.SigningDocumentReference {
+	canOpenRef := canOpen && !isOtherUserDraftReference(ref, actorID)
+	if !canOpenRef && isOtherUserDraftReference(ref, actorID) {
+		ref.ID = ""
+		ref.HasCurrentPDF = false
+		ref.HasFinalPDF = false
+	}
+	ref.CanOpenPaperless = canOpenRef && strings.TrimSpace(ref.ID) != ""
+	ref.CanViewCurrentPDF = ref.CanOpenPaperless && ref.HasCurrentPDF
+	ref.CanViewSignedPDF = ref.CanOpenPaperless && ref.HasFinalPDF
+	if ref.CanViewCurrentPDF {
+		ref.CurrentPDFURL = signingDocumentPDFURL(ref.ID, "current", ref.UpdatedAt)
+	} else {
+		ref.CurrentPDFURL = ""
+	}
+	if ref.CanViewSignedPDF {
+		ref.SignedPDFURL = signingDocumentPDFURL(ref.ID, "final", ref.UpdatedAt)
+	} else {
+		ref.SignedPDFURL = ""
+	}
+	return ref
+}
+
+func classifyPaperlessReferenceStatus(refs []models.SigningDocumentReference) (string, *models.SigningDocumentReference) {
+	if len(refs) == 0 {
+		return "missing", nil
+	}
+	var fallback *models.SigningDocumentReference
+	var active *models.SigningDocumentReference
+	for i := range refs {
+		ref := &refs[i]
+		if fallback == nil {
+			fallback = ref
+		}
+		if !ref.HasCurrentPDF {
+			continue
+		}
+		if strings.EqualFold(ref.Status, "completed") {
+			return "completed", ref
+		}
+		if active == nil {
+			active = ref
+		}
+	}
+	if active != nil {
+		return "in_progress", active
+	}
+	return "missing", fallback
 }
 
 func sanitizeRelatedDocumentsForSigner(graph models.SMLRelatedDocumentsGraph) models.SMLRelatedDocumentsGraph {

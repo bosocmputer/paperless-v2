@@ -5,6 +5,7 @@ import { formatThaiDateTime, signingStatusLabel, signingStatusSeverity, smlImage
 import { isSigningDocumentMenuKey, normalizeSigningDocumentQueue, signingDocumentMenuKeyForQueue, signingDocumentQueueForStatus } from '@/utils/signingQueue';
 import ContinuousPdfViewer from '@/views/signing/components/ContinuousPdfViewer.vue';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
+import DocumentReferenceCheck from '@/views/signing/components/DocumentReferenceCheck.vue';
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -69,6 +70,11 @@ function syncActiveMenuFromRoute() {
 
 function syncActiveMenuFromDocument() {
     layoutState.activeMenuKey = signingDocumentMenuKeyForQueue(currentDetailQueue());
+}
+
+function loadReferenceCheck() {
+    if (!document.value?.id) return Promise.resolve({ referenceCheck: { items: [], summary: { total: 0, missing: 0, inProgress: 0, completed: 0 } } });
+    return api.getSigningDocumentReferenceCheck(document.value.id);
 }
 
 function clearActiveSigningMenu() {
@@ -585,6 +591,7 @@ function movementEventView(event) {
                 <Tabs v-model:value="activeTab">
                     <TabList>
                         <Tab value="progress">ความคืบหน้า</Tab>
+                        <Tab value="references">ตรวจสอบเอกสาร</Tab>
                         <Tab value="print">พิมพ์</Tab>
                         <Tab value="events">เหตุการณ์</Tab>
                     </TabList>
@@ -628,6 +635,11 @@ function movementEventView(event) {
                                     <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
                                 </div>
                                 <DocumentWorkflowTimeline :document="document" :show-external-actions="false" @generate-external="requestExternalToken" />
+                            </div>
+                        </TabPanel>
+                        <TabPanel value="references">
+                            <div class="info-block">
+                                <DocumentReferenceCheck :document="document" :loader="loadReferenceCheck" @open-document="openFlowDocument" />
                             </div>
                         </TabPanel>
                         <TabPanel value="print">

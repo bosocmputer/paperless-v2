@@ -2,6 +2,7 @@
 import { api } from '@/services/api';
 import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity, smlImageFailureDetail } from '@/utils/signingFormatters';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
+import DocumentReferenceCheck from '@/views/signing/components/DocumentReferenceCheck.vue';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -19,6 +20,8 @@ const searchQuery = ref('');
 const transitioningIds = ref(new Set());
 const flowDialog = ref(false);
 const flowDocument = ref(null);
+const referenceDialog = ref(false);
+const referenceDocument = ref(null);
 const readonlyPdfDialog = ref(false);
 const readonlyPdfUrl = ref('');
 const readonlyPdfTitle = ref('');
@@ -162,6 +165,17 @@ function setFlowDialogVisible(value) {
 function openDocumentFlowFromRow(doc) {
     if (!doc?.docNo) return;
     openDocumentFlow(doc);
+}
+
+function openReferenceCheck(doc) {
+    if (!doc?.id) return;
+    referenceDocument.value = doc;
+    referenceDialog.value = true;
+}
+
+function loadReferenceCheckForDialog() {
+    if (!referenceDocument.value?.id) return Promise.resolve({ referenceCheck: { items: [], summary: { total: 0, missing: 0, inProgress: 0, completed: 0 } } });
+    return api.getSigningDocumentReferenceCheck(referenceDocument.value.id);
 }
 
 function previewDocumentPDF(doc, version = 'current') {
@@ -523,6 +537,7 @@ function selectInput(event) {
                             @click="previewDocumentPDF(data, 'current')"
                         />
                         <Button icon="pi pi-sitemap" rounded outlined severity="secondary" aria-label="ดู Flow เอกสาร" @click="openDocumentFlowFromRow(data)" />
+                        <Button v-if="queue !== 'draft'" icon="pi pi-list" rounded outlined severity="secondary" aria-label="ตรวจสอบเอกสารอ้างอิง" @click="openReferenceCheck(data)" />
                         <Button icon="pi pi-eye" rounded outlined severity="secondary" aria-label="ดูเอกสาร" @click="openDetail(data)" />
                         <Button
                             v-if="data.status === 'draft'"
@@ -540,6 +555,10 @@ function selectInput(event) {
         </DataTable>
 
         <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="(documentId) => openDetail({ id: documentId })" />
+
+        <Dialog v-model:visible="referenceDialog" modal header="ตรวจสอบเอกสารอ้างอิง" :style="{ width: 'min(78rem, 96vw)' }" :breakpoints="{ '960px': '96vw', '640px': '100vw' }">
+            <DocumentReferenceCheck :document="referenceDocument" :loader="loadReferenceCheckForDialog" compact @open-document="(documentId) => openDetail({ id: documentId })" />
+        </Dialog>
 
         <ReadOnlyPdfDialog v-model:visible="readonlyPdfDialog" :url="readonlyPdfUrl" :title="readonlyPdfTitle" />
 

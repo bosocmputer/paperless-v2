@@ -99,15 +99,22 @@ type signingCreateEventRequest struct {
 }
 
 func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
 	size := parsePositiveQueryInt(r, "size", 100)
 	if size > 100 {
 		size = 100
 	}
+	queue := r.URL.Query().Get("queue")
+	createdByUserID := ""
+	if strings.EqualFold(strings.TrimSpace(queue), "draft") {
+		createdByUserID = actor.ID
+	}
 	result, err := s.store.ListSigningDocuments(r.Context(), store.SigningDocumentListQuery{
-		Queue:  r.URL.Query().Get("queue"),
-		Search: r.URL.Query().Get("search"),
-		Page:   parsePositiveQueryInt(r, "page", 1),
-		Size:   size,
+		Queue:           queue,
+		Search:          r.URL.Query().Get("search"),
+		Page:            parsePositiveQueryInt(r, "page", 1),
+		Size:            size,
+		CreatedByUserID: createdByUserID,
 	})
 	if err != nil {
 		s.logger.Error("list signing documents failed", "error", err)
@@ -118,6 +125,7 @@ func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) checkSigningDocumentDuplicate(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
 	docFormatCode := strings.TrimSpace(r.URL.Query().Get("doc_format_code"))
 	docNo := strings.TrimSpace(r.URL.Query().Get("doc_no"))
 	if docFormatCode == "" || docNo == "" {
@@ -130,10 +138,7 @@ func (s *Server) checkSigningDocumentDuplicate(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "duplicate_check_failed", "ตรวจสอบเอกสารซ้ำไม่สำเร็จ")
 		return
 	}
-	result.BlockingDocument = enrichSigningDocumentReferenceForAdmin(result.BlockingDocument)
-	for i := range result.PreviousDocuments {
-		result.PreviousDocuments[i] = enrichSigningDocumentReferenceForAdminValue(result.PreviousDocuments[i])
-	}
+	result = prepareSigningDocumentDuplicateResponse(result, actor.ID)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -264,7 +269,7 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !duplicateCheck.CanCreate {
-		s.writeSigningDocumentDuplicateConflict(w, duplicateCheck)
+		s.writeSigningDocumentDuplicateConflict(w, duplicateCheck, actor.ID)
 		return
 	}
 	uploaded, err := s.store.FindSigningDocumentUploadFile(r.Context(), req.FileID, actor.ID)
@@ -366,7 +371,7 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 				Message:   "เอกสารนี้มีอยู่ใน PaperLess แล้ว กรุณาเปิดเอกสารเดิมแทนการสร้างซ้ำ",
 			}
 		}
-		s.writeSigningDocumentDuplicateConflict(w, duplicateCheck)
+		s.writeSigningDocumentDuplicateConflict(w, duplicateCheck, actor.ID)
 		return
 	}
 	if errors.Is(err, store.ErrSigningDocumentUploadNotFound) {
@@ -384,12 +389,9 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, payload)
 }
 
-func (s *Server) writeSigningDocumentDuplicateConflict(w http.ResponseWriter, result store.SigningDocumentDuplicateCheckResult) {
+func (s *Server) writeSigningDocumentDuplicateConflict(w http.ResponseWriter, result store.SigningDocumentDuplicateCheckResult, actorID string) {
 	result.CanCreate = false
-	result.BlockingDocument = enrichSigningDocumentReferenceForAdmin(result.BlockingDocument)
-	for i := range result.PreviousDocuments {
-		result.PreviousDocuments[i] = enrichSigningDocumentReferenceForAdminValue(result.PreviousDocuments[i])
-	}
+	result = prepareSigningDocumentDuplicateResponse(result, actorID)
 	message := strings.TrimSpace(result.Message)
 	if message == "" {
 		message = "เอกสารนี้มีอยู่ใน PaperLess แล้ว กรุณาเปิดเอกสารเดิมแทนการสร้างซ้ำ"
@@ -401,6 +403,31 @@ func (s *Server) writeSigningDocumentDuplicateConflict(w http.ResponseWriter, re
 		"blockingDocument":  result.BlockingDocument,
 		"previousDocuments": result.PreviousDocuments,
 	})
+}
+
+func prepareSigningDocumentDuplicateResponse(result store.SigningDocumentDuplicateCheckResult, actorID string) store.SigningDocumentDuplicateCheckResult {
+	if result.BlockingDocument != nil && isOtherUserDraftReference(*result.BlockingDocument, actorID) {
+		ref := *result.BlockingDocument
+		result.BlockingDocument = &models.SigningDocumentReference{
+			DocNo:         ref.DocNo,
+			DocFormatCode: ref.DocFormatCode,
+			Status:        ref.Status,
+			CreatedAt:     ref.CreatedAt,
+			UpdatedAt:     ref.UpdatedAt,
+		}
+		result.Message = "เอกสารนี้มีอยู่ใน PaperLess แล้วและอยู่ระหว่างเตรียมส่ง กรุณาตรวจสอบกับผู้สร้างเอกสารหรือผู้ดูแลระบบ"
+	} else {
+		result.BlockingDocument = enrichSigningDocumentReferenceForAdmin(result.BlockingDocument)
+	}
+	for i := range result.PreviousDocuments {
+		result.PreviousDocuments[i] = enrichSigningDocumentReferenceForAdminValue(result.PreviousDocuments[i])
+	}
+	return result
+}
+
+func isOtherUserDraftReference(ref models.SigningDocumentReference, actorID string) bool {
+	return strings.EqualFold(strings.TrimSpace(ref.Status), "draft") &&
+		(strings.TrimSpace(ref.CreatedBy) == "" || strings.TrimSpace(ref.CreatedBy) != strings.TrimSpace(actorID))
 }
 
 func enrichSigningDocumentReferenceForAdmin(ref *models.SigningDocumentReference) *models.SigningDocumentReference {
@@ -1147,10 +1174,16 @@ func (s *Server) getSigningDocument(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
+	actor, _ := currentUser(r)
+	if !canAccessSigningDocumentAsAdmin(document, actor) {
+		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"document": s.withExternalURLs(r, document)})
 }
 
 func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r)
 	document, err := s.store.FindSigningDocumentByID(r.Context(), strings.TrimSpace(r.PathValue("id")))
 	if errors.Is(err, store.ErrSigningDocumentNotFound) {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
@@ -1160,8 +1193,12 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
-	user, _ := currentUser(r)
-	if !isAdminRole(user.Role) {
+	if isAdminRole(user.Role) {
+		if !canAccessSigningDocumentAsAdmin(document, user) {
+			writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
+			return
+		}
+	} else {
 		if document.Status != "in_progress" || !documentHasSigner(document, user.Username) {
 			writeError(w, http.StatusForbidden, "forbidden", "You cannot view this document.")
 			return
@@ -1197,6 +1234,13 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serveInlinePDF(w, r, *file)
+}
+
+func canAccessSigningDocumentAsAdmin(document models.SigningDocument, actor models.User) bool {
+	if !strings.EqualFold(strings.TrimSpace(document.Status), "draft") {
+		return true
+	}
+	return strings.TrimSpace(document.CreatedBy) != "" && strings.TrimSpace(document.CreatedBy) == strings.TrimSpace(actor.ID)
 }
 
 func (s *Server) retrySigningDocumentLock(w http.ResponseWriter, r *http.Request) {

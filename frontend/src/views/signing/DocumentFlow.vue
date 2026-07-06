@@ -23,6 +23,7 @@ const detailVisible = ref(false);
 const pdfDialog = ref(false);
 const pdfUrl = ref('');
 const pdfTitle = ref('');
+const missingPaperLessPdfMessage = 'เอกสารนี้มีข้อมูลจาก SML แต่ยังไม่มี PDF ใน PaperLess';
 
 const sessionId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 const openedAt = Date.now();
@@ -218,6 +219,10 @@ function openPaperless(node) {
 
 function canPreviewCurrentPDF(node = {}) {
     return !!(node.canViewCurrentPdf || node.hasCurrentPdf || node.currentPdfUrl);
+}
+
+function isMissingPaperLessPdf(node = {}) {
+    return !canPreviewCurrentPDF(node);
 }
 
 function startUpload(node) {
@@ -440,7 +445,12 @@ function recordEvent(event, extra = {}) {
                     </Column>
                     <Column header="PDF" style="min-width: 12rem">
                         <template #body="{ data }">
-                            <Tag :value="currentPdfLabel(data)" :severity="currentPdfSeverity(data)" />
+                            <div class="flex flex-col gap-2">
+                                <Tag :value="currentPdfLabel(data)" :severity="currentPdfSeverity(data)" class="w-fit" />
+                                <Message v-if="isMissingPaperLessPdf(data)" severity="error" :closable="false">
+                                    {{ missingPaperLessPdfMessage }}
+                                </Message>
+                            </div>
                         </template>
                     </Column>
                     <Column header="จัดการ" style="min-width: 16rem">
@@ -465,7 +475,7 @@ function recordEvent(event, extra = {}) {
 
         <Dialog v-model:visible="detailVisible" modal header="ข้อมูลเอกสารจาก SML" :style="{ width: 'min(48rem, 94vw)' }">
             <div v-if="selectedNode" class="grid gap-3">
-                <Message v-if="!selectedNode.paperlessStatus" severity="info">เอกสารนี้มีข้อมูลจาก SML แต่ยังไม่ได้อัปโหลดเข้า PaperLess</Message>
+                <Message v-if="isMissingPaperLessPdf(selectedNode)" severity="error" :closable="false">{{ missingPaperLessPdfMessage }}</Message>
                 <Message v-if="selectedNode.matchCount > 1" severity="warn">พบเอกสารนี้ใน PaperLess มากกว่า 1 รายการ ระบบเลือกเอกสารที่อัปเดตล่าสุดเป็นค่าเริ่มต้น</Message>
                 <dl class="metadata-grid">
                     <dt>เลขที่เอกสาร</dt>

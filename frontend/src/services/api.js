@@ -318,6 +318,9 @@ export const api = {
     getSigningDocumentRelatedDocuments(id, depth = 3) {
         return request(withQuery(`/api/signing-documents/${id}/related-documents`, { depth }));
     },
+    getSigningDocumentReferenceCheck(id) {
+        return request(`/api/signing-documents/${id}/reference-check`);
+    },
     signingDocumentPDFCacheKey(document, version = 'current') {
         return signingDocumentPDFCacheKey(document, version);
     },
