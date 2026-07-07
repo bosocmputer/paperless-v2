@@ -626,7 +626,16 @@ function selectInput(event) {
             :header="referenceDialogTitle || 'ตรวจสอบเอกสารอ้างอิง'"
         >
             <div class="reference-dialog-layout">
-                <DocumentReferenceCheck :document="referenceDocument" :loader="loadReferenceCheckForDialog" compact display-mode="flow" open-in-new-tab :document-route-resolver="referenceDocumentUrl" @open-document="(documentId) => openDetail({ id: documentId })" />
+                <DocumentReferenceCheck
+                    :document="referenceDocument"
+                    :loader="loadReferenceCheckForDialog"
+                    compact
+                    dialog-mode
+                    display-mode="flow"
+                    open-in-new-tab
+                    :document-route-resolver="referenceDocumentUrl"
+                    @open-document="(documentId) => openDetail({ id: documentId })"
+                />
             </div>
         </Dialog>
 
@@ -751,7 +760,7 @@ function selectInput(event) {
     display: flex;
     flex-direction: column;
     padding-top: 0.75rem;
-    background: var(--surface-ground);
+    background: transparent;
     overflow: hidden;
 }
 
@@ -760,40 +769,13 @@ function selectInput(event) {
     flex: 1 1 auto;
     display: flex;
     flex-direction: column;
-    gap: 0.55rem;
     overflow: hidden;
     background: var(--surface-card);
 }
 
-.reference-dialog-layout :deep(.reference-check),
-.reference-dialog-layout :deep(.reference-compact) {
-    min-height: 0;
-    height: 100%;
-}
-
 .reference-dialog-layout :deep(.reference-check) {
     flex: 1 1 auto;
-    gap: 0.55rem;
-}
-
-.reference-dialog-layout :deep(.reference-head) {
-    flex: 0 0 auto;
-    padding-bottom: 0.55rem;
-    border-bottom: 1px solid var(--surface-border);
-}
-
-.reference-dialog-layout :deep(.reference-compact) {
-    overflow: hidden;
-    border: 1px solid var(--surface-border);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--surface-ground) 72%, var(--surface-card));
-}
-
-.reference-dialog-layout :deep(.reference-flow-scroll) {
-    border: 0;
-    border-radius: 0;
-    height: 100%;
-    background: transparent;
+    min-height: 0;
 }
 
 .otp-text {

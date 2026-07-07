@@ -15,7 +15,8 @@ const props = defineProps({
     },
     openInNewTab: { type: Boolean, default: false },
     documentRouteResolver: { type: Function, default: null },
-    allowPreview: { type: Boolean, default: true }
+    allowPreview: { type: Boolean, default: true },
+    dialogMode: { type: Boolean, default: false }
 });
 
 defineEmits(['open-document']);
@@ -32,12 +33,14 @@ const pdfActionUrl = ref('');
 const items = computed(() => referenceCheck.value?.items || []);
 const summary = computed(() => referenceCheck.value?.summary || { total: 0, missing: 0, inProgress: 0, completed: 0 });
 const warnings = computed(() => referenceCheck.value?.warnings || []);
-const summaryItems = computed(() => [
-    { label: 'ทั้งหมด', value: summary.value.total || 0, severity: 'info' },
-    { label: 'ยังไม่เข้า', value: summary.value.missing || 0, severity: 'danger' },
-    { label: 'กำลังเซ็น', value: summary.value.inProgress || 0, severity: 'warn' },
-    { label: 'ครบแล้ว', value: summary.value.completed || 0, severity: 'success' }
-]);
+const summaryItems = computed(() => {
+    const total = summary.value.total || 0;
+    const items = [{ value: props.displayMode === 'flow' ? `${total} เอกสาร` : `ทั้งหมด ${total}`, severity: 'info' }];
+    if (summary.value.missing) items.push({ value: `ยังไม่เข้า ${summary.value.missing}`, severity: 'danger' });
+    if (summary.value.inProgress) items.push({ value: `กำลังเซ็น ${summary.value.inProgress}`, severity: 'warn' });
+    if (summary.value.completed) items.push({ value: `ครบแล้ว ${summary.value.completed}`, severity: 'success' });
+    return items;
+});
 const compactFlowMode = computed(() => props.compact && props.displayMode === 'flow');
 
 onMounted(load);
@@ -123,13 +126,13 @@ function openReferencePDF(item = {}) {
 </script>
 
 <template>
-    <div class="reference-check" :class="{ compact }">
+    <div class="reference-check" :class="{ compact, 'dialog-mode': dialogMode }">
         <div class="reference-head">
             <div class="reference-actions">
                 <div class="reference-summary">
-                    <Tag v-for="item in summaryItems" :key="item.label" :value="`${item.label} ${item.value}`" :severity="item.severity" />
+                    <Tag v-for="item in summaryItems" :key="item.value" :value="item.value" :severity="item.severity" />
                 </div>
-                <Button icon="pi pi-refresh" rounded outlined severity="secondary" aria-label="โหลดใหม่" :loading="loading" @click="load" />
+                <Button icon="pi pi-refresh" :label="dialogMode ? 'โหลดใหม่' : undefined" :rounded="!dialogMode" outlined severity="secondary" aria-label="โหลดใหม่" :loading="loading" @click="load" />
             </div>
         </div>
 
@@ -284,11 +287,25 @@ function openReferencePDF(item = {}) {
     flex-direction: column;
 }
 
+.reference-check.dialog-mode {
+    height: 100%;
+    flex: 1 1 auto;
+    gap: 0.55rem;
+    background: var(--surface-card);
+}
+
 .reference-head {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
+}
+
+.reference-check.dialog-mode .reference-head {
+    flex: 0 0 auto;
+    align-items: center;
+    padding-bottom: 0.55rem;
+    border-bottom: 1px solid var(--surface-border);
 }
 
 .reference-actions {
@@ -328,6 +345,13 @@ function openReferencePDF(item = {}) {
     flex: 1 1 auto;
     display: flex;
     flex-direction: column;
+}
+
+.reference-check.dialog-mode .reference-compact {
+    overflow: hidden;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface-ground) 72%, var(--surface-card));
 }
 
 .reference-list {
@@ -401,6 +425,13 @@ function openReferencePDF(item = {}) {
 .reference-check.compact .reference-flow-scroll {
     min-height: 0;
     flex: 1 1 auto;
+}
+
+.reference-check.dialog-mode .reference-flow-scroll {
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
 }
 
 .reference-flow-row {
