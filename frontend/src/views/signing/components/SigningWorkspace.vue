@@ -21,6 +21,7 @@ const props = defineProps({
     publicMode: { type: Boolean, default: false },
     externalSignOnly: { type: Boolean, default: false },
     adminWorkspace: { type: Boolean, default: false },
+    referenceStatus: { type: Object, default: null },
     onBack: { type: Function, default: null },
     onReload: { type: Function, default: null },
     onSign: { type: Function, default: null },
@@ -77,6 +78,7 @@ const allowRelatedDocuments = computed(() => !props.externalSignOnly && !props.h
 const allowReferenceCheck = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.referenceCheckLoader);
 const showReadOnlyPanel = computed(() => !props.externalSignOnly && !props.historyFocus);
 const statusView = computed(() => statusMeta(taskStatus.value));
+const referenceStatusView = computed(() => referenceStatusMeta(props.referenceStatus));
 const signatureTitle = computed(() => ['ลายเซ็น', props.task?.positionName].filter(Boolean).join(' · '));
 const signerLine = computed(() => props.identityLabel || props.task?.signerName || props.task?.signerUser || '-');
 const historySummary = computed(() => {
@@ -398,6 +400,32 @@ function statusMeta(status) {
     }
 }
 
+function referenceStatusMeta(payload) {
+    const status = payload?.status;
+    const summary = payload?.summary || {};
+    const total = Number(summary.total || 0);
+    if (status === 'completed' && total > 0) {
+        return {
+            status: 'completed',
+            icon: 'pi pi-check-circle',
+            title: 'เอกสารอ้างอิงเซ็นครบแล้ว',
+            detail: `ครบ ${Number(summary.completed || 0)}/${total}`
+        };
+    }
+    if (status === 'incomplete' && total > 0) {
+        const parts = [`ครบ ${Number(summary.completed || 0)}/${total}`];
+        if (summary.missing) parts.push(`ยังไม่เข้า ${summary.missing}`);
+        if (summary.inProgress) parts.push(`กำลังเซ็น ${summary.inProgress}`);
+        return {
+            status: 'incomplete',
+            icon: 'pi pi-exclamation-circle',
+            title: 'เอกสารอ้างอิงยังไม่ครบ',
+            detail: parts.join(' · ')
+        };
+    }
+    return null;
+}
+
 function newRequestKey() {
     return crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 }
@@ -442,6 +470,13 @@ function newRequestKey() {
 
             <aside v-if="canInteract" class="sign-card">
                 <div v-if="allowRelatedDocuments || allowReferenceCheck" class="related-section">
+                    <div v-if="referenceStatusView" class="reference-status-strip" :class="`status-${referenceStatusView.status}`">
+                        <i :class="referenceStatusView.icon" aria-hidden="true"></i>
+                        <div>
+                            <strong>{{ referenceStatusView.title }}</strong>
+                            <span>{{ referenceStatusView.detail }}</span>
+                        </div>
+                    </div>
                     <Button
                         v-if="allowRelatedDocuments"
                         label="Flow เอกสาร"
@@ -533,6 +568,13 @@ function newRequestKey() {
                 </div>
                 <DocumentWorkflowTimeline :document="document" compact />
                 <div v-if="allowRelatedDocuments || allowReferenceCheck" class="related-section">
+                    <div v-if="referenceStatusView" class="reference-status-strip" :class="`status-${referenceStatusView.status}`">
+                        <i :class="referenceStatusView.icon" aria-hidden="true"></i>
+                        <div>
+                            <strong>{{ referenceStatusView.title }}</strong>
+                            <span>{{ referenceStatusView.detail }}</span>
+                        </div>
+                    </div>
                     <Button
                         v-if="allowRelatedDocuments"
                         label="Flow เอกสาร"
@@ -870,6 +912,76 @@ function newRequestKey() {
     gap: 0.75rem;
 }
 
+.reference-status-strip {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.7rem 0.75rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: var(--surface-card);
+}
+
+.reference-status-strip i {
+    width: 2rem;
+    height: 2rem;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 999px;
+    font-size: 1rem;
+    background: var(--surface-ground);
+}
+
+.reference-status-strip div {
+    min-width: 0;
+    display: grid;
+    gap: 0.12rem;
+    line-height: 1.25;
+}
+
+.reference-status-strip strong,
+.reference-status-strip span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.reference-status-strip span {
+    color: var(--text-color-secondary);
+    font-size: 0.84rem;
+}
+
+.reference-status-strip.status-completed {
+    border-color: color-mix(in srgb, #22c55e 46%, var(--surface-border));
+    background: color-mix(in srgb, #22c55e 9%, var(--surface-card));
+}
+
+.reference-status-strip.status-completed i,
+.reference-status-strip.status-completed strong {
+    color: #15803d;
+}
+
+.reference-status-strip.status-completed i {
+    background: color-mix(in srgb, #22c55e 14%, var(--surface-card));
+}
+
+.reference-status-strip.status-incomplete {
+    border-color: color-mix(in srgb, #ef4444 44%, var(--surface-border));
+    background: color-mix(in srgb, #ef4444 8%, var(--surface-card));
+}
+
+.reference-status-strip.status-incomplete i,
+.reference-status-strip.status-incomplete strong {
+    color: #b91c1c;
+}
+
+.reference-status-strip.status-incomplete i {
+    background: color-mix(in srgb, #ef4444 12%, var(--surface-card));
+}
+
 .signature-canvas {
     width: 100%;
     height: 188px;
@@ -1078,9 +1190,25 @@ function newRequestKey() {
         gap: 1rem;
     }
 
+    .admin-workspace .workspace-grid.history-focus-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
     .admin-workspace .pdf-shell,
     .admin-workspace .sign-card {
         min-height: 0;
+    }
+
+    .admin-workspace.history-focus-workspace {
+        gap: 0.65rem;
+    }
+
+    .admin-workspace.history-focus-workspace .history-summary {
+        border-radius: 8px;
+    }
+
+    .admin-workspace.history-focus-workspace .pdf-shell {
+        height: auto;
     }
 
     .sticky-actions {

@@ -15,6 +15,8 @@ const task = ref(null);
 const legal = ref(null);
 const loading = ref(false);
 const saving = ref(false);
+const referenceStatus = ref(null);
+let referenceStatusRequestSeq = 0;
 
 const pdfUrl = computed(() => api.signingDocumentPDFUrlForDocument(document.value));
 const identityLabel = computed(() => authStore.user?.displayName || authStore.user?.username || task.value?.signerName || task.value?.signerUser || '');
@@ -24,16 +26,33 @@ const taskListRouteName = computed(() => (isAdminSignerWorkspace.value ? 'admin-
 onMounted(loadTask);
 
 async function loadTask() {
+    const requestSeq = ++referenceStatusRequestSeq;
     loading.value = true;
+    referenceStatus.value = null;
     try {
         const result = await api.getMySigningTask(route.params.taskId);
         document.value = result.document;
         task.value = result.task;
         legal.value = result.legal;
+        loadReferenceStatus(route.params.taskId, requestSeq);
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลดเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         loading.value = false;
+    }
+}
+
+async function loadReferenceStatus(taskId, requestSeq = ++referenceStatusRequestSeq) {
+    if (!taskId) return;
+    try {
+        const result = await api.getMySigningTaskReferenceStatus(taskId);
+        if (requestSeq === referenceStatusRequestSeq) {
+            referenceStatus.value = result;
+        }
+    } catch {
+        if (requestSeq === referenceStatusRequestSeq) {
+            referenceStatus.value = null;
+        }
     }
 }
 
@@ -101,6 +120,7 @@ function goBackToTasks() {
         :saving="saving"
         :identity-label="identityLabel"
         :admin-workspace="isAdminSignerWorkspace"
+        :reference-status="referenceStatus"
         :on-back="goBackToTasks"
         :on-reload="loadTask"
         :on-sign="signTask"
