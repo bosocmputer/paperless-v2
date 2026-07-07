@@ -7,7 +7,9 @@ const props = defineProps({
     admin: { type: Boolean, default: false },
     compact: { type: Boolean, default: false },
     showTable: { type: Boolean, default: true },
-    tableFirst: { type: Boolean, default: false }
+    tableFirst: { type: Boolean, default: false },
+    openPdfOnSelect: { type: Boolean, default: false },
+    showDetailPanel: { type: Boolean, default: true }
 });
 
 const emit = defineEmits(['open-document', 'preview-pdf', 'node-click']);
@@ -215,6 +217,10 @@ function docFormatValue(node = {}) {
 
 function selectFlowNode(node) {
     activeNodeKey.value = flowNodeKey(node);
+    if (props.openPdfOnSelect) {
+        previewCurrentPDF(node);
+        return;
+    }
     emit('node-click', node);
 }
 
@@ -309,6 +315,7 @@ function isMissingPaperLessPdf(node = {}) {
 }
 
 function previewPDF(node, version) {
+    activeNodeKey.value = flowNodeKey(node);
     emit('node-click', node);
     emit('preview-pdf', { node, version, url: version === 'final' ? node.signedPdfUrl : node.currentPdfUrl });
 }
@@ -319,7 +326,7 @@ function previewCurrentPDF(node) {
 </script>
 
 <template>
-    <div class="document-flow-viewer" :class="{ compact, 'large-flow': flowLayout.isLarge }">
+    <div class="document-flow-viewer" :class="{ compact, 'large-flow': flowLayout.isLarge, 'no-detail-panel': !showDetailPanel }">
         <Message v-for="warning in warnings" :key="`${warning.code}-${warning.doc_no || warning.message}`" severity="warn" class="mb-3">
             {{ warning.message || 'พบความสัมพันธ์บางส่วนจาก SML' }}<span v-if="warning.doc_no">: {{ warning.doc_no }}</span>
         </Message>
@@ -348,7 +355,7 @@ function previewCurrentPDF(node) {
                             class="flow-node"
                             :class="[`flow-${referenceStatusClass(item)}`, { selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }]"
                             :style="{ left: `${item._flowX}px`, top: `${item._flowY}px`, width: `${flowLayout.nodeWidth}px`, minHeight: `${flowLayout.nodeHeight}px` }"
-                            :aria-label="`เลือกเอกสาร ${docNoValue(item) || ''}`"
+                            :aria-label="openPdfOnSelect ? `ดู PDF เอกสาร ${docNoValue(item) || ''}` : `เลือกเอกสาร ${docNoValue(item) || ''}`"
                             @click="selectFlowNode(item)"
                         >
                             <span class="flow-node-topline">
@@ -374,6 +381,7 @@ function previewCurrentPDF(node) {
                         type="button"
                         class="flow-mobile-node"
                         :class="[`flow-${referenceStatusClass(item)}`, { selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }]"
+                        :aria-label="openPdfOnSelect ? `ดู PDF เอกสาร ${docNoValue(item) || ''}` : `เลือกเอกสาร ${docNoValue(item) || ''}`"
                         @click="selectFlowNode(item)"
                     >
                         <span class="flow-mobile-index">{{ index + 1 }}</span>
@@ -386,7 +394,7 @@ function previewCurrentPDF(node) {
                 </div>
             </section>
 
-            <aside v-if="selectedFlowNode" class="flow-detail-panel" aria-label="รายละเอียดเอกสารที่เลือก">
+            <aside v-if="showDetailPanel && selectedFlowNode" class="flow-detail-panel" aria-label="รายละเอียดเอกสารที่เลือก">
                 <div class="flow-detail-head">
                     <div class="min-w-0">
                         <div class="flow-detail-selection-label">
@@ -490,6 +498,10 @@ function previewCurrentPDF(node) {
     display: grid;
     grid-template-rows: minmax(320px, 1fr) auto;
     gap: 0.75rem;
+}
+
+.no-detail-panel .flow-workspace {
+    grid-template-rows: minmax(0, 1fr);
 }
 
 .flow-map-panel,

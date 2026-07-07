@@ -1,5 +1,7 @@
 <script setup>
+import { api } from '@/services/api';
 import { formatDocumentDate } from '@/utils/signingFormatters';
+import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
 import { computed, onMounted, ref, watch } from 'vue';
 
 const props = defineProps({
@@ -7,15 +9,20 @@ const props = defineProps({
     loader: { type: Function, required: true },
     compact: { type: Boolean, default: false },
     openInNewTab: { type: Boolean, default: false },
-    documentRouteResolver: { type: Function, default: null }
+    documentRouteResolver: { type: Function, default: null },
+    allowPreview: { type: Boolean, default: true }
 });
 
-const emit = defineEmits(['open-document']);
+defineEmits(['open-document']);
 
 const loading = ref(false);
 const error = ref('');
 const referenceCheck = ref(null);
 const requestSeq = ref(0);
+const pdfDialog = ref(false);
+const pdfUrl = ref('');
+const pdfTitle = ref('');
+const pdfActionUrl = ref('');
 
 const items = computed(() => referenceCheck.value?.items || []);
 const summary = computed(() => referenceCheck.value?.summary || { total: 0, missing: 0, inProgress: 0, completed: 0 });
@@ -85,27 +92,27 @@ function docDate(item = {}) {
     return formatDocumentDate(item.doc_date || item.docDate);
 }
 
-function openUrlInNewTab(url) {
-    if (!url) return;
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.target = '_blank';
-    anchor.rel = 'noopener noreferrer';
-    anchor.style.display = 'none';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
+function paperlessDocumentUrl(item = {}) {
+    const id = item.paperlessDocumentId || item.paperless_document_id;
+    if (!id || !item.canOpenPaperless) return '';
+    return props.documentRouteResolver ? props.documentRouteResolver(id) : `/signing/documents/${encodeURIComponent(id)}`;
 }
 
-function openPaperless(item = {}) {
-    const id = item.paperlessDocumentId || item.paperless_document_id;
-    if (!id || !item.canOpenPaperless) return;
-    if (props.openInNewTab) {
-        const url = props.documentRouteResolver ? props.documentRouteResolver(id) : `/signing/documents/${encodeURIComponent(id)}`;
-        openUrlInNewTab(url);
-        return;
-    }
-    emit('open-document', id);
+function currentPdfUrl(item = {}) {
+    return item.currentPdfUrl || item.current_pdf_url || item.pdfUrl || item.pdf_url || '';
+}
+
+function canPreviewPDF(item = {}) {
+    return props.allowPreview && !!currentPdfUrl(item);
+}
+
+function openReferencePDF(item = {}) {
+    if (!canPreviewPDF(item)) return;
+    const rawUrl = currentPdfUrl(item);
+    pdfUrl.value = api.withPDFCacheKey(rawUrl, api.signingDocumentPDFCacheKey(item, 'current'));
+    pdfTitle.value = `${docNo(item)} · เอกสารใน PaperLess`;
+    pdfActionUrl.value = paperlessDocumentUrl(item);
+    pdfDialog.value = true;
 }
 </script>
 
@@ -140,14 +147,24 @@ function openPaperless(item = {}) {
                 <span>ยังไม่พบเอกสารอ้างอิงก่อนหน้าใน SML</span>
             </div>
             <div v-else class="reference-list">
-                <div v-for="item in items" :key="`${docNo(item)}-${sourceLabel(item)}`" class="reference-item" :class="`status-${item.paperlessStatus || 'missing'}`">
+                <div
+                    v-for="item in items"
+                    :key="`${docNo(item)}-${sourceLabel(item)}`"
+                    class="reference-item"
+                    :class="[`status-${item.paperlessStatus || 'missing'}`, { 'can-preview': canPreviewPDF(item) }]"
+                    :role="canPreviewPDF(item) ? 'button' : undefined"
+                    :tabindex="canPreviewPDF(item) ? 0 : undefined"
+                    :aria-label="canPreviewPDF(item) ? `ดู PDF เอกสาร ${docNo(item)}` : `เอกสาร ${docNo(item)} ยังไม่มี PDF ใน PaperLess`"
+                    @click="openReferencePDF(item)"
+                    @keydown.enter.prevent="openReferencePDF(item)"
+                    @keydown.space.prevent="openReferencePDF(item)"
+                >
                     <span class="reference-status-dot" aria-hidden="true"></span>
                     <div class="reference-item-main">
                         <div class="reference-item-top">
                             <Tag :value="statusMeta(item).label" :severity="statusMeta(item).severity" :icon="statusMeta(item).icon" />
                             <div class="reference-doc-line">
-                                <Button v-if="item.canOpenPaperless" link class="p-0 font-bold text-left" @click.stop="openPaperless(item)">{{ docNo(item) }}</Button>
-                                <strong v-else>{{ docNo(item) }}</strong>
+                                <strong>{{ docNo(item) }}</strong>
                             </div>
                         </div>
                         <div class="reference-meta-line">
@@ -157,14 +174,15 @@ function openPaperless(item = {}) {
                         </div>
                     </div>
                     <Button
-                        :icon="item.canOpenPaperless ? 'pi pi-external-link' : 'pi pi-ban'"
+                        v-if="allowPreview"
+                        :icon="canPreviewPDF(item) ? 'pi pi-file-pdf' : 'pi pi-ban'"
                         size="small"
                         rounded
                         outlined
-                        :severity="item.canOpenPaperless ? 'secondary' : 'danger'"
-                        :disabled="!item.canOpenPaperless"
-                        :aria-label="item.canOpenPaperless ? 'เปิดรายละเอียด' : 'ยังไม่มี PDF'"
-                        @click.stop="openPaperless(item)"
+                        :severity="canPreviewPDF(item) ? 'secondary' : 'danger'"
+                        :disabled="!canPreviewPDF(item)"
+                        :aria-label="canPreviewPDF(item) ? 'ดู PDF' : 'ยังไม่มี PDF'"
+                        @click.stop="openReferencePDF(item)"
                     />
                 </div>
             </div>
@@ -187,7 +205,7 @@ function openPaperless(item = {}) {
             </Column>
             <Column header="เลขที่เอกสาร" style="min-width: 13rem">
                 <template #body="{ data }">
-                    <Button v-if="data.canOpenPaperless" link class="p-0 font-bold text-left" @click.stop="openPaperless(data)">{{ docNo(data) }}</Button>
+                    <Button v-if="canPreviewPDF(data)" link class="p-0 font-bold text-left" @click.stop="openReferencePDF(data)">{{ docNo(data) }}</Button>
                     <strong v-else>{{ docNo(data) }}</strong>
                 </template>
             </Column>
@@ -200,17 +218,19 @@ function openPaperless(item = {}) {
             <Column header="จัดการ" style="min-width: 10rem">
                 <template #body="{ data }">
                     <Button
-                        :label="data.canOpenPaperless ? 'รายละเอียด' : 'ยังไม่มี PDF'"
-                        :icon="data.canOpenPaperless ? 'pi pi-external-link' : 'pi pi-ban'"
+                        :label="canPreviewPDF(data) ? 'ดูเอกสาร' : 'ยังไม่มี PDF'"
+                        :icon="canPreviewPDF(data) ? 'pi pi-file-pdf' : 'pi pi-ban'"
                         size="small"
                         outlined
-                        :severity="data.canOpenPaperless ? 'secondary' : 'danger'"
-                        :disabled="!data.canOpenPaperless"
-                        @click.stop="openPaperless(data)"
+                        :severity="canPreviewPDF(data) ? 'secondary' : 'danger'"
+                        :disabled="!canPreviewPDF(data)"
+                        @click.stop="openReferencePDF(data)"
                     />
                 </template>
             </Column>
         </DataTable>
+
+        <ReadOnlyPdfDialog v-model:visible="pdfDialog" :url="pdfUrl" :title="pdfTitle" :action-url="pdfActionUrl" action-label="เปิด PaperLess" full-height />
     </div>
 </template>
 
@@ -276,6 +296,21 @@ function openPaperless(item = {}) {
     border-radius: 8px;
     padding: 0.58rem 0.68rem;
     background: var(--surface-card);
+}
+
+.reference-item.can-preview {
+    cursor: pointer;
+    transition:
+        border-color 0.15s ease,
+        background-color 0.15s ease,
+        transform 0.15s ease;
+}
+
+.reference-item.can-preview:hover,
+.reference-item.can-preview:focus-visible {
+    border-color: var(--primary-color);
+    outline: none;
+    transform: translateY(-1px);
 }
 
 .reference-item.status-completed {

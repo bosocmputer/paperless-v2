@@ -23,6 +23,7 @@ const flowRequestSeq = ref(0);
 const pdfDialog = ref(false);
 const pdfUrl = ref('');
 const pdfTitle = ref('');
+const pdfActionUrl = ref('');
 const flowCache = new Map();
 const flowSessionId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 const openedAt = ref(Date.now());
@@ -148,8 +149,9 @@ async function previewFlowPDF(payload = {}) {
     const version = payload.version === 'final' ? 'final' : 'current';
     const rawUrl = payload.url || (version === 'final' ? node.signedPdfUrl : node.currentPdfUrl);
     const url = api.withPDFCacheKey(rawUrl, api.signingDocumentPDFCacheKey(node, version));
-    const docNo = node.doc_no || 'เอกสารนี้';
+    const docNo = node.doc_no || node.docNo || 'เอกสารนี้';
     if (!url) {
+        pdfActionUrl.value = '';
         flowNotice.value = `${docNo} ยังไม่มีเอกสาร PDF ใน PaperLess`;
         toast.add({ severity: 'info', summary: 'ยังไม่มีเอกสาร PDF', detail: flowNotice.value, life: 3000 });
         return;
@@ -158,6 +160,7 @@ async function previewFlowPDF(payload = {}) {
     flowNotice.value = '';
     pdfUrl.value = url;
     pdfTitle.value = `${docNo} · ${version === 'final' ? 'หลักฐานการลงนาม' : 'เอกสารใน PaperLess'}`;
+    pdfActionUrl.value = paperlessDocumentUrl(node);
     pdfDialog.value = true;
     recordFlowEvent('document_flow_pdf_open', { docFormatCode: node.doc_format_code || flowDocument.value?.docFormatCode || '', nodeCount: flowNodeCount.value });
 }
@@ -165,6 +168,15 @@ async function previewFlowPDF(payload = {}) {
 function clearPDFPreview() {
     pdfUrl.value = '';
     pdfTitle.value = '';
+    pdfActionUrl.value = '';
+}
+
+function paperlessDocumentUrl(node = {}) {
+    const id = node.paperlessDocumentId || node.paperless_document_id || '';
+    if (!id || !node.canOpenPaperless) return '';
+    const status = node.paperlessStatus || node.status || '';
+    const queue = status === 'completed' ? 'history' : status === 'draft' ? 'drafts' : 'active';
+    return `/signing/documents/${encodeURIComponent(id)}?from_queue=${encodeURIComponent(queue)}`;
 }
 
 function userFacingFlowError(err) {
@@ -227,6 +239,8 @@ function recordFlowEvent(event, extra = {}) {
                     :graph="flowGraph"
                     admin
                     show-table
+                    open-pdf-on-select
+                    :show-detail-panel="false"
                     @open-document="(documentId) => emit('open-document', documentId)"
                     @preview-pdf="previewFlowPDF"
                 />
@@ -234,7 +248,7 @@ function recordFlowEvent(event, extra = {}) {
         </div>
     </Dialog>
 
-    <ReadOnlyPdfDialog v-model:visible="pdfDialog" :url="pdfUrl" :title="pdfTitle" full-height />
+    <ReadOnlyPdfDialog v-model:visible="pdfDialog" :url="pdfUrl" :title="pdfTitle" :action-url="pdfActionUrl" action-label="เปิด PaperLess" full-height />
 </template>
 
 <style scoped>

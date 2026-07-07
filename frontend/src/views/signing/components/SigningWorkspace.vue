@@ -1,5 +1,6 @@
 <script setup>
 import ContinuousPdfViewer from '@/views/signing/components/ContinuousPdfViewer.vue';
+import DocumentReferenceCheck from '@/views/signing/components/DocumentReferenceCheck.vue';
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
 import RelatedDocumentsPanel from '@/views/signing/components/RelatedDocumentsPanel.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -28,6 +29,7 @@ const props = defineProps({
     onAttach: { type: Function, default: null },
     onRecordEvent: { type: Function, default: null },
     relatedLoader: { type: Function, default: null },
+    referenceCheckLoader: { type: Function, default: null },
     readOnly: { type: Boolean, default: false },
     historyFocus: { type: Boolean, default: false },
     readOnlyReason: { type: String, default: '' },
@@ -50,6 +52,7 @@ const uploadingAttachment = ref(false);
 const attachmentCount = ref(0);
 const localSaving = ref(false);
 const flowDialogVisible = ref(false);
+const referenceDialogVisible = ref(false);
 const attachmentVisible = ref(false);
 const legalDialogVisible = ref(false);
 const pdfDialogVisible = ref(false);
@@ -74,6 +77,7 @@ const allowFullPDF = computed(() => !props.externalSignOnly);
 const allowReject = computed(() => !props.externalSignOnly && !!props.onReject);
 const allowAttachments = computed(() => !props.externalSignOnly && !!props.onAttach);
 const allowRelatedDocuments = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.relatedLoader);
+const allowReferenceCheck = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.referenceCheckLoader);
 const showReadOnlyPanel = computed(() => !props.externalSignOnly && !props.historyFocus);
 const statusView = computed(() => statusMeta(taskStatus.value));
 const showReferenceStatus = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.task?.id && !props.loading);
@@ -224,6 +228,7 @@ watch(
                 rejectIdempotencyKey.value = newRequestKey();
                 attachmentVisible.value = false;
                 flowDialogVisible.value = false;
+                referenceDialogVisible.value = false;
                 legalDialogVisible.value = false;
                 pdfDialogVisible.value = false;
             }
@@ -459,6 +464,10 @@ function openFlowDialog() {
     recordEvent('related_documents_open');
 }
 
+function openReferenceDialog() {
+    referenceDialogVisible.value = true;
+}
+
 function statusMeta(status) {
     switch (status) {
         case 'pending':
@@ -527,14 +536,24 @@ function newRequestKey() {
             </section>
 
             <aside v-if="canInteract" class="sign-card">
-                <div v-if="allowRelatedDocuments" class="related-section">
+                <div v-if="allowRelatedDocuments || allowReferenceCheck" class="related-section">
                     <Button
+                        v-if="allowRelatedDocuments"
                         label="Flow เอกสาร"
                         icon="pi pi-sitemap"
                         severity="secondary"
                         outlined
                         class="w-full"
                         @click="openFlowDialog"
+                    />
+                    <Button
+                        v-if="allowReferenceCheck"
+                        label="ตรวจสอบเอกสาร"
+                        icon="pi pi-list"
+                        severity="secondary"
+                        outlined
+                        class="w-full"
+                        @click="openReferenceDialog"
                     />
                 </div>
 
@@ -608,14 +627,24 @@ function newRequestKey() {
                     <Tag :value="statusView.label" :severity="statusView.severity" />
                 </div>
                 <DocumentWorkflowTimeline :document="document" compact />
-                <div v-if="allowRelatedDocuments" class="related-section">
+                <div v-if="allowRelatedDocuments || allowReferenceCheck" class="related-section">
                     <Button
+                        v-if="allowRelatedDocuments"
                         label="Flow เอกสาร"
                         icon="pi pi-sitemap"
                         severity="secondary"
                         outlined
                         class="w-full"
                         @click="openFlowDialog"
+                    />
+                    <Button
+                        v-if="allowReferenceCheck"
+                        label="ตรวจสอบเอกสาร"
+                        icon="pi pi-list"
+                        severity="secondary"
+                        outlined
+                        class="w-full"
+                        @click="openReferenceDialog"
                     />
                 </div>
             </aside>
@@ -676,6 +705,19 @@ function newRequestKey() {
                 :loader="relatedLoader"
                 :record-event="recordEvent"
             />
+        </Dialog>
+
+        <Dialog v-if="allowReferenceCheck" v-model:visible="referenceDialogVisible" modal header="ตรวจสอบเอกสาร" class="reference-check-dialog" :style="{ width: 'min(56rem, 96vw)' }" :breakpoints="{ '640px': '100vw' }">
+            <DocumentReferenceCheck
+                v-if="referenceDialogVisible"
+                compact
+                :document="document"
+                :loader="referenceCheckLoader"
+                :allow-preview="false"
+            />
+            <template #footer>
+                <Button label="ปิด" severity="secondary" outlined @click="referenceDialogVisible = false" />
+            </template>
         </Dialog>
     </section>
 </template>
@@ -1129,6 +1171,12 @@ function newRequestKey() {
     padding-top: 0;
 }
 
+:global(.reference-check-dialog .p-dialog-content) {
+    padding-top: 0.25rem;
+    max-height: min(70dvh, 42rem);
+    overflow: auto;
+}
+
 @media (max-width: 920px) {
     .signing-workspace {
         padding: 0;
@@ -1270,6 +1318,20 @@ function newRequestKey() {
     :global(.flow-dialog .p-dialog-content) {
         height: calc(100dvh - 4.5rem);
         overflow: auto;
+    }
+
+    :global(.reference-check-dialog.p-dialog) {
+        width: 100vw !important;
+        max-width: 100vw !important;
+        height: 100dvh;
+        max-height: 100dvh;
+        margin: 0;
+        border-radius: 0;
+    }
+
+    :global(.reference-check-dialog .p-dialog-content) {
+        max-height: none;
+        height: calc(100dvh - 8.5rem);
     }
 }
 </style>

@@ -241,6 +241,57 @@ func TestSigningReferenceStatusResponseDoesNotExposeDocumentDetails(t *testing.T
 	}
 }
 
+func TestSanitizeDocumentReferenceCheckForSignerScrubsOpenFields(t *testing.T) {
+	result := models.SMLDocumentReferences{
+		Document: models.SMLRelatedDocumentNode{
+			PaperlessDocumentID: "root-doc",
+			CanOpenPaperless:    true,
+			HasCurrentPDF:       true,
+			HasFinalPDF:         true,
+			CanViewCurrentPDF:   true,
+			CanViewSignedPDF:    true,
+			CurrentPDFURL:       "/api/signing-documents/root-doc/pdf",
+			SignedPDFURL:        "/api/signing-documents/root-doc/pdf?version=final",
+			MatchCount:          1,
+			PaperlessMatches: []models.SigningDocumentReference{{
+				ID: "root-doc",
+			}},
+		},
+		Items: []models.SMLDocumentReferenceItem{{
+			DocNo:               "PO26060001",
+			PaperlessDocumentID: "paperless-doc",
+			PaperlessStatus:     "completed",
+			CanOpenPaperless:    true,
+			HasCurrentPDF:       true,
+			HasFinalPDF:         true,
+			CanViewCurrentPDF:   true,
+			CanViewSignedPDF:    true,
+			CurrentPDFURL:       "/api/signing-documents/paperless-doc/pdf",
+			SignedPDFURL:        "/api/signing-documents/paperless-doc/pdf?version=final",
+			MatchCount:          1,
+			PaperlessMatches: []models.SigningDocumentReference{{
+				ID: "paperless-doc",
+			}},
+		}},
+		Summary: models.SMLDocumentReferenceSummary{Total: 1, Completed: 1},
+	}
+
+	got := sanitizeDocumentReferenceCheckForSigner(result)
+	if got.Document.PaperlessDocumentID != "" || got.Document.CanOpenPaperless || got.Document.CurrentPDFURL != "" || len(got.Document.PaperlessMatches) != 0 {
+		t.Fatalf("root open fields leaked: %#v", got.Document)
+	}
+	item := got.Items[0]
+	if item.PaperlessStatus != "completed" {
+		t.Fatalf("status should remain visible, got %q", item.PaperlessStatus)
+	}
+	if item.PaperlessDocumentID != "" || item.CanOpenPaperless || item.CurrentPDFURL != "" || item.SignedPDFURL != "" || item.MatchCount != 0 || len(item.PaperlessMatches) != 0 {
+		t.Fatalf("item open fields leaked: %#v", item)
+	}
+	if got.Summary.Completed != 1 {
+		t.Fatalf("summary should remain visible: %#v", got.Summary)
+	}
+}
+
 func TestPrepareReferenceMatchForAdminScrubsOtherUserDraft(t *testing.T) {
 	ref := prepareReferenceMatchForAdmin(models.SigningDocumentReference{
 		ID:            "draft-doc",

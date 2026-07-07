@@ -216,6 +216,51 @@ func (s *Server) getMySigningTaskReferenceStatus(w http.ResponseWriter, r *http.
 	})
 }
 
+func (s *Server) getMySigningTaskReferenceCheck(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r)
+	signer, err := s.store.FindSigningTaskByID(r.Context(), strings.TrimSpace(r.PathValue("taskId")))
+	if errors.Is(err, store.ErrSigningTaskNotFound) || (err == nil && !strings.EqualFold(signer.SignerUser, user.Username)) {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("load signing task for reference check failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot load signing task right now.")
+		return
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil {
+		s.logger.Error("load signer document for reference check failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	if document.Status != "in_progress" {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.SMLPaperlessTimeout)
+	defer cancel()
+	result, err := s.fetchSMLDocumentReferences(store.WithSMLTenant(ctx, document.SMLTenant), document.DocFormatCode, document.DocNo)
+	if errors.Is(err, errSMLConfigMissing) {
+		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML Paperless API is not configured.")
+		return
+	}
+	if err != nil {
+		s.logger.Warn("fetch signer reference check failed", "error", err, "docFormatCode", document.DocFormatCode, "docNo", document.DocNo)
+		code, status, message := smlLookupErrorView(err)
+		writeError(w, status, code, message)
+		return
+	}
+	result, err = s.enrichDocumentReferenceCheck(r.Context(), result, false, user.ID)
+	if err != nil {
+		s.logger.Warn("enrich signer reference check failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "reference_check_enrich_failed", "Cannot prepare reference check right now.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"referenceCheck": sanitizeDocumentReferenceCheckForSigner(result)})
+}
+
 func (s *Server) getPublicSigningRelatedDocuments(w http.ResponseWriter, r *http.Request) {
 	_, ok := s.externalSignerFromRequest(w, r)
 	if !ok {
@@ -568,6 +613,32 @@ func sanitizeRelatedDocumentsForSigner(graph models.SMLRelatedDocumentsGraph) mo
 		graph.Nodes[i].PaperlessMatches = nil
 	}
 	return graph
+}
+
+func sanitizeDocumentReferenceCheckForSigner(result models.SMLDocumentReferences) models.SMLDocumentReferences {
+	result.Document.PaperlessDocumentID = ""
+	result.Document.CanOpenPaperless = false
+	result.Document.HasCurrentPDF = false
+	result.Document.HasFinalPDF = false
+	result.Document.CanViewCurrentPDF = false
+	result.Document.CanViewSignedPDF = false
+	result.Document.CurrentPDFURL = ""
+	result.Document.SignedPDFURL = ""
+	result.Document.MatchCount = 0
+	result.Document.PaperlessMatches = nil
+	for i := range result.Items {
+		result.Items[i].PaperlessDocumentID = ""
+		result.Items[i].CanOpenPaperless = false
+		result.Items[i].HasCurrentPDF = false
+		result.Items[i].HasFinalPDF = false
+		result.Items[i].CanViewCurrentPDF = false
+		result.Items[i].CanViewSignedPDF = false
+		result.Items[i].CurrentPDFURL = ""
+		result.Items[i].SignedPDFURL = ""
+		result.Items[i].MatchCount = 0
+		result.Items[i].PaperlessMatches = nil
+	}
+	return result
 }
 
 func relatedReferenceKey(docFormatCode, docNo string) string {

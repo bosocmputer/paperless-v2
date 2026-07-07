@@ -110,6 +110,10 @@ function loadRelatedDocuments() {
     return api.getMySigningTaskRelatedDocuments(route.params.taskId);
 }
 
+function loadReferenceCheck() {
+    return api.getMySigningTaskReferenceCheck(route.params.taskId);
+}
+
 function goBackToTasks() {
     router.push({ name: taskListRouteName.value });
 }
@@ -135,5 +139,6 @@ function goBackToTasks() {
         :on-attach="attachFile"
         :on-record-event="recordEvent"
         :related-loader="loadRelatedDocuments"
+        :reference-check-loader="loadReferenceCheck"
     />
 </template>

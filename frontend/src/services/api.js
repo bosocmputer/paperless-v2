@@ -409,6 +409,9 @@ export const api = {
     getMySigningTaskRelatedDocuments(taskId, depth = 3) {
         return request(withQuery(`/api/my/signing-tasks/${taskId}/related-documents`, { depth }));
     },
+    getMySigningTaskReferenceCheck(taskId) {
+        return request(`/api/my/signing-tasks/${taskId}/reference-check`);
+    },
     getMySigningTaskReferenceStatus(taskId) {
         return request(`/api/my/signing-tasks/${taskId}/reference-status`);
     },

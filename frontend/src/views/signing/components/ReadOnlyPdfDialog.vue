@@ -9,7 +9,10 @@ const props = defineProps({
     url: { type: String, default: '' },
     title: { type: String, default: 'ดูเอกสาร' },
     emptyMessage: { type: String, default: 'ยังไม่มี PDF' },
-    fullHeight: { type: Boolean, default: false }
+    fullHeight: { type: Boolean, default: false },
+    actionUrl: { type: String, default: '' },
+    actionLabel: { type: String, default: 'เปิด PaperLess' },
+    actionIcon: { type: String, default: 'pi pi-external-link' }
 });
 
 const emit = defineEmits(['update:visible']);
@@ -54,6 +57,18 @@ function blockBrowserPrint(event) {
         life: 3500
     });
 }
+
+function openActionUrl() {
+    if (!props.actionUrl) return;
+    const anchor = document.createElement('a');
+    anchor.href = props.actionUrl;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+}
 </script>
 
 <template>
@@ -71,6 +86,7 @@ function blockBrowserPrint(event) {
             <ContinuousPdfViewer :url="url" :headers="api.authHeaders()" :empty-message="emptyMessage" toolbar-label="เอกสาร" />
         </div>
         <template #footer>
+            <Button v-if="actionUrl" :label="actionLabel" :icon="actionIcon" severity="secondary" outlined @click="openActionUrl" />
             <Button label="ปิด" severity="secondary" outlined @click="dialogVisible = false" />
         </template>
     </Dialog>
