@@ -15,6 +15,8 @@ const props = defineProps({
     pdfHeaders: { type: Object, default: () => ({}) },
     loading: { type: Boolean, default: false },
     saving: { type: Boolean, default: false },
+    referenceStatus: { type: Object, default: null },
+    referenceStatusLoading: { type: Boolean, default: false },
     identityLabel: { type: String, default: '' },
     publicMode: { type: Boolean, default: false },
     externalSignOnly: { type: Boolean, default: false },
@@ -74,6 +76,8 @@ const allowAttachments = computed(() => !props.externalSignOnly && !!props.onAtt
 const allowRelatedDocuments = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.relatedLoader);
 const showReadOnlyPanel = computed(() => !props.externalSignOnly && !props.historyFocus);
 const statusView = computed(() => statusMeta(taskStatus.value));
+const showReferenceStatus = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.task?.id && !props.loading);
+const referenceStatusView = computed(() => referenceStatusMeta(props.referenceStatus, props.referenceStatusLoading));
 const signatureTitle = computed(() => ['ลายเซ็น', props.task?.positionName].filter(Boolean).join(' · '));
 const signerLine = computed(() => props.identityLabel || props.task?.signerName || props.task?.signerUser || '-');
 const historySummary = computed(() => {
@@ -95,6 +99,60 @@ const primaryDisabledReason = computed(() => {
     if (!legalAccepted.value) return 'กรุณายืนยันข้อความ พ.ร.บ. ก่อน';
     return '';
 });
+
+function referenceStatusMeta(referenceStatus, loading) {
+    const summary = referenceStatus?.summary || {};
+    if (loading) {
+        return {
+            status: 'loading',
+            icon: 'pi pi-spin pi-spinner',
+            title: 'กำลังตรวจสอบเอกสารอ้างอิง',
+            detail: 'การตรวจสอบนี้ไม่กระทบการเซ็นเอกสาร'
+        };
+    }
+    switch (referenceStatus?.status) {
+        case 'completed':
+            return {
+                status: 'completed',
+                icon: 'pi pi-check-circle',
+                title: 'เอกสารอ้างอิงเซ็นครบแล้ว',
+                detail: referenceStatusSummary(summary, 'ครบ')
+            };
+        case 'incomplete':
+            return {
+                status: 'incomplete',
+                icon: 'pi pi-exclamation-triangle',
+                title: 'เอกสารอ้างอิงยังไม่ครบ',
+                detail: referenceStatusSummary(summary, 'ครบ')
+            };
+        case 'none':
+            return {
+                status: 'none',
+                icon: 'pi pi-info-circle',
+                title: 'ไม่พบเอกสารอ้างอิงก่อนหน้า',
+                detail: 'เซ็นต่อได้ตามปกติ'
+            };
+        default:
+            return {
+                status: 'unavailable',
+                icon: 'pi pi-clock',
+                title: 'ยังตรวจสอบเอกสารอ้างอิงไม่ได้',
+                detail: 'เซ็นต่อได้ตามปกติ'
+            };
+    }
+}
+
+function referenceStatusSummary(summary = {}, completedLabel = 'ครบ') {
+    const total = Number(summary.total || 0);
+    const completed = Number(summary.completed || 0);
+    const missing = Number(summary.missing || 0);
+    const inProgress = Number(summary.inProgress || 0);
+    const parts = [];
+    if (total > 0) parts.push(`${completedLabel} ${completed}/${total}`);
+    if (missing > 0) parts.push(`ยังไม่เข้า PaperLess ${missing}`);
+    if (inProgress > 0) parts.push(`กำลังเซ็น ${inProgress}`);
+    return parts.join(' · ') || 'เซ็นต่อได้ตามปกติ';
+}
 
 onMounted(async () => {
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -445,6 +503,14 @@ function newRequestKey() {
         <Message v-if="historyFocus && !loading" :severity="statusView.severity" class="history-summary">
             {{ historySummary }}
         </Message>
+
+        <div v-if="showReferenceStatus" class="reference-status-strip" :class="`status-${referenceStatusView.status}`" role="status" aria-live="polite">
+            <i :class="referenceStatusView.icon"></i>
+            <div class="reference-status-text">
+                <strong>{{ referenceStatusView.title }}</strong>
+                <span>{{ referenceStatusView.detail }}</span>
+            </div>
+        </div>
 
         <div v-if="!loading" class="workspace-grid" :class="{ 'readonly-grid': !canInteract, 'history-focus-grid': historyFocus }">
             <section class="pdf-shell">
@@ -976,6 +1042,62 @@ function newRequestKey() {
     margin: 0;
 }
 
+.reference-status-strip {
+    --reference-strip-color: var(--text-color-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-height: 46px;
+    border: 1px solid color-mix(in srgb, var(--reference-strip-color) 42%, var(--surface-border));
+    border-left-width: 4px;
+    border-radius: 8px;
+    padding: 0.55rem 0.75rem;
+    color: var(--text-color);
+    background: color-mix(in srgb, var(--reference-strip-color) 6%, var(--surface-card));
+}
+
+.reference-status-strip > i {
+    color: var(--reference-strip-color);
+    font-size: 1.08rem;
+    flex: 0 0 auto;
+}
+
+.reference-status-text {
+    min-width: 0;
+    display: grid;
+    gap: 0.05rem;
+    line-height: 1.25;
+}
+
+.reference-status-text strong,
+.reference-status-text span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.reference-status-text span {
+    color: var(--text-color-secondary);
+    font-size: 0.86rem;
+}
+
+.reference-status-strip.status-completed {
+    --reference-strip-color: var(--p-green-500, #22c55e);
+}
+
+.reference-status-strip.status-incomplete {
+    --reference-strip-color: var(--p-red-500, #ef4444);
+}
+
+.reference-status-strip.status-none {
+    --reference-strip-color: var(--p-surface-400, #94a3b8);
+}
+
+.reference-status-strip.status-unavailable,
+.reference-status-strip.status-loading {
+    --reference-strip-color: var(--p-yellow-500, #eab308);
+}
+
 .history-focus-grid {
     grid-template-columns: minmax(0, 1fr);
 }
@@ -1019,7 +1141,8 @@ function newRequestKey() {
     }
 
     .signing-header,
-    .history-summary {
+    .history-summary,
+    .reference-status-strip {
         margin-inline: 0.55rem;
     }
 

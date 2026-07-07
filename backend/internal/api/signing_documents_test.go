@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -180,6 +181,63 @@ func TestClassifyPaperlessReferenceStatus(t *testing.T) {
 				t.Fatalf("selected = %#v, want id %q", gotRef, tc.wantID)
 			}
 		})
+	}
+}
+
+func TestSigningReferenceStatusFromSummary(t *testing.T) {
+	tests := []struct {
+		name    string
+		summary models.SMLDocumentReferenceSummary
+		want    string
+	}{
+		{
+			name:    "no references",
+			summary: models.SMLDocumentReferenceSummary{},
+			want:    "none",
+		},
+		{
+			name:    "all completed",
+			summary: models.SMLDocumentReferenceSummary{Total: 2, Completed: 2},
+			want:    "completed",
+		},
+		{
+			name:    "missing reference",
+			summary: models.SMLDocumentReferenceSummary{Total: 2, Completed: 1, Missing: 1},
+			want:    "incomplete",
+		},
+		{
+			name:    "in progress reference",
+			summary: models.SMLDocumentReferenceSummary{Total: 2, Completed: 1, InProgress: 1},
+			want:    "incomplete",
+		},
+		{
+			name:    "mismatched counts fail safe",
+			summary: models.SMLDocumentReferenceSummary{Total: 2, Completed: 1},
+			want:    "incomplete",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := signingReferenceStatusFromSummary(tc.summary); got != tc.want {
+				t.Fatalf("status = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSigningReferenceStatusResponseDoesNotExposeDocumentDetails(t *testing.T) {
+	payload := signingReferenceStatusResponse{
+		Status:  "incomplete",
+		Summary: models.SMLDocumentReferenceSummary{Total: 2, Missing: 1, Completed: 1},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal reference status response: %v", err)
+	}
+	for _, forbidden := range []string{"docNo", "paperlessDocumentId", "currentPdfUrl", "signedPdfUrl", "paperlessMatches"} {
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("reference status response leaked %q: %s", forbidden, body)
+		}
 	}
 }
 

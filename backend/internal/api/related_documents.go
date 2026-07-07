@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 	"github.com/bosocmputer/paperless-v2/backend/internal/store"
@@ -44,6 +45,12 @@ type documentFlowEventRequest struct {
 	ElapsedMS     int64  `json:"elapsedMs"`
 	NodeCount     int    `json:"nodeCount"`
 	ErrorCode     string `json:"errorCode"`
+}
+
+type signingReferenceStatusResponse struct {
+	Status    string                             `json:"status"`
+	Summary   models.SMLDocumentReferenceSummary `json:"summary"`
+	CheckedAt time.Time                          `json:"checkedAt"`
 }
 
 func (s *Server) getAdminDocumentFlow(w http.ResponseWriter, r *http.Request) {
@@ -165,12 +172,74 @@ func (s *Server) getMySigningTaskRelatedDocuments(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, map[string]any{"relatedDocuments": graph})
 }
 
+func (s *Server) getMySigningTaskReferenceStatus(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r)
+	signer, err := s.store.FindSigningTaskByID(r.Context(), strings.TrimSpace(r.PathValue("taskId")))
+	if errors.Is(err, store.ErrSigningTaskNotFound) || (err == nil && !strings.EqualFold(signer.SignerUser, user.Username)) {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("load signing task for reference status failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot load signing task right now.")
+		return
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil {
+		s.logger.Error("load signer document for reference status failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	if document.Status != "in_progress" {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.SMLPaperlessTimeout)
+	defer cancel()
+	result, err := s.fetchSMLDocumentReferences(store.WithSMLTenant(ctx, document.SMLTenant), document.DocFormatCode, document.DocNo)
+	if err != nil {
+		s.logger.Warn("fetch signer reference status failed", "error", err, "docFormatCode", document.DocFormatCode, "docNo", document.DocNo)
+		writeJSON(w, http.StatusOK, unavailableSigningReferenceStatus())
+		return
+	}
+	result, err = s.enrichDocumentReferenceCheck(r.Context(), result, false, user.ID)
+	if err != nil {
+		s.logger.Warn("enrich signer reference status failed", "error", err)
+		writeJSON(w, http.StatusOK, unavailableSigningReferenceStatus())
+		return
+	}
+	writeJSON(w, http.StatusOK, signingReferenceStatusResponse{
+		Status:    signingReferenceStatusFromSummary(result.Summary),
+		Summary:   result.Summary,
+		CheckedAt: time.Now().UTC(),
+	})
+}
+
 func (s *Server) getPublicSigningRelatedDocuments(w http.ResponseWriter, r *http.Request) {
 	_, ok := s.externalSignerFromRequest(w, r)
 	if !ok {
 		return
 	}
 	externalSignOnlyForbidden(w)
+}
+
+func unavailableSigningReferenceStatus() signingReferenceStatusResponse {
+	return signingReferenceStatusResponse{
+		Status:    "unavailable",
+		Summary:   models.SMLDocumentReferenceSummary{},
+		CheckedAt: time.Now().UTC(),
+	}
+}
+
+func signingReferenceStatusFromSummary(summary models.SMLDocumentReferenceSummary) string {
+	if summary.Total == 0 {
+		return "none"
+	}
+	if summary.Missing > 0 || summary.InProgress > 0 || summary.Completed < summary.Total {
+		return "incomplete"
+	}
+	return "completed"
 }
 
 func (s *Server) writeRelatedDocuments(w http.ResponseWriter, r *http.Request, docFormatCode, docNo string, admin bool) (models.SMLRelatedDocumentsGraph, bool) {

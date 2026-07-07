@@ -1,5 +1,5 @@
 <script setup>
-import { formatDocumentDate, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
+import { formatDocumentDate } from '@/utils/signingFormatters';
 import { computed, ref } from 'vue';
 
 const props = defineProps({
@@ -12,52 +12,220 @@ const props = defineProps({
 
 const emit = defineEmits(['open-document', 'preview-pdf', 'node-click']);
 
-const selectedNode = ref(null);
-const detailVisible = ref(false);
 const activeNodeKey = ref('');
 
+const missingPaperLessPdfMessage = 'เอกสารนี้มีข้อมูลจาก SML แต่ยังไม่มี PDF ใน PaperLess';
 const nodes = computed(() => props.graph?.nodes || []);
 const edges = computed(() => props.graph?.edges || []);
 const warnings = computed(() => props.graph?.warnings || []);
 const rootDocNo = computed(() => props.graph?.root?.doc_no || props.graph?.root?.docNo || '');
-const useTableFirst = computed(() => props.tableFirst || props.compact || nodes.value.length > 5);
 const timelineItems = computed(() =>
-    nodes.value.map((node) => ({
-        ...node,
-        incoming: edges.value.filter((edge) => edge.to_doc_no === node.doc_no),
-        outgoing: edges.value.filter((edge) => edge.from_doc_no === node.doc_no),
-        isRoot: node.doc_no === rootDocNo.value
-    }))
+    nodes.value.map((node, index) => {
+        const docNo = docNoValue(node);
+        return {
+            ...node,
+            _originalIndex: index,
+            incoming: edges.value.filter((edge) => normalizeDocNo(edge.to_doc_no || edge.toDocNo) === normalizeDocNo(docNo)),
+            outgoing: edges.value.filter((edge) => normalizeDocNo(edge.from_doc_no || edge.fromDocNo) === normalizeDocNo(docNo)),
+            isRoot: normalizeDocNo(docNo) === normalizeDocNo(rootDocNo.value)
+        };
+    })
 );
+const statusSummary = computed(() => {
+    const summary = { total: timelineItems.value.length, missing: 0, inProgress: 0, completed: 0 };
+    for (const item of timelineItems.value) {
+        const status = referenceStatusClass(item);
+        if (status === 'completed') summary.completed += 1;
+        else if (status === 'in-progress') summary.inProgress += 1;
+        else summary.missing += 1;
+    }
+    return summary;
+});
+const flowLayout = computed(() => buildFlowLayout(timelineItems.value, edges.value));
 const selectedFlowNode = computed(() => {
-    const active = timelineItems.value.find((node) => flowNodeKey(node) === activeNodeKey.value);
+    const active = flowLayout.value.items.find((node) => flowNodeKey(node) === activeNodeKey.value);
     if (active) return active;
-    return timelineItems.value.find((node) => node.isRoot) || timelineItems.value[0] || null;
+    return flowLayout.value.items.find((node) => node.isRoot) || flowLayout.value.items[0] || null;
 });
 const selectedFlowNodeKey = computed(() => (selectedFlowNode.value ? flowNodeKey(selectedFlowNode.value) : ''));
-const missingPaperLessPdfMessage = 'เอกสารนี้มีข้อมูลจาก SML แต่ยังไม่มี PDF ใน PaperLess';
+const selectedStatus = computed(() => referenceStatusMeta(selectedFlowNode.value || {}));
+const flowCanvasStyle = computed(() => ({
+    width: `${flowLayout.value.width}px`,
+    height: `${flowLayout.value.height}px`
+}));
+
+function buildFlowLayout(items, rawEdges) {
+    const constants = items.length > 20 ? { nodeWidth: 212, nodeHeight: 104, columnGap: 48, rowGap: 14 } : { nodeWidth: 240, nodeHeight: 116, columnGap: 58, rowGap: 16 };
+    if (!items.length) return emptyFlowLayout(constants);
+
+    const itemByKey = new Map();
+    const keyByDocNo = new Map();
+    for (const item of items) {
+        const key = flowNodeKey(item);
+        itemByKey.set(key, item);
+        keyByDocNo.set(normalizeDocNo(docNoValue(item)), key);
+    }
+
+    const validEdges = [];
+    const seenEdges = new Set();
+    for (const edge of rawEdges || []) {
+        const fromKey = keyByDocNo.get(normalizeDocNo(edge.from_doc_no || edge.fromDocNo));
+        const toKey = keyByDocNo.get(normalizeDocNo(edge.to_doc_no || edge.toDocNo));
+        if (!fromKey || !toKey || fromKey === toKey) continue;
+        const edgeKey = `${fromKey}->${toKey}`;
+        if (seenEdges.has(edgeKey)) continue;
+        seenEdges.add(edgeKey);
+        validEdges.push({ ...edge, fromKey, toKey });
+    }
+
+    if (!validEdges.length) {
+        return fallbackFlowLayout(items, constants, 'แสดงตามลำดับรายการจาก SML');
+    }
+
+    const indegree = new Map();
+    const outgoing = new Map();
+    const levels = new Map();
+    for (const item of items) {
+        const key = flowNodeKey(item);
+        indegree.set(key, 0);
+        outgoing.set(key, []);
+        levels.set(key, 0);
+    }
+    for (const edge of validEdges) {
+        outgoing.get(edge.fromKey).push(edge);
+        indegree.set(edge.toKey, (indegree.get(edge.toKey) || 0) + 1);
+    }
+
+    const byOriginalOrder = (a, b) => (itemByKey.get(a)?._originalIndex || 0) - (itemByKey.get(b)?._originalIndex || 0);
+    const queue = [...indegree.entries()]
+        .filter(([, count]) => count === 0)
+        .map(([key]) => key)
+        .sort(byOriginalOrder);
+    const visited = [];
+
+    while (queue.length) {
+        const key = queue.shift();
+        visited.push(key);
+        for (const edge of outgoing.get(key) || []) {
+            levels.set(edge.toKey, Math.max(levels.get(edge.toKey) || 0, (levels.get(key) || 0) + 1));
+            indegree.set(edge.toKey, (indegree.get(edge.toKey) || 0) - 1);
+            if (indegree.get(edge.toKey) === 0) {
+                queue.push(edge.toKey);
+                queue.sort((a, b) => {
+                    const levelDiff = (levels.get(a) || 0) - (levels.get(b) || 0);
+                    return levelDiff || byOriginalOrder(a, b);
+                });
+            }
+        }
+    }
+
+    if (visited.length !== items.length) {
+        return fallbackFlowLayout(items, constants, 'ข้อมูลความสัมพันธ์จาก SML มีวงรอบ ระบบแสดงตามลำดับรายการแทน');
+    }
+
+    const columns = new Map();
+    for (const item of items) {
+        const key = flowNodeKey(item);
+        const level = levels.get(key) || 0;
+        if (!columns.has(level)) columns.set(level, []);
+        columns.get(level).push(item);
+    }
+
+    const layoutItems = [];
+    const sortedLevels = [...columns.keys()].sort((a, b) => a - b);
+    let maxRows = 1;
+    for (const level of sortedLevels) {
+        const column = columns.get(level).sort((a, b) => a._originalIndex - b._originalIndex);
+        maxRows = Math.max(maxRows, column.length);
+        column.forEach((item, row) => {
+            layoutItems.push({
+                ...item,
+                _flowLevel: level,
+                _flowRow: row,
+                _flowX: level * (constants.nodeWidth + constants.columnGap),
+                _flowY: row * (constants.nodeHeight + constants.rowGap)
+            });
+        });
+    }
+
+    return completeFlowLayout(layoutItems, validEdges, constants, '', false);
+}
+
+function completeFlowLayout(layoutItems, flowEdges, constants, fallbackMessage, hasFallback) {
+    const byKey = new Map(layoutItems.map((item) => [flowNodeKey(item), item]));
+    const maxLevel = Math.max(0, ...layoutItems.map((item) => item._flowLevel || 0));
+    const maxRow = Math.max(0, ...layoutItems.map((item) => item._flowRow || 0));
+    const width = (maxLevel + 1) * constants.nodeWidth + maxLevel * constants.columnGap;
+    const height = (maxRow + 1) * constants.nodeHeight + maxRow * constants.rowGap;
+    const edgePaths = flowEdges
+        .map((edge) => {
+            const from = byKey.get(edge.fromKey);
+            const to = byKey.get(edge.toKey);
+            if (!from || !to) return null;
+            const startX = from._flowX + constants.nodeWidth;
+            const startY = from._flowY + constants.nodeHeight / 2;
+            const endX = to._flowX;
+            const endY = to._flowY + constants.nodeHeight / 2;
+            const midX = startX + Math.max(24, (endX - startX) / 2);
+            return {
+                key: `${edge.fromKey}->${edge.toKey}`,
+                status: referenceStatusClass(to),
+                path: `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX} ${endY}`
+            };
+        })
+        .filter(Boolean);
+
+    return {
+        items: layoutItems.sort((a, b) => (a._flowLevel - b._flowLevel) || (a._flowRow - b._flowRow) || (a._originalIndex - b._originalIndex)),
+        edges: edgePaths,
+        width: Math.max(width, constants.nodeWidth),
+        height: Math.max(height, constants.nodeHeight),
+        nodeWidth: constants.nodeWidth,
+        nodeHeight: constants.nodeHeight,
+        hasFallback,
+        fallbackMessage,
+        isLarge: layoutItems.length > 20
+    };
+}
+
+function fallbackFlowLayout(items, constants, fallbackMessage) {
+    const layoutItems = items.map((item, index) => ({
+        ...item,
+        _flowLevel: index,
+        _flowRow: 0,
+        _flowX: index * (constants.nodeWidth + constants.columnGap),
+        _flowY: 0
+    }));
+    const fallbackEdges = layoutItems.slice(1).map((item, index) => ({
+        fromKey: flowNodeKey(layoutItems[index]),
+        toKey: flowNodeKey(item)
+    }));
+    return completeFlowLayout(layoutItems, fallbackEdges, constants, fallbackMessage, true);
+}
+
+function emptyFlowLayout(constants) {
+    return { items: [], edges: [], width: constants.nodeWidth, height: constants.nodeHeight, nodeWidth: constants.nodeWidth, nodeHeight: constants.nodeHeight, hasFallback: false, fallbackMessage: '', isLarge: false };
+}
 
 function flowNodeKey(node = {}) {
-    return `${node.doc_format_code || node.docFormatCode || 'doc'}-${node.doc_no || node.docNo || ''}`;
+    return `${docFormatValue(node) || 'doc'}-${docNoValue(node)}`;
+}
+
+function normalizeDocNo(value) {
+    return String(value || '').trim().toUpperCase();
+}
+
+function docNoValue(node = {}) {
+    return node.doc_no || node.docNo || '';
+}
+
+function docFormatValue(node = {}) {
+    return node.doc_format_code || node.docFormatCode || '';
 }
 
 function selectFlowNode(node) {
     activeNodeKey.value = flowNodeKey(node);
     emit('node-click', node);
-}
-
-function sourceLabel(node) {
-    return node.paperlessStatus ? 'เอกสารใน PaperLess' : 'ข้อมูลจาก SML';
-}
-
-function sourceSeverity(node) {
-    if (node.paperlessStatus) return signingStatusSeverity(node.paperlessStatus);
-    return 'secondary';
-}
-
-function statusLabel(node) {
-    if (node.paperlessStatus) return signingStatusLabel(node.paperlessStatus);
-    return node.is_lock_record === 1 ? 'Lock ใน SML' : 'ยังไม่ Lock';
 }
 
 function referenceStatusMeta(node = {}) {
@@ -76,22 +244,18 @@ function referenceStatusClass(node = {}) {
     return 'missing';
 }
 
-function lockSeverity(node) {
-    return node.is_lock_record === 1 ? 'success' : 'secondary';
-}
-
-function relationText(item) {
-    if (item.incoming.length === 0) return 'เอกสารต้นทาง';
-    const from = [...new Set(item.incoming.map((edge) => edge.from_doc_no).filter(Boolean))];
+function relationText(item = {}) {
+    if (!item.incoming?.length) return 'เอกสารต้นทาง';
+    const from = [...new Set(item.incoming.map((edge) => edge.from_doc_no || edge.fromDocNo).filter(Boolean))];
     return from.length ? `ต่อจาก ${from.join(', ')}` : 'เอกสารที่เกี่ยวข้อง';
 }
 
-function documentTypeLabel(node) {
+function documentTypeLabel(node = {}) {
     const transFlagName = node.trans_flag_name_th || node.transFlagNameTh || node.trans_flag_name_en || node.transFlagNameEn || '';
     if (transFlagName) return transFlagName;
     const name = node.doc_format_name || node.docFormatName || '';
     if (name) return name;
-    const code = String(node.doc_format_code || node.docFormatCode || '').toUpperCase();
+    const code = String(docFormatValue(node)).toUpperCase();
     const labels = {
         PO: 'ใบสั่งซื้อ',
         PA: 'ซื้อ',
@@ -105,20 +269,20 @@ function documentTypeLabel(node) {
     return labels[code] || code || 'เอกสาร';
 }
 
-function sourceDocNo(node) {
+function sourceDocNo(node = {}) {
     const explicit = node.source_doc_no || node.sourceDocNo || '';
     if (explicit) return explicit;
     const incoming = node.incoming || [];
-    if (!incoming.length) return node.doc_no || '-';
+    if (!incoming.length) return docNoValue(node) || '-';
     return incoming
-        .map((edge) => edge.from_doc_no)
+        .map((edge) => edge.from_doc_no || edge.fromDocNo)
         .filter(Boolean)
         .join(', ');
 }
 
-function technicalRelations(item) {
+function technicalRelations(item = {}) {
     const all = [...(item.incoming || []), ...(item.outgoing || [])];
-    return all.map((edge) => `${edge.from_doc_no} → ${edge.to_doc_no} (${edge.source_table}.${edge.source_column})`).join('\n');
+    return all.map((edge) => `${edge.from_doc_no || edge.fromDocNo} -> ${edge.to_doc_no || edge.toDocNo} (${edge.source_table || edge.sourceTable}.${edge.source_column || edge.sourceColumn})`).join('\n');
 }
 
 function normalizeTime(value) {
@@ -129,8 +293,8 @@ function normalizeTime(value) {
     return `${match[1].padStart(2, '0')}:${match[2]}`;
 }
 
-function formatDocumentDateTime(node) {
-    const dateText = formatDocumentDate(node.doc_date);
+function formatDocumentDateTime(node = {}) {
+    const dateText = formatDocumentDate(node.doc_date || node.docDate);
     const timeText = normalizeTime(node.doc_time || node.docTime);
     if (dateText === '-') return timeText || '-';
     return timeText ? `${dateText} ${timeText}` : dateText;
@@ -139,12 +303,6 @@ function formatDocumentDateTime(node) {
 function formatAmount(value) {
     const amount = Number(value || 0);
     return new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
-}
-
-function openInfo(node) {
-    emit('node-click', node);
-    selectedNode.value = node;
-    detailVisible.value = true;
 }
 
 function openPaperless(node) {
@@ -171,7 +329,7 @@ function previewCurrentPDF(node) {
 </script>
 
 <template>
-    <div class="document-flow-viewer" :class="{ compact }">
+    <div class="document-flow-viewer" :class="{ compact, 'large-flow': flowLayout.isLarge }">
         <Message v-for="warning in warnings" :key="`${warning.code}-${warning.doc_no || warning.message}`" severity="warn" class="mb-3">
             {{ warning.message || 'พบความสัมพันธ์บางส่วนจาก SML' }}<span v-if="warning.doc_no">: {{ warning.doc_no }}</span>
         </Message>
@@ -181,207 +339,145 @@ function previewCurrentPDF(node) {
             <span>ยังไม่พบเอกสารประกอบจาก SML</span>
         </div>
 
-        <Timeline v-else-if="!useTableFirst" :value="timelineItems" align="alternate" :data-key="'doc_no'" class="document-flow-timeline" :class="{ compact }">
-            <template #opposite="{ item }">
-                <small class="text-muted-color">{{ formatDocumentDateTime(item) }}</small>
-            </template>
-            <template #marker="{ item, index }">
-                <button
-                    type="button"
-                    class="flex w-8 h-8 items-center justify-center rounded-full z-10 shadow-sm border transition-colors"
-                    :class="selectedFlowNodeKey === flowNodeKey(item) || item.isRoot ? 'bg-primary text-primary-contrast border-primary' : 'bg-surface-0 text-muted-color border-surface-300 dark:bg-surface-900 dark:border-surface-600'"
-                    :aria-label="`เลือกเอกสาร ${item.doc_no || ''}`"
-                    @click="selectFlowNode(item)"
-                >
-                    {{ index + 1 }}
-                </button>
-            </template>
-            <template #content="{ item }">
-                <div
-                    class="flow-card-hitarea"
-                    role="button"
-                    tabindex="0"
-                    :aria-label="`เลือกเอกสาร ${item.doc_no || ''}`"
-                    @click="selectFlowNode(item)"
-                    @keydown.enter.prevent="selectFlowNode(item)"
-                    @keydown.space.prevent="selectFlowNode(item)"
-                >
-                    <Card class="mt-4 flow-document-card" :class="[`flow-${referenceStatusClass(item)}`, { selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }]">
-                        <template #title>
-                            <div class="flex items-center justify-between gap-2">
-                                <span class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{{ documentTypeLabel(item) }}</span>
-                                <Tag v-if="item.isRoot" value="เอกสารที่ค้นหา" severity="info" />
-                            </div>
-                        </template>
-                        <template #subtitle>
-                            <span>{{ item.doc_no || '-' }} · {{ relationText(item) }}</span>
-                        </template>
-                        <template #content>
-                            <dl class="flow-metadata-grid">
-                                <dt>เลขที่เอกสาร</dt>
-                                <dd class="flow-doc-no">{{ item.doc_no || '-' }}</dd>
-                                <dt>วันที่-เวลา</dt>
-                                <dd>{{ formatDocumentDateTime(item) }}</dd>
-                                <dt>มูลค่าเอกสาร</dt>
-                                <dd>{{ formatAmount(item.total_amount) }}</dd>
-                                <dt>เอกสารต้นทาง</dt>
-                                <dd>{{ sourceDocNo(item) }}</dd>
-                            </dl>
-                            <Message v-if="isMissingPaperLessPdf(item)" severity="error" class="mt-3" :closable="false">
-                                {{ missingPaperLessPdfMessage }}
-                            </Message>
-                            <div class="flex flex-wrap gap-2 mt-3">
-                                <Tag :value="sourceLabel(item)" :severity="sourceSeverity(item)" />
-                                <Tag :value="statusLabel(item)" :severity="item.paperlessStatus ? signingStatusSeverity(item.paperlessStatus) : lockSeverity(item)" />
-                                <Tag v-if="item.matchCount > 1" :value="`${item.matchCount} รายการใน PaperLess`" severity="warn" />
-                            </div>
-                            <div v-if="admin" class="flow-card-actions" @click.stop>
-                                <Button icon="pi pi-info-circle" label="ข้อมูล" size="small" outlined severity="secondary" @click="openInfo(item)" />
-                                <Button v-if="canPreviewCurrentPDF(item)" icon="pi pi-file-pdf" label="ดูเอกสาร" size="small" outlined severity="secondary" @click="previewCurrentPDF(item)" />
-                                <Button v-if="item.canOpenPaperless" icon="pi pi-external-link" label="รายละเอียด" size="small" outlined severity="secondary" @click="openPaperless(item)" />
-                            </div>
-                        </template>
-                    </Card>
+        <div v-else class="flow-workspace">
+            <section class="flow-map-panel" aria-label="แผนผัง Flow เอกสาร">
+                <div class="flow-map-summary">
+                    <div class="flow-summary-tags">
+                        <Tag :value="`ทั้งหมด ${statusSummary.total}`" severity="info" />
+                        <Tag v-if="statusSummary.missing" :value="`ยังไม่เข้า ${statusSummary.missing}`" severity="danger" />
+                        <Tag v-if="statusSummary.inProgress" :value="`กำลังเซ็น ${statusSummary.inProgress}`" severity="warn" />
+                        <Tag v-if="statusSummary.completed" :value="`ครบแล้ว ${statusSummary.completed}`" severity="success" />
+                    </div>
+                    <small v-if="flowLayout.hasFallback" class="flow-fallback-note">
+                        <i class="pi pi-info-circle" aria-hidden="true"></i>
+                        {{ flowLayout.fallbackMessage }}
+                    </small>
                 </div>
-            </template>
-        </Timeline>
 
-        <div v-else class="flow-compact-list">
-            <div
-                v-for="(item, index) in timelineItems"
-                :key="flowNodeKey(item)"
-                class="flow-compact-item"
-                :class="[`flow-${referenceStatusClass(item)}`, { selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }]"
-            >
-                <div class="flow-compact-rail">
-                    <button
-                        type="button"
-                        class="flow-compact-marker"
-                        :aria-label="`เลือกเอกสาร ${item.doc_no || ''}`"
-                        @click="selectFlowNode(item)"
-                    >
-                        {{ index + 1 }}
-                    </button>
-                </div>
-                <div class="flow-compact-card">
-                    <div class="flow-compact-head">
-                        <div class="min-w-0">
-                            <div class="flow-compact-identity">
-                                <span class="flow-compact-title">{{ documentTypeLabel(item) }}</span>
-                                <span class="flow-compact-doc">{{ item.doc_no || '-' }}</span>
-                            </div>
-                            <div class="flow-compact-subtitle">
-                                <span>{{ relationText(item) }}</span>
-                                <span v-if="item.party_name || item.party_code">· {{ item.party_name || item.party_code }}</span>
-                            </div>
-                        </div>
-                        <div class="flow-compact-side">
-                            <div class="flow-compact-tags">
+                <div class="flow-map-scroll">
+                    <div class="flow-map-canvas" :style="flowCanvasStyle">
+                        <svg class="flow-edge-layer" :width="flowLayout.width" :height="flowLayout.height" aria-hidden="true">
+                            <path v-for="edge in flowLayout.edges" :key="edge.key" :d="edge.path" class="flow-edge" :class="`edge-${edge.status}`" />
+                        </svg>
+                        <button
+                            v-for="item in flowLayout.items"
+                            :key="flowNodeKey(item)"
+                            type="button"
+                            class="flow-node"
+                            :class="[`flow-${referenceStatusClass(item)}`, { selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }]"
+                            :style="{ left: `${item._flowX}px`, top: `${item._flowY}px`, width: `${flowLayout.nodeWidth}px`, minHeight: `${flowLayout.nodeHeight}px` }"
+                            :aria-label="`เลือกเอกสาร ${docNoValue(item) || ''}`"
+                            @click="selectFlowNode(item)"
+                        >
+                            <span class="flow-node-topline">
+                                <span class="flow-status-dot" aria-hidden="true"></span>
+                                <span class="flow-node-type">{{ documentTypeLabel(item) }}</span>
+                            </span>
+                            <strong class="flow-node-doc">{{ docNoValue(item) || '-' }}</strong>
+                            <span class="flow-node-meta">{{ formatDocumentDateTime(item) }}</span>
+                            <span class="flow-node-meta">มูลค่า {{ formatAmount(item.total_amount) }}</span>
+                            <span class="flow-node-tags">
                                 <Tag v-if="item.isRoot" value="เอกสารที่ค้นหา" severity="info" />
                                 <Tag :value="referenceStatusMeta(item).label" :severity="referenceStatusMeta(item).severity" :icon="referenceStatusMeta(item).icon" />
-                            </div>
-                            <div v-if="admin" class="flow-compact-actions">
-                                <Button icon="pi pi-info-circle" size="small" rounded outlined severity="secondary" aria-label="ข้อมูล" @click="openInfo(item)" />
-                                <Button v-if="canPreviewCurrentPDF(item)" icon="pi pi-file-pdf" size="small" rounded outlined severity="secondary" aria-label="ดูเอกสาร" @click="previewCurrentPDF(item)" />
-                                <Button v-if="item.canOpenPaperless" icon="pi pi-external-link" size="small" rounded outlined severity="secondary" aria-label="รายละเอียด" @click="openPaperless(item)" />
-                            </div>
-                        </div>
-                    </div>
-                    <div class="flow-compact-meta" aria-label="ข้อมูลเอกสาร">
-                        <span><strong>วันที่</strong>{{ formatDocumentDateTime(item) }}</span>
-                        <span><strong>มูลค่า</strong>{{ formatAmount(item.total_amount) }}</span>
-                        <span><strong>ต้นทาง</strong>{{ sourceDocNo(item) }}</span>
-                    </div>
-                    <div v-if="isMissingPaperLessPdf(item)" class="flow-missing-note" role="status">
-                        <i class="pi pi-exclamation-triangle" aria-hidden="true"></i>
-                        <span>{{ missingPaperLessPdfMessage }}</span>
+                            </span>
+                        </button>
                     </div>
                 </div>
-            </div>
+
+                <div class="flow-mobile-list" aria-label="รายการ Flow เอกสาร">
+                    <button
+                        v-for="(item, index) in flowLayout.items"
+                        :key="`mobile-${flowNodeKey(item)}`"
+                        type="button"
+                        class="flow-mobile-node"
+                        :class="[`flow-${referenceStatusClass(item)}`, { selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }]"
+                        @click="selectFlowNode(item)"
+                    >
+                        <span class="flow-mobile-index">{{ index + 1 }}</span>
+                        <span class="flow-mobile-main">
+                            <span class="flow-mobile-title">{{ documentTypeLabel(item) }} <strong>{{ docNoValue(item) || '-' }}</strong></span>
+                            <span class="flow-mobile-meta">{{ relationText(item) }} · {{ formatDocumentDateTime(item) }}</span>
+                        </span>
+                        <Tag :value="referenceStatusMeta(item).label" :severity="referenceStatusMeta(item).severity" />
+                    </button>
+                </div>
+            </section>
+
+            <aside v-if="selectedFlowNode" class="flow-detail-panel" aria-label="รายละเอียดเอกสารที่เลือก">
+                <div class="flow-detail-head">
+                    <div class="min-w-0">
+                        <div class="flow-detail-type">{{ documentTypeLabel(selectedFlowNode) }}</div>
+                        <strong>{{ docNoValue(selectedFlowNode) || '-' }}</strong>
+                    </div>
+                    <Tag :value="selectedStatus.label" :severity="selectedStatus.severity" :icon="selectedStatus.icon" />
+                </div>
+
+                <Message v-if="isMissingPaperLessPdf(selectedFlowNode)" severity="error" :closable="false" class="flow-detail-message">
+                    {{ missingPaperLessPdfMessage }}
+                </Message>
+                <Message v-if="selectedFlowNode.matchCount > 1" severity="warn" :closable="false" class="flow-detail-message">
+                    พบเอกสารนี้ใน PaperLess มากกว่า 1 รายการ ระบบเลือกเอกสารที่อัปเดตล่าสุดเป็นค่าเริ่มต้น
+                </Message>
+
+                <dl class="metadata-grid">
+                    <dt>วันที่-เวลา</dt>
+                    <dd>{{ formatDocumentDateTime(selectedFlowNode) }}</dd>
+                    <dt>มูลค่าเอกสาร</dt>
+                    <dd>{{ formatAmount(selectedFlowNode.total_amount) }}</dd>
+                    <dt>เอกสารต้นทาง</dt>
+                    <dd>{{ sourceDocNo(selectedFlowNode) }}</dd>
+                    <dt>คู่ค้า</dt>
+                    <dd>{{ selectedFlowNode.party_name || selectedFlowNode.party_code || '-' }}</dd>
+                    <dt>สถานะ SML</dt>
+                    <dd>{{ selectedFlowNode.is_lock_record === 1 ? 'Lock แล้ว' : 'ยังไม่ Lock' }}</dd>
+                    <dt>แหล่งข้อมูล</dt>
+                    <dd>{{ selectedFlowNode.table || '-' }}</dd>
+                    <dt>ความสัมพันธ์</dt>
+                    <dd class="whitespace-pre-line">{{ technicalRelations(selectedFlowNode) || '-' }}</dd>
+                </dl>
+
+                <div v-if="admin" class="flow-detail-actions">
+                    <Button v-if="canPreviewCurrentPDF(selectedFlowNode)" icon="pi pi-file-pdf" label="ดูเอกสาร" size="small" outlined severity="secondary" @click="previewCurrentPDF(selectedFlowNode)" />
+                    <Button v-if="selectedFlowNode.canOpenPaperless" icon="pi pi-external-link" label="รายละเอียด" size="small" outlined severity="secondary" @click="openPaperless(selectedFlowNode)" />
+                </div>
+            </aside>
         </div>
 
-        <DataTable v-if="showTable && !useTableFirst && !compact && nodes.length" :value="nodes" responsiveLayout="scroll" stripedRows class="mt-4">
-            <Column field="doc_no" header="เลขที่เอกสาร" style="min-width: 11rem">
-                <template #body="{ data }">
-                    <Button :label="data.doc_no" link class="p-0" @click="openInfo(data)" />
-                </template>
-            </Column>
-            <Column field="doc_format_code" header="ชนิด" style="min-width: 7rem" />
-            <Column header="คู่ค้า" style="min-width: 14rem">
-                <template #body="{ data }">{{ data.party_name || data.party_code || '-' }}</template>
-            </Column>
-            <Column header="วันที่" style="min-width: 8rem">
-                <template #body="{ data }">{{ formatDocumentDateTime(data) }}</template>
-            </Column>
-            <Column header="ยอดเงิน" style="min-width: 9rem">
-                <template #body="{ data }">{{ formatAmount(data.total_amount) }}</template>
-            </Column>
-            <Column header="เอกสารต้นทาง" style="min-width: 11rem">
-                <template #body="{ data }">{{ sourceDocNo(data) }}</template>
-            </Column>
-            <Column header="PaperLess" style="min-width: 12rem">
-                <template #body="{ data }">
-                    <Tag :value="referenceStatusMeta(data).label" :severity="referenceStatusMeta(data).severity" :icon="referenceStatusMeta(data).icon" />
-                </template>
-            </Column>
-            <Column header="PDF" style="min-width: 10rem">
-                <template #body="{ data }">
-                    <div class="flex gap-2 flex-wrap">
-                        <Tag :value="data.hasCurrentPdf ? 'มีเอกสารใน PaperLess' : 'ยังไม่มีเอกสาร'" :severity="data.hasCurrentPdf ? 'info' : 'secondary'" />
-                    </div>
-                </template>
-            </Column>
-            <Column header="จัดการ" style="min-width: 13rem">
-                <template #body="{ data }">
-                    <div class="flex gap-2 flex-wrap">
-                        <Button icon="pi pi-info-circle" label="ข้อมูล" size="small" outlined severity="secondary" @click="openInfo(data)" />
-                        <Button v-if="admin && canPreviewCurrentPDF(data)" icon="pi pi-file-pdf" label="ดูเอกสาร" size="small" outlined severity="secondary" @click="previewCurrentPDF(data)" />
-                        <Button v-if="admin && data.canOpenPaperless" icon="pi pi-external-link" label="รายละเอียด" size="small" outlined severity="secondary" @click="openPaperless(data)" />
-                    </div>
-                </template>
-            </Column>
-        </DataTable>
-
-        <Dialog v-model:visible="detailVisible" modal header="ข้อมูลเอกสารจาก SML" :style="{ width: 'min(42rem, 94vw)' }">
-            <div v-if="selectedNode" class="grid gap-3">
-                <Message v-if="isMissingPaperLessPdf(selectedNode)" severity="error" :closable="false">{{ missingPaperLessPdfMessage }}</Message>
-                <Message v-if="selectedNode.matchCount > 1" severity="warn">พบเอกสารนี้ใน PaperLess มากกว่า 1 รายการ ระบบเลือกเอกสารที่อัปเดตล่าสุดเป็นค่าเริ่มต้น</Message>
-                <dl class="metadata-grid">
-                    <dt>เลขที่เอกสาร</dt>
-                    <dd>{{ selectedNode.doc_no }}</dd>
-                    <dt>ชนิดเอกสาร</dt>
-                    <dd>{{ documentTypeLabel(selectedNode) }} ({{ selectedNode.doc_format_code || '-' }})</dd>
-                    <dt>วันที่-เวลา</dt>
-                    <dd>{{ formatDocumentDateTime(selectedNode) }}</dd>
-                    <dt>เอกสารต้นทาง</dt>
-                    <dd>{{ sourceDocNo(selectedNode) }}</dd>
-                    <dt>คู่ค้า</dt>
-                    <dd>{{ selectedNode.party_name || selectedNode.party_code || '-' }}</dd>
-                    <dt>ยอดเงิน</dt>
-                    <dd>{{ formatAmount(selectedNode.total_amount) }}</dd>
-                    <dt>สถานะ SML</dt>
-                    <dd>{{ selectedNode.is_lock_record === 1 ? 'Lock แล้ว' : 'ยังไม่ Lock' }}</dd>
-                    <dt>แหล่งข้อมูล</dt>
-                    <dd>{{ selectedNode.table }}</dd>
-                    <dt>ความสัมพันธ์</dt>
-                    <dd class="whitespace-pre-line">{{ technicalRelations(selectedNode) || '-' }}</dd>
-                </dl>
-            </div>
-            <template #footer>
-                <Button label="ปิด" severity="secondary" outlined @click="detailVisible = false" />
-            </template>
-        </Dialog>
+        <details v-if="showTable && flowLayout.hasFallback" class="flow-fallback-details">
+            <summary>ดูรายการแบบตาราง</summary>
+            <DataTable :value="flowLayout.items" responsiveLayout="scroll" stripedRows size="small">
+                <Column header="สถานะ" style="min-width: 11rem">
+                    <template #body="{ data }">
+                        <Tag :value="referenceStatusMeta(data).label" :severity="referenceStatusMeta(data).severity" :icon="referenceStatusMeta(data).icon" />
+                    </template>
+                </Column>
+                <Column header="เลขที่เอกสาร" style="min-width: 12rem">
+                    <template #body="{ data }">{{ docNoValue(data) || '-' }}</template>
+                </Column>
+                <Column header="ชนิดเอกสาร" style="min-width: 14rem">
+                    <template #body="{ data }">{{ documentTypeLabel(data) }}</template>
+                </Column>
+                <Column header="วันที่" style="min-width: 10rem">
+                    <template #body="{ data }">{{ formatDocumentDateTime(data) }}</template>
+                </Column>
+                <Column header="เอกสารต้นทาง" style="min-width: 12rem">
+                    <template #body="{ data }">{{ sourceDocNo(data) }}</template>
+                </Column>
+            </DataTable>
+        </details>
     </div>
 </template>
 
 <style scoped>
 .document-flow-viewer {
     --flow-success: var(--p-green-500, #22c55e);
-    --flow-success-strong: var(--p-green-700, #15803d);
+    --flow-success-soft: color-mix(in srgb, var(--flow-success) 8%, var(--surface-card));
     --flow-warning: var(--p-orange-500, #f97316);
-    --flow-warning-strong: var(--p-orange-700, #c2410c);
+    --flow-warning-soft: color-mix(in srgb, var(--flow-warning) 8%, var(--surface-card));
     --flow-danger: var(--p-red-500, #ef4444);
-    --flow-danger-strong: var(--p-red-700, #b91c1c);
+    --flow-danger-soft: color-mix(in srgb, var(--flow-danger) 7%, var(--surface-card));
+    --flow-root: var(--p-sky-500, #0ea5e9);
+    min-width: 0;
 }
 
 .flow-empty {
@@ -397,336 +493,405 @@ function previewCurrentPDF(node) {
     padding: 1rem;
 }
 
-.flow-card-hitarea {
-    cursor: pointer;
+.flow-workspace {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+    gap: 0.75rem;
 }
 
-.flow-card-hitarea:focus-visible {
-    outline: 2px solid var(--primary-color);
-    outline-offset: 3px;
-    border-radius: 8px;
-}
-
-.flow-document-card {
+.flow-map-panel,
+.flow-detail-panel {
+    min-width: 0;
     border: 1px solid var(--surface-border);
-    border-left-width: 4px;
+    border-radius: 8px;
     background: var(--surface-card);
 }
 
-.flow-document-card.root,
-.flow-document-card.selected {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary-color) 42%, transparent);
-}
-
-.flow-document-card.selected {
-    box-shadow:
-        inset 0 0 0 1px color-mix(in srgb, var(--primary-color) 42%, transparent),
-        0 0 0 1px color-mix(in srgb, var(--primary-color) 40%, transparent);
-}
-
-.flow-document-card.flow-completed {
-    border-color: color-mix(in srgb, var(--flow-success) 42%, var(--surface-border));
-    border-left-color: var(--flow-success);
-    background: color-mix(in srgb, var(--flow-success) 4%, var(--surface-card));
-}
-
-.flow-document-card.flow-in-progress {
-    border-color: color-mix(in srgb, var(--flow-warning) 42%, var(--surface-border));
-    border-left-color: var(--flow-warning);
-    background: color-mix(in srgb, var(--flow-warning) 4%, var(--surface-card));
-}
-
-.flow-document-card.flow-missing {
-    border-color: color-mix(in srgb, var(--flow-danger) 38%, var(--surface-border));
-    border-left-color: var(--flow-danger);
-    background: color-mix(in srgb, var(--flow-danger) 3%, var(--surface-card));
-}
-
-.flow-metadata-grid,
-.metadata-grid {
+.flow-map-panel {
+    min-height: 0;
     display: grid;
-    grid-template-columns: 8rem minmax(0, 1fr);
-    gap: 0.45rem 0.75rem;
-    margin: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
 }
 
-.flow-metadata-grid dt,
-.metadata-grid dt {
-    color: var(--text-color);
-    font-weight: 600;
+.flow-map-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.55rem 0.65rem;
+    border-bottom: 1px solid var(--surface-border);
 }
 
-.flow-metadata-grid dd,
-.metadata-grid dd {
-    margin: 0;
-    min-width: 0;
-    overflow-wrap: anywhere;
-}
-
-.flow-doc-no {
-    color: var(--primary-color);
-    font-weight: 700;
-}
-
-.flow-card-actions {
+.flow-summary-tags {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-top: 0.85rem;
+    gap: 0.35rem;
 }
 
-.flow-compact-list {
-    display: grid;
-    gap: 0.28rem;
-    padding: 0.1rem 0.05rem 0.35rem;
+.flow-fallback-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--text-color-secondary);
 }
 
-.flow-compact-item {
-    display: grid;
-    grid-template-columns: 2rem minmax(0, 1fr);
-    gap: 0.5rem;
+.flow-map-scroll {
+    min-height: 280px;
+    overflow: auto;
+    padding: 0.85rem;
+    background: color-mix(in srgb, var(--surface-ground) 68%, var(--surface-card));
+}
+
+.flow-map-canvas {
     position: relative;
+    min-width: 100%;
 }
 
-.flow-compact-item:not(:last-child) {
-    padding-bottom: 0.2rem;
-}
-
-.flow-compact-rail {
-    position: relative;
-    display: flex;
-    justify-content: center;
-}
-
-.flow-compact-rail::after {
-    content: '';
+.flow-edge-layer {
     position: absolute;
-    top: 1.65rem;
-    bottom: -0.55rem;
-    width: 2px;
-    background: var(--surface-border);
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
 }
 
-.flow-completed .flow-compact-rail::after {
-    background: color-mix(in srgb, var(--flow-success) 45%, var(--surface-border));
+.flow-edge {
+    fill: none;
+    stroke: color-mix(in srgb, var(--text-color-secondary) 34%, transparent);
+    stroke-width: 2;
+    stroke-linecap: round;
 }
 
-.flow-in-progress .flow-compact-rail::after {
-    background: color-mix(in srgb, var(--flow-warning) 45%, var(--surface-border));
+.flow-edge.edge-completed {
+    stroke: color-mix(in srgb, var(--flow-success) 58%, var(--surface-border));
 }
 
-.flow-missing .flow-compact-rail::after {
-    background: color-mix(in srgb, var(--flow-danger) 42%, var(--surface-border));
+.flow-edge.edge-in-progress {
+    stroke: color-mix(in srgb, var(--flow-warning) 58%, var(--surface-border));
 }
 
-.flow-compact-item:last-child .flow-compact-rail::after {
-    display: none;
+.flow-edge.edge-missing {
+    stroke: color-mix(in srgb, var(--flow-danger) 56%, var(--surface-border));
 }
 
-.flow-compact-marker {
-    position: relative;
+.flow-node {
+    position: absolute;
     z-index: 1;
-    width: 1.65rem;
-    height: 1.65rem;
+    display: grid;
+    align-content: start;
+    gap: 0.16rem;
     border: 1px solid var(--surface-border);
-    border-radius: 999px;
+    border-radius: 8px;
+    padding: 0.55rem 0.6rem;
     background: var(--surface-card);
     color: var(--text-color);
+    text-align: left;
+    cursor: pointer;
+    transition:
+        border-color 0.15s ease,
+        background-color 0.15s ease,
+        transform 0.15s ease;
+}
+
+.flow-node:hover,
+.flow-node:focus-visible {
+    border-color: var(--primary-color);
+    outline: none;
+}
+
+.flow-node.selected {
+    border-color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 7%, var(--surface-card));
+}
+
+.flow-node.root {
+    border-color: color-mix(in srgb, var(--flow-root) 62%, var(--surface-border));
+}
+
+.flow-node.flow-completed {
+    border-color: color-mix(in srgb, var(--flow-success) 46%, var(--surface-border));
+    background: var(--flow-success-soft);
+}
+
+.flow-node.flow-in-progress {
+    border-color: color-mix(in srgb, var(--flow-warning) 46%, var(--surface-border));
+    background: var(--flow-warning-soft);
+}
+
+.flow-node.flow-missing {
+    border-color: color-mix(in srgb, var(--flow-danger) 44%, var(--surface-border));
+    background: var(--flow-danger-soft);
+}
+
+.flow-node.root {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--flow-root) 70%, transparent);
+}
+
+.flow-node-topline {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.flow-status-dot {
+    width: 0.62rem;
+    height: 0.62rem;
+    border-radius: 999px;
+    background: var(--text-color-secondary);
+    flex: 0 0 auto;
+}
+
+.flow-completed .flow-status-dot {
+    background: var(--flow-success);
+}
+
+.flow-in-progress .flow-status-dot {
+    background: var(--flow-warning);
+}
+
+.flow-missing .flow-status-dot {
+    background: var(--flow-danger);
+}
+
+.flow-node-type,
+.flow-node-meta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.flow-node-type {
+    color: var(--text-color);
+    font-size: 0.86rem;
     font-weight: 700;
+}
+
+.flow-node-doc {
+    min-width: 0;
+    color: var(--primary-color);
+    font-size: 1rem;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.flow-node-meta {
+    color: var(--text-color-secondary);
     font-size: 0.78rem;
 }
 
-.flow-completed .flow-compact-marker {
-    border-color: var(--flow-success);
-    background: color-mix(in srgb, var(--flow-success) 13%, var(--surface-card));
-    color: var(--flow-success-strong);
+.flow-node-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.28rem;
+    margin-top: 0.2rem;
 }
 
-.flow-in-progress .flow-compact-marker {
-    border-color: var(--flow-warning);
-    background: color-mix(in srgb, var(--flow-warning) 13%, var(--surface-card));
-    color: var(--flow-warning-strong);
+.flow-node-tags:deep(.p-tag) {
+    max-width: 100%;
+    padding: 0.15rem 0.34rem;
+    font-size: 0.68rem;
 }
 
-.flow-missing .flow-compact-marker {
-    border-color: var(--flow-danger);
-    background: color-mix(in srgb, var(--flow-danger) 11%, var(--surface-card));
-    color: var(--flow-danger-strong);
+.flow-mobile-list {
+    display: none;
 }
 
-.flow-compact-card {
+.flow-mobile-node {
+    width: 100%;
     min-width: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.55rem;
     border: 1px solid var(--surface-border);
-    border-left-width: 4px;
     border-radius: 8px;
     background: var(--surface-card);
-    padding: 0.42rem 0.55rem;
+    color: var(--text-color);
+    padding: 0.55rem;
+    text-align: left;
 }
 
-.flow-compact-item.selected .flow-compact-card,
-.flow-compact-item.root .flow-compact-card {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary-color) 38%, transparent);
+.flow-mobile-node.selected {
+    border-color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 7%, var(--surface-card));
 }
 
-.flow-completed .flow-compact-card {
-    border-color: color-mix(in srgb, var(--flow-success) 42%, var(--surface-border));
-    border-left-color: var(--flow-success);
-    background: color-mix(in srgb, var(--flow-success) 4%, var(--surface-card));
+.flow-mobile-node.flow-completed {
+    border-color: color-mix(in srgb, var(--flow-success) 46%, var(--surface-border));
+    background: var(--flow-success-soft);
 }
 
-.flow-in-progress .flow-compact-card {
-    border-color: color-mix(in srgb, var(--flow-warning) 42%, var(--surface-border));
-    border-left-color: var(--flow-warning);
-    background: color-mix(in srgb, var(--flow-warning) 4%, var(--surface-card));
+.flow-mobile-node.flow-in-progress {
+    border-color: color-mix(in srgb, var(--flow-warning) 46%, var(--surface-border));
+    background: var(--flow-warning-soft);
 }
 
-.flow-missing .flow-compact-card {
-    border-color: color-mix(in srgb, var(--flow-danger) 38%, var(--surface-border));
-    border-left-color: var(--flow-danger);
-    background: color-mix(in srgb, var(--flow-danger) 3%, var(--surface-card));
+.flow-mobile-node.flow-missing {
+    border-color: color-mix(in srgb, var(--flow-danger) 44%, var(--surface-border));
+    background: var(--flow-danger-soft);
 }
 
-.flow-compact-head {
+.flow-mobile-node.root {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--flow-root) 70%, transparent);
+}
+
+.flow-mobile-index {
+    width: 1.65rem;
+    height: 1.65rem;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--surface-100);
+    color: var(--text-color);
+    font-weight: 700;
+}
+
+.flow-mobile-main {
+    min-width: 0;
+    display: grid;
+    gap: 0.1rem;
+}
+
+.flow-mobile-title,
+.flow-mobile-meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.flow-mobile-title {
+    font-weight: 700;
+}
+
+.flow-mobile-title strong {
+    color: var(--primary-color);
+}
+
+.flow-mobile-meta {
+    color: var(--text-color-secondary);
+    font-size: 0.82rem;
+}
+
+.flow-detail-panel {
+    min-height: 0;
+    max-height: 100%;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.75rem;
+}
+
+.flow-detail-head {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 0.5rem;
+    gap: 0.75rem;
 }
 
-.flow-compact-identity {
-    display: flex;
-    min-width: 0;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0.35rem;
-    line-height: 1.25;
-}
-
-.flow-compact-title {
-    font-weight: 700;
-    font-size: 0.95rem;
-}
-
-.flow-compact-doc {
+.flow-detail-head strong {
+    display: block;
     color: var(--primary-color);
-    font-weight: 700;
-    overflow-wrap: anywhere;
-    font-size: 0.95rem;
-}
-
-.flow-compact-side {
-    display: flex;
-    align-items: flex-start;
-    justify-content: flex-end;
-    gap: 0.35rem;
-    min-width: fit-content;
-}
-
-.flow-compact-tags,
-.flow-compact-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-    justify-content: flex-end;
-}
-
-.flow-compact-tags:deep(.p-tag) {
-    padding: 0.18rem 0.38rem;
-    font-size: 0.72rem;
-}
-
-.flow-compact-actions:deep(.p-button.p-button-sm) {
-    width: 1.9rem;
-    height: 1.9rem;
-    padding: 0;
-}
-
-.flow-compact-subtitle {
-    margin-top: 0.1rem;
-    color: var(--text-color-secondary);
-    font-size: 0.82rem;
-    line-height: 1.28;
-    overflow-wrap: anywhere;
-}
-
-.flow-compact-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem 0.75rem;
-    margin-top: 0.25rem;
-    font-size: 0.82rem;
+    font-size: 1.05rem;
     line-height: 1.25;
-    color: var(--text-color);
-}
-
-.flow-compact-meta span {
-    display: inline-flex;
-    min-width: 0;
-    align-items: baseline;
-    gap: 0.3rem;
     overflow-wrap: anywhere;
 }
 
-.flow-compact-meta strong {
+.flow-detail-type {
+    color: var(--text-color);
+    font-weight: 700;
+}
+
+.flow-detail-message {
+    margin: 0;
+}
+
+.metadata-grid {
+    display: grid;
+    grid-template-columns: 7.5rem minmax(0, 1fr);
+    gap: 0.45rem 0.65rem;
+    margin: 0;
+}
+
+.metadata-grid dt {
     color: var(--text-color-secondary);
     font-weight: 600;
 }
 
-.flow-compact-actions {
-    flex-wrap: nowrap;
+.metadata-grid dd {
+    margin: 0;
+    min-width: 0;
+    color: var(--text-color);
+    overflow-wrap: anywhere;
 }
 
-.flow-missing-note {
+.flow-detail-actions {
     display: flex;
-    align-items: flex-start;
-    gap: 0.35rem;
-    margin-top: 0.28rem;
-    border: 1px solid color-mix(in srgb, var(--flow-danger) 36%, var(--surface-border));
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--flow-danger) 8%, var(--surface-card));
-    color: var(--flow-danger-strong);
-    font-size: 0.82rem;
-    font-weight: 600;
-    line-height: 1.3;
-    padding: 0.24rem 0.4rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: auto;
+    padding-top: 0.25rem;
 }
 
-@media screen and (max-width: 960px) {
-    .document-flow-timeline:deep(.p-timeline-event:nth-child(even)) {
-        flex-direction: row !important;
-    }
-
-    .document-flow-timeline:deep(.p-timeline-event:nth-child(even) .p-timeline-event-content) {
-        text-align: left !important;
-    }
-
-    .document-flow-timeline:deep(.p-timeline-event-opposite) {
-        flex: 0;
-    }
-
-    .document-flow-timeline:deep(.p-card) {
-        margin-top: 1rem;
-    }
+.flow-fallback-details {
+    margin-top: 0.75rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: var(--surface-card);
+    padding: 0.55rem 0.65rem;
 }
 
-@media (max-width: 640px) {
-    .flow-metadata-grid,
-    .metadata-grid {
+.flow-fallback-details summary {
+    cursor: pointer;
+    color: var(--text-color);
+    font-weight: 700;
+}
+
+.flow-fallback-details:deep(.p-datatable) {
+    margin-top: 0.55rem;
+}
+
+@media (max-width: 760px) {
+    .flow-workspace {
         grid-template-columns: 1fr;
     }
 
-    .flow-compact-head {
+    .flow-map-panel {
+        display: block;
+        overflow: visible;
+    }
+
+    .flow-map-summary {
+        align-items: flex-start;
         flex-direction: column;
     }
 
-    .flow-compact-tags,
-    .flow-compact-actions {
-        justify-content: flex-start;
+    .flow-map-scroll {
+        display: none;
     }
 
-    .flow-compact-side {
-        width: 100%;
-        justify-content: space-between;
+    .flow-mobile-list {
+        display: grid;
+        gap: 0.45rem;
+        padding: 0.55rem;
+    }
+
+    .flow-mobile-node {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .flow-mobile-node:deep(.p-tag) {
+        grid-column: 2;
+        justify-self: start;
+    }
+
+    .metadata-grid {
+        grid-template-columns: 1fr;
     }
 }
 </style>

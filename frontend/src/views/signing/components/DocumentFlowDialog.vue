@@ -45,6 +45,15 @@ const flowHeader = computed(() => {
     return `${doc.docNo} ~ ${doc.docFormatCode || '-'}${party ? ` · ${party}` : ''}`;
 });
 const flowNodeCount = computed(() => flowGraph.value?.nodes?.length || 0);
+const flowStatusSummary = computed(() => {
+    const summary = { missing: 0, inProgress: 0, completed: 0 };
+    for (const node of flowGraph.value?.nodes || []) {
+        if (node.paperlessStatus === 'completed') summary.completed += 1;
+        else if (node.paperlessStatus || node.canViewCurrentPdf || node.hasCurrentPdf || node.currentPdfUrl) summary.inProgress += 1;
+        else summary.missing += 1;
+    }
+    return summary;
+});
 
 watch(
     () => [props.visible, requestedDocumentKey.value],
@@ -178,21 +187,25 @@ function recordFlowEvent(event, extra = {}) {
 </script>
 
 <template>
-    <Drawer
+    <Dialog
         v-model:visible="dialogVisible"
-        position="full"
-        class="document-flow-drawer"
+        modal
+        :draggable="false"
+        class="document-flow-dialog"
+        :style="{ width: 'min(1120px, 94vw)', height: 'min(760px, 88vh)' }"
+        :breakpoints="{ '640px': '100vw' }"
         :header="flowHeader"
         @hide="closeFlowDialog"
     >
         <div class="flow-dialog-layout">
             <div class="flow-dialog-toolbar flex flex-col md:flex-row md:items-center justify-between gap-2">
-                <div class="min-w-0">
-                    <div class="font-semibold">Flow เอกสาร</div>
-                    <small class="text-muted-color">ดูความสัมพันธ์จาก SML และเปิด PDF ของเอกสารที่มีใน PaperLess</small>
-                </div>
                 <div class="flex flex-wrap items-center gap-2 md:justify-end">
                     <Tag v-if="flowNodeCount" :value="`${flowNodeCount} เอกสาร`" severity="info" />
+                    <Tag v-if="flowStatusSummary.missing" :value="`ยังไม่เข้า ${flowStatusSummary.missing}`" severity="danger" />
+                    <Tag v-if="flowStatusSummary.inProgress" :value="`กำลังเซ็น ${flowStatusSummary.inProgress}`" severity="warn" />
+                    <Tag v-if="flowStatusSummary.completed" :value="`ครบแล้ว ${flowStatusSummary.completed}`" severity="success" />
+                </div>
+                <div class="flex flex-wrap items-center gap-2 md:justify-end">
                     <Button icon="pi pi-refresh" label="โหลดใหม่" severity="secondary" outlined :loading="flowLoading" @click="loadDocumentFlow(flowDocument, { force: true })" />
                 </div>
             </div>
@@ -213,19 +226,13 @@ function recordFlowEvent(event, extra = {}) {
                 <DocumentFlowViewer
                     :graph="flowGraph"
                     admin
-                    compact
                     show-table
-                    table-first
                     @open-document="(documentId) => emit('open-document', documentId)"
                     @preview-pdf="previewFlowPDF"
                 />
             </div>
-
-            <div class="flow-dialog-actions">
-                <Button label="ปิด" severity="secondary" outlined @click="closeFlowDialog" />
-            </div>
         </div>
-    </Drawer>
+    </Dialog>
 
     <ReadOnlyPdfDialog v-model:visible="pdfDialog" :url="pdfUrl" :title="pdfTitle" />
 </template>
@@ -241,22 +248,15 @@ function recordFlowEvent(event, extra = {}) {
 
 .flow-dialog-toolbar {
     flex: 0 0 auto;
+    padding-bottom: 0.55rem;
+    border-bottom: 1px solid var(--surface-border);
 }
 
 .flow-dialog-viewer {
     min-height: 0;
     flex: 1 1 auto;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 0.05rem 0.1rem 0.4rem;
-}
-
-.flow-dialog-actions {
-    flex: 0 0 auto;
-    display: flex;
-    justify-content: flex-end;
-    padding-top: 0.6rem;
-    border-top: 1px solid var(--surface-border);
+    overflow: hidden;
+    padding: 0.05rem 0 0.1rem;
 }
 
 .flow-loading {
@@ -269,34 +269,26 @@ function recordFlowEvent(event, extra = {}) {
     color: var(--text-color-secondary);
 }
 
-:global(.document-flow-drawer.p-drawer) {
+:global(.document-flow-dialog .p-dialog-content) {
+    height: calc(100% - 4.25rem);
     display: flex;
     flex-direction: column;
-}
-
-:global(.document-flow-drawer .p-drawer-content) {
-    display: flex;
-    flex: 1 1 auto;
-    min-height: 0;
-    flex-direction: column;
-    overflow: hidden;
-    padding: 0.55rem 1rem 0.8rem;
-}
-
-:global(.document-flow-drawer .p-drawer-header) {
-    padding: 0.75rem 1rem 0.45rem;
+    padding-top: 0.75rem;
 }
 
 @media (max-width: 640px) {
-    :global(.document-flow-drawer .p-drawer-header),
-    :global(.document-flow-drawer .p-drawer-content) {
-        padding-inline: 0.75rem;
+    :global(.document-flow-dialog.p-dialog) {
+        width: 100vw !important;
+        max-width: 100vw !important;
+        height: 100dvh !important;
+        max-height: 100dvh;
+        margin: 0;
+        border-radius: 0;
     }
 
-    .flow-dialog-viewer {
-        max-height: none;
-        flex: 1 1 auto;
-        padding-bottom: 0.5rem;
+    :global(.document-flow-dialog .p-dialog-content) {
+        height: calc(100dvh - 4.25rem);
+        padding-inline: 0.75rem;
     }
 
     .flow-dialog-layout {
