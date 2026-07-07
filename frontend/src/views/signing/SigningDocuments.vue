@@ -759,26 +759,40 @@ function selectInput(event) {
     min-height: 0;
     flex: 1 1 auto;
     display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
     overflow: hidden;
-    border: 1px solid var(--surface-border);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--surface-ground) 72%, var(--surface-card));
+    background: var(--surface-card);
 }
 
 .reference-dialog-layout :deep(.reference-check),
-.reference-dialog-layout :deep(.reference-compact),
-.reference-dialog-layout :deep(.reference-flow-scroll) {
+.reference-dialog-layout :deep(.reference-compact) {
     min-height: 0;
     height: 100%;
 }
 
 .reference-dialog-layout :deep(.reference-check) {
     flex: 1 1 auto;
+    gap: 0.55rem;
+}
+
+.reference-dialog-layout :deep(.reference-head) {
+    flex: 0 0 auto;
+    padding-bottom: 0.55rem;
+    border-bottom: 1px solid var(--surface-border);
+}
+
+.reference-dialog-layout :deep(.reference-compact) {
+    overflow: hidden;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface-ground) 72%, var(--surface-card));
 }
 
 .reference-dialog-layout :deep(.reference-flow-scroll) {
     border: 0;
     border-radius: 0;
+    height: 100%;
     background: transparent;
 }
 
