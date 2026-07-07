@@ -7,9 +7,15 @@ import { useToast } from 'primevue/usetoast';
 const props = defineProps({
     visible: { type: Boolean, default: false },
     url: { type: String, default: '' },
+    headers: { type: Object, default: null },
     title: { type: String, default: 'ดูเอกสาร' },
     emptyMessage: { type: String, default: 'ยังไม่มี PDF' },
-    fullHeight: { type: Boolean, default: false },
+    fullHeight: { type: Boolean, default: true },
+    initialZoomMode: {
+        type: String,
+        default: 'actual-size',
+        validator: (value) => ['fit-width', 'actual-size'].includes(value)
+    },
     actionUrl: { type: String, default: '' },
     actionLabel: { type: String, default: 'เปิด PaperLess' },
     actionIcon: { type: String, default: 'pi pi-external-link' }
@@ -23,6 +29,8 @@ const dialogVisible = computed({
     get: () => props.visible,
     set: (value) => emit('update:visible', value)
 });
+const viewerUrl = computed(() => (props.visible ? props.url : ''));
+const viewerHeaders = computed(() => props.headers || api.authHeaders());
 
 watch(
     () => props.visible,
@@ -83,7 +91,7 @@ function openActionUrl() {
     >
         <div class="readonly-pdf" :class="{ 'full-height': fullHeight }" @keydown.capture="blockBrowserPrint" @contextmenu.prevent>
             <Message severity="info" class="m-0">หน้าดูอย่างเดียว หากต้องพิมพ์ให้ใช้ปุ่มพิมพ์เอกสารเพื่อบันทึกประวัติ</Message>
-            <ContinuousPdfViewer :url="url" :headers="api.authHeaders()" :empty-message="emptyMessage" toolbar-label="เอกสาร" />
+            <ContinuousPdfViewer :url="viewerUrl" :headers="viewerHeaders" :empty-message="emptyMessage" toolbar-label="เอกสาร" :initial-zoom-mode="initialZoomMode" />
         </div>
         <template #footer>
             <Button v-if="actionUrl" :label="actionLabel" :icon="actionIcon" severity="secondary" outlined @click="openActionUrl" />

@@ -7,7 +7,11 @@ import { useToast } from 'primevue/usetoast';
 
 const props = defineProps({
     visible: { type: Boolean, default: false },
-    document: { type: Object, default: null }
+    document: { type: Object, default: null },
+    loader: { type: Function, default: null },
+    recordEvent: { type: Function, default: null },
+    admin: { type: Boolean, default: true },
+    openPdfOnSelect: { type: Boolean, default: true }
 });
 
 const emit = defineEmits(['update:visible', 'open-document']);
@@ -102,7 +106,7 @@ async function loadDocumentFlow(doc = flowDocument.value, options = {}) {
         flowGraph.value = flowCache.get(cacheKey);
         flowLoading.value = false;
         touchFlowCache(cacheKey, flowGraph.value);
-        recordFlowEvent('document_flow_cache_hit', { docFormatCode: normalizedDoc.docFormatCode, nodeCount: flowNodeCount.value });
+        recordFlowEvent('document_flow_load_success', { docFormatCode: normalizedDoc.docFormatCode, nodeCount: flowNodeCount.value });
         return;
     }
 
@@ -111,9 +115,11 @@ async function loadDocumentFlow(doc = flowDocument.value, options = {}) {
     recordFlowEvent('document_flow_search', { docFormatCode: normalizedDoc.docFormatCode });
 
     try {
-        const result = await api.getAdminDocumentFlow({ docNo: normalizedDoc.docNo, docFormatCode: normalizedDoc.docFormatCode, depth: 3 });
+        const result = props.loader
+            ? await props.loader(normalizedDoc, { depth: 3 })
+            : await api.getAdminDocumentFlow({ docNo: normalizedDoc.docNo, docFormatCode: normalizedDoc.docFormatCode, depth: 3 });
         if (requestSeq !== flowRequestSeq.value) return;
-        const graph = result.documentFlow;
+        const graph = result.relatedDocuments || result.related_documents || result.documentFlow || result.document_flow || result;
         flowGraph.value = graph;
         touchFlowCache(cacheKey, graph);
         recordFlowEvent('document_flow_load_success', { docFormatCode: normalizedDoc.docFormatCode, nodeCount: graph?.nodes?.length || 0 });
@@ -125,6 +131,10 @@ async function loadDocumentFlow(doc = flowDocument.value, options = {}) {
     } finally {
         if (requestSeq === flowRequestSeq.value) flowLoading.value = false;
     }
+}
+
+function handleFlowNodeClick(node = {}) {
+    recordFlowEvent('document_flow_node_click', { docFormatCode: node.doc_format_code || node.docFormatCode || flowDocument.value?.docFormatCode || '', nodeCount: flowNodeCount.value });
 }
 
 function touchFlowCache(key, value) {
@@ -187,6 +197,18 @@ function userFacingFlowError(err) {
 }
 
 function recordFlowEvent(event, extra = {}) {
+    if (props.recordEvent) {
+        const signerEvent = {
+            document_flow_load_success: 'related_documents_load_success',
+            document_flow_load_error: 'related_documents_load_error',
+            document_flow_node_click: 'related_document_click',
+            document_flow_pdf_open: 'related_document_click'
+        }[event];
+        if (signerEvent) {
+            props.recordEvent({ event: signerEvent, errorCode: extra.errorCode || '' });
+        }
+        return;
+    }
     api.recordDocumentFlowEvent({
         event,
         sessionId: flowSessionId,
@@ -237,11 +259,12 @@ function recordFlowEvent(event, extra = {}) {
             <div v-else class="flow-dialog-viewer">
                 <DocumentFlowViewer
                     :graph="flowGraph"
-                    admin
+                    :admin="admin"
                     show-table
-                    open-pdf-on-select
+                    :open-pdf-on-select="openPdfOnSelect"
                     :show-detail-panel="false"
                     @open-document="(documentId) => emit('open-document', documentId)"
+                    @node-click="handleFlowNodeClick"
                     @preview-pdf="previewFlowPDF"
                 />
             </div>

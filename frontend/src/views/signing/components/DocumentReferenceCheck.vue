@@ -146,44 +146,33 @@ function openReferencePDF(item = {}) {
                 <i class="pi pi-inbox"></i>
                 <span>ยังไม่พบเอกสารอ้างอิงก่อนหน้าใน SML</span>
             </div>
-            <div v-else class="reference-list">
-                <div
-                    v-for="item in items"
-                    :key="`${docNo(item)}-${sourceLabel(item)}`"
-                    class="reference-item"
-                    :class="[`status-${item.paperlessStatus || 'missing'}`, { 'can-preview': canPreviewPDF(item) }]"
-                    :role="canPreviewPDF(item) ? 'button' : undefined"
-                    :tabindex="canPreviewPDF(item) ? 0 : undefined"
-                    :aria-label="canPreviewPDF(item) ? `ดู PDF เอกสาร ${docNo(item)}` : `เอกสาร ${docNo(item)} ยังไม่มี PDF ใน PaperLess`"
-                    @click="openReferencePDF(item)"
-                    @keydown.enter.prevent="openReferencePDF(item)"
-                    @keydown.space.prevent="openReferencePDF(item)"
-                >
-                    <span class="reference-status-dot" aria-hidden="true"></span>
-                    <div class="reference-item-main">
-                        <div class="reference-item-top">
-                            <Tag :value="statusMeta(item).label" :severity="statusMeta(item).severity" :icon="statusMeta(item).icon" />
-                            <div class="reference-doc-line">
-                                <strong>{{ docNo(item) }}</strong>
-                            </div>
+            <div v-else class="reference-flow-scroll">
+                <div class="reference-flow-row">
+                    <template v-for="(item, index) in items" :key="`${docNo(item)}-${sourceLabel(item)}`">
+                        <div
+                            class="reference-card"
+                            :class="[`status-${item.paperlessStatus || 'missing'}`, { 'can-preview': canPreviewPDF(item) }]"
+                            :role="canPreviewPDF(item) ? 'button' : undefined"
+                            :tabindex="canPreviewPDF(item) ? 0 : undefined"
+                            :aria-label="canPreviewPDF(item) ? `ดู PDF เอกสาร ${docNo(item)}` : `เอกสาร ${docNo(item)} ยังไม่มี PDF ใน PaperLess`"
+                            @click="openReferencePDF(item)"
+                            @keydown.enter.prevent="openReferencePDF(item)"
+                            @keydown.space.prevent="openReferencePDF(item)"
+                        >
+                            <span class="reference-card-topline">
+                                <span class="reference-status-dot" aria-hidden="true"></span>
+                                <span class="reference-card-type">{{ docFormat(item) }}</span>
+                            </span>
+                            <strong class="reference-card-doc">{{ docNo(item) }}</strong>
+                            <span class="reference-card-meta">{{ docDate(item) }}</span>
+                            <span class="reference-card-meta">จาก {{ sourceLabel(item) }}</span>
+                            <span class="reference-card-tags">
+                                <Tag :value="statusMeta(item).label" :severity="statusMeta(item).severity" :icon="statusMeta(item).icon" />
+                                <Tag v-if="canPreviewPDF(item)" value="กดดู PDF" severity="info" />
+                            </span>
                         </div>
-                        <div class="reference-meta-line">
-                            <span>{{ docDate(item) }}</span>
-                            <span>{{ docFormat(item) }}</span>
-                            <span>จาก {{ sourceLabel(item) }}</span>
-                        </div>
-                    </div>
-                    <Button
-                        v-if="allowPreview"
-                        :icon="canPreviewPDF(item) ? 'pi pi-file-pdf' : 'pi pi-ban'"
-                        size="small"
-                        rounded
-                        outlined
-                        :severity="canPreviewPDF(item) ? 'secondary' : 'danger'"
-                        :disabled="!canPreviewPDF(item)"
-                        :aria-label="canPreviewPDF(item) ? 'ดู PDF' : 'ยังไม่มี PDF'"
-                        @click.stop="openReferencePDF(item)"
-                    />
+                        <span v-if="index < items.length - 1" class="reference-connector" :class="`status-${item.paperlessStatus || 'missing'}`" aria-hidden="true"></span>
+                    </template>
                 </div>
             </div>
         </div>
@@ -282,23 +271,36 @@ function openReferencePDF(item = {}) {
     min-width: 0;
 }
 
-.reference-list {
-    display: grid;
-    gap: 0.45rem;
-}
-
-.reference-item {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 0.6rem;
+.reference-flow-scroll {
+    min-height: 18rem;
+    overflow: auto;
     border: 1px solid var(--surface-border);
     border-radius: 8px;
-    padding: 0.58rem 0.68rem;
-    background: var(--surface-card);
+    padding: 0.85rem;
+    background: color-mix(in srgb, var(--surface-ground) 68%, var(--surface-card));
 }
 
-.reference-item.can-preview {
+.reference-flow-row {
+    min-width: max-content;
+    display: flex;
+    align-items: center;
+    gap: 0;
+}
+
+.reference-card {
+    width: 15.5rem;
+    min-height: 7.35rem;
+    display: grid;
+    align-content: start;
+    gap: 0.16rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 0.55rem 0.6rem;
+    background: var(--surface-card);
+    color: var(--text-color);
+}
+
+.reference-card.can-preview {
     cursor: pointer;
     transition:
         border-color 0.15s ease,
@@ -306,33 +308,40 @@ function openReferencePDF(item = {}) {
         transform 0.15s ease;
 }
 
-.reference-item.can-preview:hover,
-.reference-item.can-preview:focus-visible {
+.reference-card.can-preview:hover,
+.reference-card.can-preview:focus-visible {
     border-color: var(--primary-color);
     outline: none;
     transform: translateY(-1px);
 }
 
-.reference-item.status-completed {
-    border-color: color-mix(in srgb, var(--reference-success) 42%, var(--surface-border));
+.reference-card.status-completed {
+    border-color: color-mix(in srgb, var(--reference-success) 46%, var(--surface-border));
     background: color-mix(in srgb, var(--reference-success) 6%, var(--surface-card));
 }
 
-.reference-item.status-in_progress {
-    border-color: color-mix(in srgb, var(--reference-warning) 42%, var(--surface-border));
-    background: color-mix(in srgb, var(--reference-warning) 6%, var(--surface-card));
+.reference-card.status-in_progress {
+    border-color: color-mix(in srgb, var(--reference-warning) 46%, var(--surface-border));
+    background: color-mix(in srgb, var(--reference-warning) 7%, var(--surface-card));
 }
 
-.reference-item.status-missing,
-.reference-item.status-rejected,
-.reference-item.status-draft,
-.reference-item.status-pending_confirm,
-.reference-item.status-auto_confirming,
-.reference-item.status-completed_evidence_failed,
-.reference-item.status-completed_image_failed,
-.reference-item.status-completed_lock_failed {
-    border-color: color-mix(in srgb, var(--reference-danger) 38%, var(--surface-border));
+.reference-card.status-missing,
+.reference-card.status-rejected,
+.reference-card.status-draft,
+.reference-card.status-pending_confirm,
+.reference-card.status-auto_confirming,
+.reference-card.status-completed_evidence_failed,
+.reference-card.status-completed_image_failed,
+.reference-card.status-completed_lock_failed {
+    border-color: color-mix(in srgb, var(--reference-danger) 42%, var(--surface-border));
     background: color-mix(in srgb, var(--reference-danger) 5%, var(--surface-card));
+}
+
+.reference-card-topline {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.4rem;
 }
 
 .reference-status-dot {
@@ -340,58 +349,82 @@ function openReferencePDF(item = {}) {
     height: 0.62rem;
     border-radius: 999px;
     background: var(--reference-danger);
-    align-self: start;
-    margin-top: 0.34rem;
+    flex: 0 0 auto;
 }
 
-.reference-item.status-completed .reference-status-dot {
+.reference-card.status-completed .reference-status-dot {
     background: var(--reference-success);
 }
 
-.reference-item.status-in_progress .reference-status-dot {
+.reference-card.status-in_progress .reference-status-dot {
     background: var(--reference-warning);
 }
 
-.reference-item-main {
+.reference-card-type,
+.reference-card-meta {
     min-width: 0;
-    display: grid;
-    gap: 0.22rem;
-}
-
-.reference-item-top {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.reference-item-top:deep(.p-tag) {
-    padding: 0.18rem 0.38rem;
-    font-size: 0.72rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.reference-doc-line {
-    min-width: 0;
-    overflow-wrap: anywhere;
-    font-size: 0.95rem;
+.reference-card-type {
+    color: var(--text-color);
+    font-size: 0.86rem;
+    font-weight: 700;
 }
 
-.reference-meta-line {
+.reference-card-doc {
+    min-width: 0;
+    color: var(--primary-color);
+    font-size: 1rem;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.reference-card-meta {
+    color: var(--text-color-secondary);
+    font-size: 0.78rem;
+}
+
+.reference-card-tags {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.25rem 0.7rem;
-    color: var(--text-color-secondary);
-    font-size: 0.82rem;
-    overflow-wrap: anywhere;
+    gap: 0.28rem;
+    margin-top: 0.2rem;
 }
 
-.reference-item > :deep(.p-button.p-button-sm) {
-    width: 1.9rem;
-    height: 1.9rem;
-    padding: 0;
-    flex: 0 0 auto;
-    justify-self: end;
+.reference-card-tags:deep(.p-tag) {
+    max-width: 100%;
+    padding: 0.15rem 0.34rem;
+    font-size: 0.68rem;
+}
+
+.reference-connector {
+    width: 2.15rem;
+    height: 2px;
+    background: color-mix(in srgb, var(--text-color-secondary) 34%, transparent);
+}
+
+.reference-connector.status-completed {
+    background: color-mix(in srgb, var(--reference-success) 58%, var(--surface-border));
+}
+
+.reference-connector.status-in_progress {
+    background: color-mix(in srgb, var(--reference-warning) 58%, var(--surface-border));
+}
+
+.reference-connector.status-missing,
+.reference-connector.status-rejected,
+.reference-connector.status-draft,
+.reference-connector.status-pending_confirm,
+.reference-connector.status-auto_confirming,
+.reference-connector.status-completed_evidence_failed,
+.reference-connector.status-completed_image_failed,
+.reference-connector.status-completed_lock_failed {
+    background: color-mix(in srgb, var(--reference-danger) 56%, var(--surface-border));
 }
 
 .compact .reference-head {
@@ -420,19 +453,28 @@ function openReferencePDF(item = {}) {
         flex-direction: column;
     }
 
-    .reference-actions,
-    .reference-item {
+    .reference-actions {
         width: 100%;
     }
 
-    .reference-item {
-        grid-template-columns: auto minmax(0, 1fr);
-        align-items: flex-start;
+    .reference-flow-scroll {
+        min-height: 16rem;
+        padding: 0.65rem;
     }
 
-    .reference-item > :deep(.p-button.p-button-sm) {
-        grid-column: 2;
-        justify-self: start;
+    .reference-flow-row {
+        min-width: 0;
+        width: 100%;
+        display: grid;
+        gap: 0.55rem;
+    }
+
+    .reference-card {
+        width: 100%;
+    }
+
+    .reference-connector {
+        display: none;
     }
 
     .compact .reference-head {
@@ -448,10 +490,5 @@ function openReferencePDF(item = {}) {
         justify-content: flex-start;
     }
 
-    .reference-item-top {
-        align-items: flex-start;
-        flex-direction: column;
-        gap: 0.35rem;
-    }
 }
 </style>

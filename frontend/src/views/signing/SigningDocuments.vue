@@ -573,7 +573,7 @@ function selectInput(event) {
 
         <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="(documentId) => openDetail({ id: documentId })" />
 
-        <Dialog v-model:visible="referenceDialog" modal :draggable="false" class="reference-check-dialog" :style="{ width: 'min(56rem, 94vw)' }" :breakpoints="{ '960px': '94vw', '640px': '100vw' }">
+        <Dialog v-model:visible="referenceDialog" modal :draggable="false" class="reference-check-dialog" :style="{ width: 'min(1120px, 96vw)', height: 'min(760px, 90vh)' }" :breakpoints="{ '960px': '94vw', '640px': '100vw' }">
             <template #header>
                 <div class="reference-dialog-header">
                     <strong>{{ referenceDialogTitle }}</strong>
@@ -722,7 +722,9 @@ function selectInput(event) {
 }
 
 :global(.reference-check-dialog .p-dialog-content) {
+    height: calc(100% - 4.25rem);
     padding-top: 0.75rem;
+    overflow: auto;
 }
 
 :global(.reference-check-dialog .p-dialog-footer) {

@@ -217,7 +217,7 @@ function docFormatValue(node = {}) {
 
 function selectFlowNode(node) {
     activeNodeKey.value = flowNodeKey(node);
-    if (props.openPdfOnSelect) {
+    if (props.openPdfOnSelect && canPreviewCurrentPDF(node)) {
         previewCurrentPDF(node);
         return;
     }

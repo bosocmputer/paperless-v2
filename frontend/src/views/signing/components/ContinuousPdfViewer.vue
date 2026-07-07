@@ -10,7 +10,12 @@ const props = defineProps({
     headers: { type: Object, default: () => ({}) },
     emptyMessage: { type: String, default: 'ยังไม่มี PDF' },
     allowOpenFull: { type: Boolean, default: false },
-    toolbarLabel: { type: String, default: 'PDF' }
+    toolbarLabel: { type: String, default: 'PDF' },
+    initialZoomMode: {
+        type: String,
+        default: 'fit-width',
+        validator: (value) => ['fit-width', 'actual-size'].includes(value)
+    }
 });
 
 const emit = defineEmits(['load-success', 'load-error', 'page-change', 'open-full']);
@@ -53,6 +58,15 @@ watch(
     { immediate: true }
 );
 
+watch(
+    () => props.initialZoomMode,
+    () => {
+        if (!pdfDoc.value) return;
+        applyInitialZoom();
+        scheduleVisiblePages();
+    }
+);
+
 watch(zoom, () => {
     if (!pdfDoc.value) return;
     resetRenderedPages();
@@ -93,7 +107,7 @@ async function loadPDF() {
         loading.value = false;
         await nextTick();
         setupObservers();
-        fitWidth();
+        applyInitialZoom();
         schedulePagesAround(1);
         emit('load-success', { pageCount: pageCount.value });
     } catch (err) {
@@ -317,6 +331,15 @@ function fitWidth() {
     const firstPage = pageSizes.value[0];
     const available = Math.max(viewerRef.value.clientWidth - 32, 240);
     zoom.value = clamp(available / firstPage.width, 0.45, 2.25);
+}
+
+function applyInitialZoom() {
+    if (props.initialZoomMode === 'actual-size') {
+        fitWidthActive.value = false;
+        zoom.value = 1;
+        return;
+    }
+    fitWidth();
 }
 
 function setZoom(value) {

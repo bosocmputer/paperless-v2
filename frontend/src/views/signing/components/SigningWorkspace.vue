@@ -1,8 +1,9 @@
 <script setup>
 import ContinuousPdfViewer from '@/views/signing/components/ContinuousPdfViewer.vue';
+import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
 import DocumentReferenceCheck from '@/views/signing/components/DocumentReferenceCheck.vue';
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
-import RelatedDocumentsPanel from '@/views/signing/components/RelatedDocumentsPanel.vue';
+import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
@@ -16,8 +17,6 @@ const props = defineProps({
     pdfHeaders: { type: Object, default: () => ({}) },
     loading: { type: Boolean, default: false },
     saving: { type: Boolean, default: false },
-    referenceStatus: { type: Object, default: null },
-    referenceStatusLoading: { type: Boolean, default: false },
     identityLabel: { type: String, default: '' },
     publicMode: { type: Boolean, default: false },
     externalSignOnly: { type: Boolean, default: false },
@@ -56,8 +55,6 @@ const referenceDialogVisible = ref(false);
 const attachmentVisible = ref(false);
 const legalDialogVisible = ref(false);
 const pdfDialogVisible = ref(false);
-const pdfDialogUrl = ref('');
-const pdfDialogLoading = ref(false);
 const signIdempotencyKey = ref(newRequestKey());
 const rejectIdempotencyKey = ref(newRequestKey());
 
@@ -80,8 +77,6 @@ const allowRelatedDocuments = computed(() => !props.externalSignOnly && !props.h
 const allowReferenceCheck = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.referenceCheckLoader);
 const showReadOnlyPanel = computed(() => !props.externalSignOnly && !props.historyFocus);
 const statusView = computed(() => statusMeta(taskStatus.value));
-const showReferenceStatus = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.task?.id && !props.loading);
-const referenceStatusView = computed(() => referenceStatusMeta(props.referenceStatus, props.referenceStatusLoading));
 const signatureTitle = computed(() => ['ลายเซ็น', props.task?.positionName].filter(Boolean).join(' · '));
 const signerLine = computed(() => props.identityLabel || props.task?.signerName || props.task?.signerUser || '-');
 const historySummary = computed(() => {
@@ -104,60 +99,6 @@ const primaryDisabledReason = computed(() => {
     return '';
 });
 
-function referenceStatusMeta(referenceStatus, loading) {
-    const summary = referenceStatus?.summary || {};
-    if (loading) {
-        return {
-            status: 'loading',
-            icon: 'pi pi-spin pi-spinner',
-            title: 'กำลังตรวจสอบเอกสารอ้างอิง',
-            detail: 'การตรวจสอบนี้ไม่กระทบการเซ็นเอกสาร'
-        };
-    }
-    switch (referenceStatus?.status) {
-        case 'completed':
-            return {
-                status: 'completed',
-                icon: 'pi pi-check-circle',
-                title: 'เอกสารอ้างอิงเซ็นครบแล้ว',
-                detail: referenceStatusSummary(summary, 'ครบ')
-            };
-        case 'incomplete':
-            return {
-                status: 'incomplete',
-                icon: 'pi pi-exclamation-triangle',
-                title: 'เอกสารอ้างอิงยังไม่ครบ',
-                detail: referenceStatusSummary(summary, 'ครบ')
-            };
-        case 'none':
-            return {
-                status: 'none',
-                icon: 'pi pi-info-circle',
-                title: 'ไม่พบเอกสารอ้างอิงก่อนหน้า',
-                detail: 'เซ็นต่อได้ตามปกติ'
-            };
-        default:
-            return {
-                status: 'unavailable',
-                icon: 'pi pi-clock',
-                title: 'ยังตรวจสอบเอกสารอ้างอิงไม่ได้',
-                detail: 'เซ็นต่อได้ตามปกติ'
-            };
-    }
-}
-
-function referenceStatusSummary(summary = {}, completedLabel = 'ครบ') {
-    const total = Number(summary.total || 0);
-    const completed = Number(summary.completed || 0);
-    const missing = Number(summary.missing || 0);
-    const inProgress = Number(summary.inProgress || 0);
-    const parts = [];
-    if (total > 0) parts.push(`${completedLabel} ${completed}/${total}`);
-    if (missing > 0) parts.push(`ยังไม่เข้า PaperLess ${missing}`);
-    if (inProgress > 0) parts.push(`กำลังเซ็น ${inProgress}`);
-    return parts.join(' · ') || 'เซ็นต่อได้ตามปกติ';
-}
-
 onMounted(async () => {
     window.addEventListener('beforeunload', handleBeforeUnload);
     await nextTick();
@@ -166,7 +107,6 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
     window.removeEventListener('beforeunload', handleBeforeUnload);
-    cleanupPdfDialog();
 });
 
 onBeforeRouteLeave((_to, _from, next) => {
@@ -200,10 +140,6 @@ watch(
         pageCount.value = 0;
     }
 );
-
-watch(pdfDialogVisible, (visible) => {
-    if (!visible) cleanupPdfDialog();
-});
 
 watch(
     () => props.task?.id,
@@ -393,37 +329,14 @@ async function uploadAttachment(event) {
     }
 }
 
-async function fetchPdfBlob() {
-    if (!props.pdfUrl) throw new Error('โหลด PDF ไม่สำเร็จ');
-    const response = await fetch(props.pdfUrl, { headers: props.pdfHeaders || {}, cache: 'no-store' });
-    if (!response.ok) throw new Error('โหลด PDF ไม่สำเร็จ');
-    return response.blob();
-}
-
-async function openFullPDF() {
+function openFullPDF() {
     if (!allowFullPDF.value) return;
-    if (pdfDialogUrl.value) {
-        pdfDialogVisible.value = true;
+    if (!props.pdfUrl) {
+        toast.add({ severity: 'warn', summary: 'ยังไม่มี PDF', detail: 'รอให้เอกสารโหลดเสร็จก่อน', life: 2500 });
         return;
     }
     pdfDialogVisible.value = true;
-    pdfDialogLoading.value = true;
-    try {
-        if (props.pdfOpenEventName) recordEvent(props.pdfOpenEventName);
-        const blob = await fetchPdfBlob();
-        pdfDialogUrl.value = URL.createObjectURL(blob);
-    } catch (err) {
-        pdfDialogVisible.value = false;
-        toast.add({ severity: 'error', summary: 'เปิด PDF ไม่สำเร็จ', detail: err.message, life: 3000 });
-    } finally {
-        pdfDialogLoading.value = false;
-    }
-}
-
-function cleanupPdfDialog() {
-    if (pdfDialogUrl.value) URL.revokeObjectURL(pdfDialogUrl.value);
-    pdfDialogUrl.value = '';
-    pdfDialogLoading.value = false;
+    if (props.pdfOpenEventName) recordEvent(props.pdfOpenEventName);
 }
 
 function recordEvent(event, extra = {}) {
@@ -512,14 +425,6 @@ function newRequestKey() {
         <Message v-if="historyFocus && !loading" :severity="statusView.severity" class="history-summary">
             {{ historySummary }}
         </Message>
-
-        <div v-if="showReferenceStatus" class="reference-status-strip" :class="`status-${referenceStatusView.status}`" role="status" aria-live="polite">
-            <i :class="referenceStatusView.icon"></i>
-            <div class="reference-status-text">
-                <strong>{{ referenceStatusView.title }}</strong>
-                <span>{{ referenceStatusView.detail }}</span>
-            </div>
-        </div>
 
         <div v-if="!loading" class="workspace-grid" :class="{ 'readonly-grid': !canInteract, 'history-focus-grid': historyFocus }">
             <section class="pdf-shell">
@@ -686,28 +591,27 @@ function newRequestKey() {
             </template>
         </Dialog>
 
-        <Dialog v-if="allowFullPDF" v-model:visible="pdfDialogVisible" modal header="ดู PDF" class="pdf-dialog" :style="{ width: 'min(960px, 96vw)' }">
-            <div class="pdf-dialog-body">
-                <div v-if="pdfDialogLoading" class="pdf-state">
-                    <i class="pi pi-spin pi-spinner"></i>
-                    <span>กำลังเปิด PDF</span>
-                </div>
-                <iframe v-else-if="pdfDialogUrl" :src="pdfDialogUrl" title="PDF" class="pdf-frame"></iframe>
-            </div>
-        </Dialog>
+        <ReadOnlyPdfDialog v-if="allowFullPDF" v-model:visible="pdfDialogVisible" :url="pdfUrl" :headers="pdfHeaders" title="ดู PDF" full-height />
 
-        <Dialog v-if="allowRelatedDocuments" v-model:visible="flowDialogVisible" modal header="Flow เอกสาร" class="flow-dialog" :style="{ width: 'min(58rem, 96vw)' }">
-            <RelatedDocumentsPanel
-                v-if="flowDialogVisible"
-                compact
-                title="Flow เอกสาร"
-                subtitle="ลำดับและความสัมพันธ์ของเอกสารจาก SML"
-                :loader="relatedLoader"
-                :record-event="recordEvent"
-            />
-        </Dialog>
+        <DocumentFlowDialog
+            v-if="allowRelatedDocuments"
+            v-model:visible="flowDialogVisible"
+            :document="document"
+            :loader="relatedLoader"
+            :record-event="recordEvent"
+            :admin="false"
+            :open-pdf-on-select="false"
+        />
 
-        <Dialog v-if="allowReferenceCheck" v-model:visible="referenceDialogVisible" modal header="ตรวจสอบเอกสาร" class="reference-check-dialog" :style="{ width: 'min(56rem, 96vw)' }" :breakpoints="{ '640px': '100vw' }">
+        <Dialog
+            v-if="allowReferenceCheck"
+            v-model:visible="referenceDialogVisible"
+            modal
+            header="ตรวจสอบเอกสาร"
+            class="reference-check-dialog"
+            :style="{ width: 'min(1120px, 96vw)', height: 'min(760px, 90vh)' }"
+            :breakpoints="{ '640px': '100vw' }"
+        >
             <DocumentReferenceCheck
                 v-if="referenceDialogVisible"
                 compact
@@ -784,8 +688,7 @@ function newRequestKey() {
     font-size: 0.9rem;
 }
 
-.loading-state,
-.pdf-state {
+.loading-state {
     display: grid;
     place-items: center;
     gap: 0.75rem;
@@ -1084,62 +987,6 @@ function newRequestKey() {
     margin: 0;
 }
 
-.reference-status-strip {
-    --reference-strip-color: var(--text-color-secondary);
-    display: flex;
-    align-items: center;
-    gap: 0.65rem;
-    min-height: 46px;
-    border: 1px solid color-mix(in srgb, var(--reference-strip-color) 42%, var(--surface-border));
-    border-left-width: 4px;
-    border-radius: 8px;
-    padding: 0.55rem 0.75rem;
-    color: var(--text-color);
-    background: color-mix(in srgb, var(--reference-strip-color) 6%, var(--surface-card));
-}
-
-.reference-status-strip > i {
-    color: var(--reference-strip-color);
-    font-size: 1.08rem;
-    flex: 0 0 auto;
-}
-
-.reference-status-text {
-    min-width: 0;
-    display: grid;
-    gap: 0.05rem;
-    line-height: 1.25;
-}
-
-.reference-status-text strong,
-.reference-status-text span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.reference-status-text span {
-    color: var(--text-color-secondary);
-    font-size: 0.86rem;
-}
-
-.reference-status-strip.status-completed {
-    --reference-strip-color: var(--p-green-500, #22c55e);
-}
-
-.reference-status-strip.status-incomplete {
-    --reference-strip-color: var(--p-red-500, #ef4444);
-}
-
-.reference-status-strip.status-none {
-    --reference-strip-color: var(--p-surface-400, #94a3b8);
-}
-
-.reference-status-strip.status-unavailable,
-.reference-status-strip.status-loading {
-    --reference-strip-color: var(--p-yellow-500, #eab308);
-}
-
 .history-focus-grid {
     grid-template-columns: minmax(0, 1fr);
 }
@@ -1150,30 +997,9 @@ function newRequestKey() {
     color: var(--text-color);
 }
 
-.pdf-dialog-body {
-    min-height: 70dvh;
-    display: grid;
-}
-
-.pdf-frame {
-    width: 100%;
-    height: 76dvh;
-    border: 1px solid var(--surface-border);
-    border-radius: 8px;
-    background: white;
-}
-
-:global(.pdf-dialog .p-dialog-content) {
-    padding-top: 0;
-}
-
-:global(.flow-dialog .p-dialog-content) {
-    padding-top: 0;
-}
-
 :global(.reference-check-dialog .p-dialog-content) {
-    padding-top: 0.25rem;
-    max-height: min(70dvh, 42rem);
+    height: calc(100% - 4.25rem);
+    padding-top: 0.75rem;
     overflow: auto;
 }
 
@@ -1189,8 +1015,7 @@ function newRequestKey() {
     }
 
     .signing-header,
-    .history-summary,
-    .reference-status-strip {
+    .history-summary {
         margin-inline: 0.55rem;
     }
 
@@ -1306,20 +1131,6 @@ function newRequestKey() {
 }
 
 @media (max-width: 640px) {
-    :global(.flow-dialog.p-dialog) {
-        width: 100vw !important;
-        max-width: 100vw !important;
-        height: 100dvh;
-        max-height: 100dvh;
-        margin: 0;
-        border-radius: 0;
-    }
-
-    :global(.flow-dialog .p-dialog-content) {
-        height: calc(100dvh - 4.5rem);
-        overflow: auto;
-    }
-
     :global(.reference-check-dialog.p-dialog) {
         width: 100vw !important;
         max-width: 100vw !important;

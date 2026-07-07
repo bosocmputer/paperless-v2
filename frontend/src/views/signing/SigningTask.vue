@@ -15,9 +15,6 @@ const task = ref(null);
 const legal = ref(null);
 const loading = ref(false);
 const saving = ref(false);
-const referenceStatus = ref(null);
-const referenceStatusLoading = ref(false);
-let referenceStatusSeq = 0;
 
 const pdfUrl = computed(() => api.signingDocumentPDFUrlForDocument(document.value));
 const identityLabel = computed(() => authStore.user?.displayName || authStore.user?.username || task.value?.signerName || task.value?.signerUser || '');
@@ -28,41 +25,15 @@ onMounted(loadTask);
 
 async function loadTask() {
     loading.value = true;
-    referenceStatusSeq += 1;
-    referenceStatusLoading.value = false;
-    referenceStatus.value = null;
     try {
         const result = await api.getMySigningTask(route.params.taskId);
         document.value = result.document;
         task.value = result.task;
         legal.value = result.legal;
-        loadReferenceStatus(result.task?.id || route.params.taskId);
     } catch (err) {
-        referenceStatus.value = null;
         toast.add({ severity: 'error', summary: 'โหลดเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         loading.value = false;
-    }
-}
-
-async function loadReferenceStatus(taskId) {
-    if (!taskId) return;
-    const seq = referenceStatusSeq + 1;
-    referenceStatusSeq = seq;
-    referenceStatusLoading.value = true;
-    try {
-        const result = await api.getMySigningTaskReferenceStatus(taskId);
-        if (seq !== referenceStatusSeq) return;
-        referenceStatus.value = result;
-    } catch {
-        if (seq !== referenceStatusSeq) return;
-        referenceStatus.value = {
-            status: 'unavailable',
-            summary: { total: 0, missing: 0, inProgress: 0, completed: 0 },
-            checkedAt: new Date().toISOString()
-        };
-    } finally {
-        if (seq === referenceStatusSeq) referenceStatusLoading.value = false;
     }
 }
 
@@ -128,8 +99,6 @@ function goBackToTasks() {
         :pdf-headers="api.authHeaders()"
         :loading="loading"
         :saving="saving"
-        :reference-status="referenceStatus"
-        :reference-status-loading="referenceStatusLoading"
         :identity-label="identityLabel"
         :admin-workspace="isAdminSignerWorkspace"
         :on-back="goBackToTasks"
