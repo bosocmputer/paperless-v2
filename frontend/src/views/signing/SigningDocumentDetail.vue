@@ -663,11 +663,10 @@ function movementEventView(event) {
                                 <div class="block-head">
                                     <div>
                                         <div class="block-title">ความคืบหน้าเอกสาร</div>
-                                        <small>แสดงทุกขั้นตอน รวมขั้นตอนที่ยังไม่ถึงคิว</small>
                                     </div>
                                     <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
                                 </div>
-                                <DocumentWorkflowTimeline :document="document" :show-external-actions="false" @generate-external="requestExternalToken" />
+                                <DocumentWorkflowTimeline :document="document" :show-external-actions="false" compact @generate-external="requestExternalToken" />
                             </div>
                         </TabPanel>
                         <TabPanel value="references">
@@ -883,15 +882,29 @@ function movementEventView(event) {
     color: var(--text-color-secondary);
 }
 .side-panel {
-    overflow: auto;
+    overflow: hidden;
     padding: 0.75rem;
-    display: grid;
-    gap: 0.75rem;
-    align-content: start;
+    display: flex;
+    flex-direction: column;
+}
+.side-panel :deep(.p-tabs) {
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+}
+.side-panel :deep(.p-tabpanels) {
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: auto;
+    padding: 0.85rem 0 0;
+}
+.side-panel :deep(.p-tabpanel) {
+    min-height: 0;
 }
 .info-block {
     display: grid;
-    gap: 0.6rem;
+    gap: 0.5rem;
 }
 .block-title {
     font-weight: 700;

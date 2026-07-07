@@ -86,6 +86,11 @@ function canGenerateExternal(signer) {
     min-width: 0;
 }
 
+.workflow-progress-compact {
+    display: grid;
+    gap: 0.45rem;
+}
+
 .workflow-empty {
     min-height: 7rem;
     border: 1px dashed var(--surface-border);
@@ -230,6 +235,74 @@ function canGenerateExternal(signer) {
 
 .workflow-timeline :deep(.p-timeline-event-marker) {
     border: 0;
+}
+
+.workflow-progress-compact .workflow-timeline :deep(.p-timeline-event-opposite) {
+    display: none;
+}
+
+.workflow-progress-compact .workflow-timeline :deep(.p-timeline-event-content) {
+    padding-left: 0.45rem;
+}
+
+.workflow-progress-compact .workflow-content {
+    gap: 0.35rem;
+    padding: 0 0 0.6rem 0.2rem;
+}
+
+.workflow-progress-compact .workflow-title-row {
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.workflow-progress-compact .workflow-title-row small {
+    display: none;
+}
+
+.workflow-progress-compact .workflow-summary {
+    overflow: hidden;
+    color: var(--text-color-secondary);
+    font-size: 0.82rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.workflow-progress-compact .workflow-signers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.workflow-progress-compact .workflow-signer {
+    min-width: 0;
+    max-width: 100%;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border-radius: 999px;
+    padding: 0.35rem 0.45rem 0.35rem 0.6rem;
+    background: color-mix(in srgb, var(--surface-ground) 58%, var(--surface-card));
+}
+
+.workflow-progress-compact .workflow-signer span:first-child {
+    min-width: 0;
+}
+
+.workflow-progress-compact .workflow-signer strong {
+    max-width: 8.5rem;
+    font-size: 0.84rem;
+}
+
+.workflow-progress-compact .workflow-signer small {
+    display: none;
+}
+
+.workflow-progress-compact .workflow-signer-actions {
+    gap: 0.2rem;
+}
+
+.workflow-progress-compact .workflow-signer-actions :deep(.p-tag) {
+    font-size: 0.72rem;
 }
 
 @media (max-width: 640px) {

@@ -72,16 +72,11 @@ const pageConfig = computed(() => {
 });
 const filteredDocuments = computed(() => documents.value);
 const referenceDialogTitle = computed(() => {
-    const docNo = referenceDocument.value?.docNo || referenceDocument.value?.doc_no || '';
-    return docNo ? `ตรวจสอบเอกสารอ้างอิง · ${docNo}` : 'ตรวจสอบเอกสารอ้างอิง';
-});
-const referenceDialogSubtitle = computed(() => {
     const doc = referenceDocument.value || {};
-    const parts = [
-        doc.docFormatCode || doc.doc_format_code,
-        doc.partyName || doc.party_name || doc.partyCode || doc.party_code,
-        formatDocumentDate(doc.docDate || doc.doc_date)
-    ].filter((part) => part && part !== '-');
+    const docNo = doc.docNo || doc.doc_no || '';
+    const formatCode = doc.docFormatCode || doc.doc_format_code || '';
+    const party = doc.partyName || doc.party_name || doc.partyCode || doc.party_code || '';
+    const parts = [[docNo, formatCode].filter(Boolean).join(' ~ '), party].filter((part) => part && part !== '-');
     return parts.join(' · ');
 });
 const attachmentsDialogTitle = computed(() => {
@@ -621,13 +616,15 @@ function selectInput(event) {
             :headers="api.authHeaders()"
         />
 
-        <Dialog v-model:visible="referenceDialog" modal :draggable="false" class="reference-check-dialog" :style="{ width: 'min(1120px, 96vw)', height: 'min(760px, 90vh)' }" :breakpoints="{ '960px': '94vw', '640px': '100vw' }">
-            <template #header>
-                <div class="reference-dialog-header">
-                    <strong>{{ referenceDialogTitle }}</strong>
-                    <small v-if="referenceDialogSubtitle">{{ referenceDialogSubtitle }}</small>
-                </div>
-            </template>
+        <Dialog
+            v-model:visible="referenceDialog"
+            modal
+            :draggable="false"
+            class="reference-check-dialog"
+            :style="{ width: 'min(1280px, 96vw)', height: 'min(820px, 90vh)' }"
+            :breakpoints="{ '640px': '100vw' }"
+            :header="referenceDialogTitle || 'ตรวจสอบเอกสารอ้างอิง'"
+        >
             <div class="reference-dialog-layout">
                 <DocumentReferenceCheck :document="referenceDocument" :loader="loadReferenceCheckForDialog" compact display-mode="flow" open-in-new-tab :document-route-resolver="referenceDocumentUrl" @open-document="(documentId) => openDetail({ id: documentId })" />
             </div>
@@ -747,25 +744,6 @@ function selectInput(event) {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-}
-
-.reference-dialog-header {
-    min-width: 0;
-    display: grid;
-    gap: 0.18rem;
-}
-
-.reference-dialog-header strong,
-.reference-dialog-header small {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.reference-dialog-header small {
-    color: var(--text-color-secondary);
-    font-weight: 500;
 }
 
 :global(.reference-check-dialog .p-dialog-content) {

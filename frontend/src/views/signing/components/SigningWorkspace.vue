@@ -81,6 +81,14 @@ const allowReferenceCheck = computed(() => !props.externalSignOnly && !props.his
 const showReadOnlyPanel = computed(() => !props.externalSignOnly && !props.historyFocus);
 const statusView = computed(() => statusMeta(taskStatus.value));
 const referenceStatusView = computed(() => referenceStatusMeta(props.referenceStatus));
+const referenceDialogTitle = computed(() => {
+    const doc = props.document || {};
+    const docNo = doc.docNo || doc.doc_no || '';
+    const formatCode = doc.docFormatCode || doc.doc_format_code || '';
+    const party = doc.partyName || doc.party_name || doc.partyCode || doc.party_code || '';
+    const parts = [[docNo, formatCode].filter(Boolean).join(' ~ '), party].filter((part) => part && part !== '-');
+    return parts.join(' · ') || 'ตรวจสอบเอกสาร';
+});
 const attachmentCount = computed(() => props.attachments?.length || 0);
 const showReadonlyAttachments = computed(() => !props.externalSignOnly && !canInteract.value && (attachmentCount.value > 0 || props.attachmentsLoading || props.attachmentsError));
 const signatureTitle = computed(() => ['ลายเซ็น', props.task?.positionName].filter(Boolean).join(' · '));
@@ -660,10 +668,10 @@ function newRequestKey() {
             v-if="allowReferenceCheck"
             v-model:visible="referenceDialogVisible"
             modal
-            header="ตรวจสอบเอกสาร"
             class="reference-check-dialog"
-            :style="{ width: 'min(1120px, 96vw)', height: 'min(760px, 90vh)' }"
+            :style="{ width: 'min(1280px, 96vw)', height: 'min(820px, 90vh)' }"
             :breakpoints="{ '640px': '100vw' }"
+            :header="referenceDialogTitle"
         >
             <div class="reference-dialog-layout">
                 <DocumentReferenceCheck v-if="referenceDialogVisible" compact display-mode="flow" :document="document" :loader="referenceCheckLoader" :allow-preview="false" />
