@@ -580,7 +580,7 @@ function selectInput(event) {
                     <small v-if="referenceDialogSubtitle">{{ referenceDialogSubtitle }}</small>
                 </div>
             </template>
-            <DocumentReferenceCheck :document="referenceDocument" :loader="loadReferenceCheckForDialog" compact open-in-new-tab :document-route-resolver="referenceDocumentUrl" @open-document="(documentId) => openDetail({ id: documentId })" />
+            <DocumentReferenceCheck :document="referenceDocument" :loader="loadReferenceCheckForDialog" compact display-mode="flow" open-in-new-tab :document-route-resolver="referenceDocumentUrl" @open-document="(documentId) => openDetail({ id: documentId })" />
             <template #footer>
                 <Button label="ปิด" severity="secondary" outlined @click="referenceDialog = false" />
             </template>

@@ -8,6 +8,11 @@ const props = defineProps({
     document: { type: Object, default: null },
     loader: { type: Function, required: true },
     compact: { type: Boolean, default: false },
+    displayMode: {
+        type: String,
+        default: 'list',
+        validator: (value) => ['list', 'flow'].includes(value)
+    },
     openInNewTab: { type: Boolean, default: false },
     documentRouteResolver: { type: Function, default: null },
     allowPreview: { type: Boolean, default: true }
@@ -33,6 +38,7 @@ const summaryItems = computed(() => [
     { label: 'กำลังเซ็น', value: summary.value.inProgress || 0, severity: 'warn' },
     { label: 'ครบแล้ว', value: summary.value.completed || 0, severity: 'success' }
 ]);
+const compactFlowMode = computed(() => props.compact && props.displayMode === 'flow');
 
 onMounted(load);
 
@@ -146,7 +152,7 @@ function openReferencePDF(item = {}) {
                 <i class="pi pi-inbox"></i>
                 <span>ยังไม่พบเอกสารอ้างอิงก่อนหน้าใน SML</span>
             </div>
-            <div v-else class="reference-flow-scroll">
+            <div v-else-if="compactFlowMode" class="reference-flow-scroll">
                 <div class="reference-flow-row">
                     <template v-for="(item, index) in items" :key="`${docNo(item)}-${sourceLabel(item)}`">
                         <div
@@ -173,6 +179,46 @@ function openReferencePDF(item = {}) {
                         </div>
                         <span v-if="index < items.length - 1" class="reference-connector" :class="`status-${item.paperlessStatus || 'missing'}`" aria-hidden="true"></span>
                     </template>
+                </div>
+            </div>
+            <div v-else class="reference-list">
+                <div
+                    v-for="item in items"
+                    :key="`${docNo(item)}-${sourceLabel(item)}`"
+                    class="reference-item"
+                    :class="[`status-${item.paperlessStatus || 'missing'}`, { 'can-preview': canPreviewPDF(item) }]"
+                    :role="canPreviewPDF(item) ? 'button' : undefined"
+                    :tabindex="canPreviewPDF(item) ? 0 : undefined"
+                    :aria-label="canPreviewPDF(item) ? `ดู PDF เอกสาร ${docNo(item)}` : `เอกสาร ${docNo(item)} ยังไม่มี PDF ใน PaperLess`"
+                    @click="openReferencePDF(item)"
+                    @keydown.enter.prevent="openReferencePDF(item)"
+                    @keydown.space.prevent="openReferencePDF(item)"
+                >
+                    <span class="reference-status-dot" aria-hidden="true"></span>
+                    <div class="reference-item-main">
+                        <div class="reference-item-top">
+                            <Tag :value="statusMeta(item).label" :severity="statusMeta(item).severity" :icon="statusMeta(item).icon" />
+                            <div class="reference-doc-line">
+                                <strong>{{ docNo(item) }}</strong>
+                            </div>
+                        </div>
+                        <div class="reference-meta-line">
+                            <span>{{ docDate(item) }}</span>
+                            <span>{{ docFormat(item) }}</span>
+                            <span>จาก {{ sourceLabel(item) }}</span>
+                        </div>
+                    </div>
+                    <Button
+                        v-if="allowPreview"
+                        :icon="canPreviewPDF(item) ? 'pi pi-file-pdf' : 'pi pi-ban'"
+                        size="small"
+                        rounded
+                        outlined
+                        :severity="canPreviewPDF(item) ? 'secondary' : 'danger'"
+                        :disabled="!canPreviewPDF(item)"
+                        :aria-label="canPreviewPDF(item) ? 'ดู PDF' : 'ยังไม่มี PDF'"
+                        @click.stop="openReferencePDF(item)"
+                    />
                 </div>
             </div>
         </div>
@@ -271,6 +317,59 @@ function openReferencePDF(item = {}) {
     min-width: 0;
 }
 
+.reference-list {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.reference-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.6rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 0.58rem 0.68rem;
+    background: var(--surface-card);
+}
+
+.reference-item.can-preview {
+    cursor: pointer;
+    transition:
+        border-color 0.15s ease,
+        background-color 0.15s ease,
+        transform 0.15s ease;
+}
+
+.reference-item.can-preview:hover,
+.reference-item.can-preview:focus-visible {
+    border-color: var(--primary-color);
+    outline: none;
+    transform: translateY(-1px);
+}
+
+.reference-item.status-completed {
+    border-color: color-mix(in srgb, var(--reference-success) 42%, var(--surface-border));
+    background: color-mix(in srgb, var(--reference-success) 6%, var(--surface-card));
+}
+
+.reference-item.status-in_progress {
+    border-color: color-mix(in srgb, var(--reference-warning) 42%, var(--surface-border));
+    background: color-mix(in srgb, var(--reference-warning) 6%, var(--surface-card));
+}
+
+.reference-item.status-missing,
+.reference-item.status-rejected,
+.reference-item.status-draft,
+.reference-item.status-pending_confirm,
+.reference-item.status-auto_confirming,
+.reference-item.status-completed_evidence_failed,
+.reference-item.status-completed_image_failed,
+.reference-item.status-completed_lock_failed {
+    border-color: color-mix(in srgb, var(--reference-danger) 38%, var(--surface-border));
+    background: color-mix(in srgb, var(--reference-danger) 5%, var(--surface-card));
+}
+
 .reference-flow-scroll {
     min-height: 18rem;
     overflow: auto;
@@ -358,6 +457,48 @@ function openReferencePDF(item = {}) {
 
 .reference-card.status-in_progress .reference-status-dot {
     background: var(--reference-warning);
+}
+
+.reference-item-main {
+    min-width: 0;
+    display: grid;
+    gap: 0.22rem;
+}
+
+.reference-item-top {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.reference-item-top:deep(.p-tag) {
+    padding: 0.18rem 0.38rem;
+    font-size: 0.72rem;
+    white-space: nowrap;
+}
+
+.reference-doc-line {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: 0.95rem;
+}
+
+.reference-meta-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.7rem;
+    color: var(--text-color-secondary);
+    font-size: 0.82rem;
+    overflow-wrap: anywhere;
+}
+
+.reference-item > :deep(.p-button.p-button-sm) {
+    width: 1.9rem;
+    height: 1.9rem;
+    padding: 0;
+    flex: 0 0 auto;
+    justify-self: end;
 }
 
 .reference-card-type,
@@ -455,6 +596,23 @@ function openReferencePDF(item = {}) {
 
     .reference-actions {
         width: 100%;
+    }
+
+    .reference-item {
+        width: 100%;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: flex-start;
+    }
+
+    .reference-item > :deep(.p-button.p-button-sm) {
+        grid-column: 2;
+        justify-self: start;
+    }
+
+    .reference-item-top {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 0.35rem;
     }
 
     .reference-flow-scroll {

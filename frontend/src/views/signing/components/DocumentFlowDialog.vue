@@ -281,6 +281,7 @@ function recordFlowEvent(event, extra = {}) {
     min-height: 0;
     flex-direction: column;
     gap: 0.55rem;
+    background: var(--surface-card);
 }
 
 .flow-dialog-toolbar {
@@ -293,7 +294,9 @@ function recordFlowEvent(event, extra = {}) {
     min-height: 0;
     flex: 1 1 auto;
     overflow: hidden;
-    padding: 0.05rem 0 0.1rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface-ground) 72%, var(--surface-card));
 }
 
 .flow-loading {
@@ -311,6 +314,23 @@ function recordFlowEvent(event, extra = {}) {
     display: flex;
     flex-direction: column;
     padding-top: 0.75rem;
+}
+
+.flow-dialog-viewer :deep(.document-flow-viewer),
+.flow-dialog-viewer :deep(.flow-workspace),
+.flow-dialog-viewer :deep(.flow-map-panel),
+.flow-dialog-viewer :deep(.flow-map-scroll) {
+    height: 100%;
+}
+
+.flow-dialog-viewer :deep(.flow-map-panel) {
+    border: 0;
+    background: transparent;
+}
+
+.flow-dialog-viewer :deep(.flow-map-scroll) {
+    min-height: 100%;
+    background: transparent;
 }
 
 @media (max-width: 640px) {

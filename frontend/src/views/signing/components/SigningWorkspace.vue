@@ -615,6 +615,7 @@ function newRequestKey() {
             <DocumentReferenceCheck
                 v-if="referenceDialogVisible"
                 compact
+                display-mode="flow"
                 :document="document"
                 :loader="referenceCheckLoader"
                 :allow-preview="false"
