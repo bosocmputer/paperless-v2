@@ -547,6 +547,55 @@ func TestSanitizeSigningDocumentForSignerRemovesSensitiveEvidence(t *testing.T) 
 	}
 }
 
+func TestSanitizeSigningAttachmentForUserKeepsOnlySafeMetadata(t *testing.T) {
+	createdAt := time.Date(2026, 7, 7, 13, 54, 0, 0, time.UTC)
+	attachment := models.SigningDocumentAttachment{
+		ID:        "attachment-1",
+		Note:      "ใบเสนอราคา",
+		CreatedAt: createdAt,
+		File: models.UploadedFile{
+			ID:           "file-1",
+			OriginalName: "ใบเสนอราคาสาขา.pdf",
+			StoredName:   "stored.pdf",
+			StoragePath:  "/app/uploads/secret.pdf",
+			ContentType:  "application/pdf",
+			SizeBytes:    123938,
+			PageCount:    1,
+			SHA256:       "secret-hash",
+			CreatedBy:    "user-1",
+			CreatedAt:    createdAt,
+		},
+	}
+
+	sanitized := sanitizeSigningAttachmentForUser(attachment)
+	payload, err := json.Marshal(sanitized)
+	if err != nil {
+		t.Fatalf("marshal sanitized attachment: %v", err)
+	}
+	text := string(payload)
+	for _, secret := range []string{"StoragePath", "storagePath", "/app/uploads", "secret-hash", "stored.pdf", "createdBy"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("sanitized attachment leaked %q: %s", secret, text)
+		}
+	}
+	if sanitized.ID != "attachment-1" || sanitized.File.OriginalName != "ใบเสนอราคาสาขา.pdf" || sanitized.File.ContentType != "application/pdf" || sanitized.File.SizeBytes != 123938 {
+		t.Fatalf("safe attachment metadata missing: %#v", sanitized)
+	}
+}
+
+func TestDocumentHasInternalSignerSkipsExternalSigners(t *testing.T) {
+	signers := []models.SigningDocumentSigner{
+		{SignerType: "external", SignerUser: "customer"},
+		{SignerType: "internal", SignerUser: "902"},
+	}
+	if !documentHasInternalSigner(signers, "902") {
+		t.Fatal("expected internal signer to have access")
+	}
+	if documentHasInternalSigner(signers, "customer") {
+		t.Fatal("external signer must not receive internal attachment access")
+	}
+}
+
 func TestSanitizeSigningDocumentForExternalKeepsOnlySignableDocumentContext(t *testing.T) {
 	document := models.SigningDocument{
 		DocNo:         "PO26060001",

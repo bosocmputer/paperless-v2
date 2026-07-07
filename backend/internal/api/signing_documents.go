@@ -194,6 +194,18 @@ func serveInlinePDF(w http.ResponseWriter, r *http.Request, file models.Uploaded
 	http.ServeFile(w, r, file.StoragePath)
 }
 
+func serveInlineUploadedFile(w http.ResponseWriter, r *http.Request, file models.UploadedFile) {
+	contentType := strings.TrimSpace(file.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	setNoStoreHeaders(w)
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", file.OriginalName))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeFile(w, r, file.StoragePath)
+}
+
 func (s *Server) recordSigningDocumentCreateEvent(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r)
 	req, err := decodeSigningCreateEventPayload(r.Body, maxSigningEventBytes)
@@ -1742,8 +1754,137 @@ func sanitizeSigningTaskForUser(signer models.SigningDocumentSigner) models.Sign
 	return signer
 }
 
+type signingAttachmentFileResponse struct {
+	ID           string    `json:"id"`
+	OriginalName string    `json:"originalName"`
+	ContentType  string    `json:"contentType"`
+	SizeBytes    int64     `json:"sizeBytes"`
+	PageCount    int       `json:"pageCount"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
+type signingAttachmentResponse struct {
+	ID        string                        `json:"id"`
+	Note      string                        `json:"note"`
+	CreatedAt time.Time                     `json:"createdAt"`
+	File      signingAttachmentFileResponse `json:"file"`
+}
+
+func sanitizeSigningAttachmentForUser(attachment models.SigningDocumentAttachment) signingAttachmentResponse {
+	return signingAttachmentResponse{
+		ID:        attachment.ID,
+		Note:      attachment.Note,
+		CreatedAt: attachment.CreatedAt,
+		File: signingAttachmentFileResponse{
+			ID:           attachment.File.ID,
+			OriginalName: attachment.File.OriginalName,
+			ContentType:  attachment.File.ContentType,
+			SizeBytes:    attachment.File.SizeBytes,
+			PageCount:    attachment.File.PageCount,
+			CreatedAt:    attachment.File.CreatedAt,
+		},
+	}
+}
+
+func sanitizeSigningAttachmentsForUser(attachments []models.SigningDocumentAttachment) []signingAttachmentResponse {
+	out := make([]signingAttachmentResponse, 0, len(attachments))
+	for _, attachment := range attachments {
+		out = append(out, sanitizeSigningAttachmentForUser(attachment))
+	}
+	return out
+}
+
 func externalSignOnlyForbidden(w http.ResponseWriter) {
 	writeError(w, http.StatusForbidden, "external_sign_only", "External signing links can only be used to sign documents.")
+}
+
+func (s *Server) listMySigningTaskAttachments(w http.ResponseWriter, r *http.Request) {
+	_, _, document, ok := s.authorizeSigningTaskAttachmentAccess(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"attachments": sanitizeSigningAttachmentsForUser(document.Attachments),
+	})
+}
+
+func (s *Server) getMySigningTaskAttachmentFile(w http.ResponseWriter, r *http.Request) {
+	user, signer, document, ok := s.authorizeSigningTaskAttachmentAccess(w, r)
+	if !ok {
+		return
+	}
+	attachmentID := strings.TrimSpace(r.PathValue("attachmentId"))
+	attachment, ok := findSigningDocumentAttachment(document.Attachments, attachmentID)
+	if !ok || strings.TrimSpace(attachment.File.StoragePath) == "" {
+		writeError(w, http.StatusNotFound, "attachment_not_found", "Attachment was not found.")
+		return
+	}
+	metadata := map[string]any{
+		"documentId":   document.ID,
+		"signerId":     signer.ID,
+		"attachmentId": attachment.ID,
+		"fileId":       attachment.File.ID,
+		"contentType":  attachment.File.ContentType,
+		"sizeBytes":    attachment.File.SizeBytes,
+	}
+	if err := s.store.WriteAuditWithMetadata(r.Context(), user.ID, "signing_attachment.view", "signing_attachment", attachment.ID, clientIP(r), r.UserAgent(), metadata); err != nil {
+		s.logger.Warn("write signing attachment view audit failed", "error", err, "attachmentID", attachment.ID)
+	}
+	serveInlineUploadedFile(w, r, attachment.File)
+}
+
+func (s *Server) authorizeSigningTaskAttachmentAccess(w http.ResponseWriter, r *http.Request) (models.User, models.SigningDocumentSigner, models.SigningDocument, bool) {
+	user, _ := currentUser(r)
+	taskID := strings.TrimSpace(r.PathValue("taskId"))
+	signer, err := s.store.FindSigningTaskByID(r.Context(), taskID)
+	if errors.Is(err, store.ErrSigningTaskNotFound) {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return user, models.SigningDocumentSigner{}, models.SigningDocument{}, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot load signing task right now.")
+		return user, models.SigningDocumentSigner{}, models.SigningDocument{}, false
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if errors.Is(err, store.ErrSigningDocumentNotFound) {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return user, signer, models.SigningDocument{}, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return user, signer, models.SigningDocument{}, false
+	}
+	if !isAdminRole(user.Role) && !documentHasInternalSigner(document.Signers, user.Username) {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return user, signer, document, false
+	}
+	return user, signer, document, true
+}
+
+func documentHasInternalSigner(signers []models.SigningDocumentSigner, username string) bool {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return false
+	}
+	for _, signer := range signers {
+		if strings.EqualFold(signer.SignerType, "external") {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(signer.SignerUser), username) {
+			return true
+		}
+	}
+	return false
+}
+
+func findSigningDocumentAttachment(attachments []models.SigningDocumentAttachment, attachmentID string) (models.SigningDocumentAttachment, bool) {
+	attachmentID = strings.TrimSpace(attachmentID)
+	for _, attachment := range attachments {
+		if attachment.ID == attachmentID {
+			return attachment, true
+		}
+	}
+	return models.SigningDocumentAttachment{}, false
 }
 
 func (s *Server) recordMySigningTaskEvent(w http.ResponseWriter, r *http.Request) {
@@ -1811,7 +1952,18 @@ func (s *Server) uploadMySigningTaskAttachment(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "attachment_upload_failed", "Cannot attach file right now.")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"file": uploaded})
+	var attachmentResponse any
+	if attachments, err := s.store.ListSigningDocumentAttachments(r.Context(), signer.DocumentID); err == nil {
+		for _, attachment := range attachments {
+			if attachment.FileID == uploaded.ID {
+				attachmentResponse = sanitizeSigningAttachmentForUser(attachment)
+				break
+			}
+		}
+	} else {
+		s.logger.Warn("reload signing attachment after upload failed", "error", err, "signerID", signer.ID)
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"attachment": attachmentResponse})
 }
 
 func (s *Server) signMySigningTask(w http.ResponseWriter, r *http.Request) {

@@ -437,6 +437,12 @@ export const api = {
             body: JSON.stringify(payload)
         });
     },
+    getMyTaskAttachments(taskId) {
+        return request(`/api/my/signing-tasks/${taskId}/attachments`);
+    },
+    myTaskAttachmentFileUrl(taskId, attachmentId) {
+        return `/api/my/signing-tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}/file`;
+    },
     uploadMyTaskAttachment(taskId, file, note = '') {
         const form = new FormData();
         form.set('file', file);

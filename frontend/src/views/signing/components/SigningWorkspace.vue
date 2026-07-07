@@ -22,11 +22,16 @@ const props = defineProps({
     externalSignOnly: { type: Boolean, default: false },
     adminWorkspace: { type: Boolean, default: false },
     referenceStatus: { type: Object, default: null },
+    attachments: { type: Array, default: () => [] },
+    attachmentsLoading: { type: Boolean, default: false },
+    attachmentsError: { type: String, default: '' },
     onBack: { type: Function, default: null },
     onReload: { type: Function, default: null },
     onSign: { type: Function, default: null },
     onReject: { type: Function, default: null },
     onAttach: { type: Function, default: null },
+    onReloadAttachments: { type: Function, default: null },
+    attachmentFileUrl: { type: Function, default: null },
     onRecordEvent: { type: Function, default: null },
     relatedLoader: { type: Function, default: null },
     referenceCheckLoader: { type: Function, default: null },
@@ -49,13 +54,18 @@ const rejectVisible = ref(false);
 const rejectReason = ref('');
 const attachmentNote = ref('');
 const uploadingAttachment = ref(false);
-const attachmentCount = ref(0);
 const localSaving = ref(false);
 const flowDialogVisible = ref(false);
 const referenceDialogVisible = ref(false);
 const attachmentVisible = ref(false);
 const legalDialogVisible = ref(false);
 const pdfDialogVisible = ref(false);
+const attachmentPdfVisible = ref(false);
+const attachmentPdfUrl = ref('');
+const attachmentPdfTitle = ref('ดูไฟล์แนบ');
+const attachmentImageVisible = ref(false);
+const attachmentImageUrl = ref('');
+const attachmentImageTitle = ref('ดูไฟล์แนบ');
 const signIdempotencyKey = ref(newRequestKey());
 const rejectIdempotencyKey = ref(newRequestKey());
 
@@ -79,6 +89,7 @@ const allowReferenceCheck = computed(() => !props.externalSignOnly && !props.his
 const showReadOnlyPanel = computed(() => !props.externalSignOnly && !props.historyFocus);
 const statusView = computed(() => statusMeta(taskStatus.value));
 const referenceStatusView = computed(() => referenceStatusMeta(props.referenceStatus));
+const attachmentCount = computed(() => props.attachments?.length || 0);
 const signatureTitle = computed(() => ['ลายเซ็น', props.task?.positionName].filter(Boolean).join(' · '));
 const signerLine = computed(() => props.identityLabel || props.task?.signerName || props.task?.signerUser || '-');
 const historySummary = computed(() => {
@@ -109,6 +120,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
     window.removeEventListener('beforeunload', handleBeforeUnload);
+    revokeAttachmentImageUrl();
 });
 
 onBeforeRouteLeave((_to, _from, next) => {
@@ -169,10 +181,27 @@ watch(
                 referenceDialogVisible.value = false;
                 legalDialogVisible.value = false;
                 pdfDialogVisible.value = false;
+                attachmentPdfVisible.value = false;
+                attachmentImageVisible.value = false;
+                revokeAttachmentImageUrl();
             }
         }
     },
     { immediate: true }
+);
+
+watch(
+    () => attachmentVisible.value,
+    (visible) => {
+        if (visible) props.onReloadAttachments?.();
+    }
+);
+
+watch(
+    () => attachmentImageVisible.value,
+    (visible) => {
+        if (!visible) revokeAttachmentImageUrl();
+    }
 );
 
 function onPdfLoadSuccess(payload = {}) {
@@ -320,7 +349,6 @@ async function uploadAttachment(event) {
     uploadingAttachment.value = true;
     try {
         await props.onAttach(file, attachmentNote.value);
-        attachmentCount.value += 1;
         attachmentNote.value = '';
         recordEvent('attachment_upload');
         toast.add({ severity: 'success', summary: 'แนบไฟล์แล้ว', life: 2200 });
@@ -329,6 +357,107 @@ async function uploadAttachment(event) {
     } finally {
         uploadingAttachment.value = false;
     }
+}
+
+function attachmentFileName(attachment) {
+    return attachment?.file?.originalName || 'ไฟล์แนบ';
+}
+
+function attachmentMeta(attachment) {
+    const file = attachment?.file || {};
+    const parts = [];
+    if (file.contentType) parts.push(file.contentType);
+    if (file.sizeBytes) parts.push(formatBytes(file.sizeBytes));
+    if (file.pageCount) parts.push(`${file.pageCount} หน้า`);
+    return parts.join(' · ');
+}
+
+function formatBytes(value) {
+    const bytes = Number(value || 0);
+    if (!bytes) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatAttachmentDate(value) {
+    if (!value) return '';
+    try {
+        return new Intl.DateTimeFormat('th-TH', {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+            timeZone: 'Asia/Bangkok'
+        }).format(new Date(value));
+    } catch {
+        return '';
+    }
+}
+
+async function openAttachment(attachment) {
+    const url = props.attachmentFileUrl?.(attachment);
+    if (!url) {
+        toast.add({ severity: 'warn', summary: 'ยังเปิดไฟล์ไม่ได้', detail: 'ไม่พบ URL ของไฟล์แนบ', life: 3000 });
+        return;
+    }
+    const fileName = attachment?.file?.originalName || 'ไฟล์แนบ';
+    const contentType = String(attachment?.file?.contentType || '').toLowerCase();
+    if (contentType.includes('pdf')) {
+        attachmentPdfTitle.value = fileName;
+        attachmentPdfUrl.value = url;
+        attachmentPdfVisible.value = true;
+        return;
+    }
+    if (contentType.startsWith('image/')) {
+        await openAttachmentImage(url, fileName);
+        return;
+    }
+    await openAttachmentBlob(url, fileName);
+}
+
+async function openAttachmentImage(url, title) {
+    try {
+        const objectUrl = await fetchAttachmentObjectUrl(url);
+        revokeAttachmentImageUrl();
+        attachmentImageTitle.value = title;
+        attachmentImageUrl.value = objectUrl;
+        attachmentImageVisible.value = true;
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'เปิดไฟล์แนบไม่สำเร็จ', detail: err.message, life: 3500 });
+    }
+}
+
+async function openAttachmentBlob(url, title) {
+    try {
+        const objectUrl = await fetchAttachmentObjectUrl(url);
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.target = '_blank';
+        anchor.rel = 'noopener noreferrer';
+        anchor.download = title || 'attachment';
+        anchor.style.display = 'none';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'เปิดไฟล์แนบไม่สำเร็จ', detail: err.message, life: 3500 });
+    }
+}
+
+async function fetchAttachmentObjectUrl(url) {
+    const response = await fetch(url, {
+        cache: 'no-store',
+        headers: props.pdfHeaders || {}
+    });
+    if (!response.ok) throw new Error('ไม่สามารถโหลดไฟล์แนบได้');
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+}
+
+function revokeAttachmentImageUrl() {
+    if (!attachmentImageUrl.value) return;
+    URL.revokeObjectURL(attachmentImageUrl.value);
+    attachmentImageUrl.value = '';
 }
 
 function openFullPDF() {
@@ -544,6 +673,30 @@ function newRequestKey() {
                         @click="attachmentVisible = !attachmentVisible"
                     />
                     <div v-if="attachmentVisible" class="attachment-fields">
+                        <Message v-if="props.attachmentsError" severity="warn" class="attachment-message">
+                            {{ props.attachmentsError }}
+                        </Message>
+                        <div v-if="props.attachmentsLoading" class="attachment-loading">
+                            <i class="pi pi-spin pi-spinner"></i>
+                            <span>กำลังโหลดไฟล์แนบ</span>
+                        </div>
+                        <div v-else-if="attachmentCount" class="attachment-list">
+                            <div v-for="attachment in props.attachments" :key="attachment.id" class="attachment-item">
+                                <div class="attachment-item-main">
+                                    <i class="pi pi-file attachment-icon"></i>
+                                    <div class="attachment-text">
+                                        <strong>{{ attachmentFileName(attachment) }}</strong>
+                                        <span>{{ attachmentMeta(attachment) }}</span>
+                                        <small v-if="attachment.note">{{ attachment.note }}</small>
+                                        <small v-if="formatAttachmentDate(attachment.createdAt)">แนบเมื่อ {{ formatAttachmentDate(attachment.createdAt) }}</small>
+                                    </div>
+                                </div>
+                                <Button label="ดูไฟล์" icon="pi pi-eye" severity="secondary" outlined size="small" @click="openAttachment(attachment)" />
+                            </div>
+                        </div>
+                        <Message v-else severity="info" class="attachment-message">
+                            ยังไม่มีไฟล์แนบอ้างอิง
+                        </Message>
                         <InputText v-model="attachmentNote" placeholder="หมายเหตุไฟล์แนบ (ถ้ามี)" :disabled="!canInteract || uploadingAttachment" />
                         <label class="attach-button" :class="{ disabled: !canInteract || uploadingAttachment }">
                             <input type="file" accept="application/pdf,image/png,image/jpeg" :disabled="!canInteract || uploadingAttachment" @change="uploadAttachment" />
@@ -650,6 +803,16 @@ function newRequestKey() {
         </Dialog>
 
         <ReadOnlyPdfDialog v-if="allowFullPDF" v-model:visible="pdfDialogVisible" :url="pdfUrl" :headers="pdfHeaders" title="ดู PDF" full-height />
+        <ReadOnlyPdfDialog v-model:visible="attachmentPdfVisible" :url="attachmentPdfUrl" :headers="pdfHeaders" :title="attachmentPdfTitle" full-height />
+
+        <Dialog v-model:visible="attachmentImageVisible" modal :header="attachmentImageTitle" :style="{ width: 'min(72rem, 96vw)' }">
+            <div class="attachment-image-preview">
+                <img v-if="attachmentImageUrl" :src="attachmentImageUrl" :alt="attachmentImageTitle" />
+            </div>
+            <template #footer>
+                <Button label="ปิด" severity="secondary" outlined @click="attachmentImageVisible = false" />
+            </template>
+        </Dialog>
 
         <DocumentFlowDialog
             v-if="allowRelatedDocuments"
@@ -1046,6 +1209,68 @@ function newRequestKey() {
     gap: 0.55rem;
 }
 
+.attachment-message {
+    margin: 0;
+}
+
+.attachment-loading {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    color: var(--text-color-secondary);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+}
+
+.attachment-list {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.attachment-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.65rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: var(--surface-card);
+}
+
+.attachment-item-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    min-width: 0;
+}
+
+.attachment-icon {
+    margin-top: 0.15rem;
+    color: var(--primary-color);
+}
+
+.attachment-text {
+    display: grid;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.attachment-text strong,
+.attachment-text span,
+.attachment-text small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.attachment-text span,
+.attachment-text small {
+    color: var(--text-color-secondary);
+}
+
 .attach-button {
     min-height: 44px;
     display: flex;
@@ -1065,6 +1290,22 @@ function newRequestKey() {
 .attach-button.disabled {
     cursor: not-allowed;
     opacity: 0.6;
+}
+
+.attachment-image-preview {
+    min-height: min(70dvh, 42rem);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface-ground);
+    border-radius: 8px;
+    overflow: auto;
+}
+
+.attachment-image-preview img {
+    max-width: 100%;
+    max-height: 76dvh;
+    object-fit: contain;
 }
 
 .legal-check {
@@ -1296,6 +1537,14 @@ function newRequestKey() {
 
     .signature-canvas {
         height: 168px;
+    }
+
+    .attachment-item {
+        grid-template-columns: 1fr;
+    }
+
+    .attachment-item :deep(.p-button) {
+        width: 100%;
     }
 }
 
