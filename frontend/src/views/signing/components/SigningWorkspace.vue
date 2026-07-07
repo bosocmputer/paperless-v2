@@ -665,17 +665,9 @@ function newRequestKey() {
             :style="{ width: 'min(1120px, 96vw)', height: 'min(760px, 90vh)' }"
             :breakpoints="{ '640px': '100vw' }"
         >
-            <DocumentReferenceCheck
-                v-if="referenceDialogVisible"
-                compact
-                display-mode="flow"
-                :document="document"
-                :loader="referenceCheckLoader"
-                :allow-preview="false"
-            />
-            <template #footer>
-                <Button label="ปิด" severity="secondary" outlined @click="referenceDialogVisible = false" />
-            </template>
+            <div class="reference-dialog-layout">
+                <DocumentReferenceCheck v-if="referenceDialogVisible" compact display-mode="flow" :document="document" :loader="referenceCheckLoader" :allow-preview="false" />
+            </div>
         </Dialog>
     </section>
 </template>
@@ -1119,8 +1111,38 @@ function newRequestKey() {
 
 :global(.reference-check-dialog .p-dialog-content) {
     height: calc(100% - 4.25rem);
+    display: flex;
+    flex-direction: column;
     padding-top: 0.75rem;
-    overflow: auto;
+    background: var(--surface-ground);
+    overflow: hidden;
+}
+
+.reference-dialog-layout {
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    overflow: hidden;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface-ground) 72%, var(--surface-card));
+}
+
+.reference-dialog-layout :deep(.reference-check),
+.reference-dialog-layout :deep(.reference-compact),
+.reference-dialog-layout :deep(.reference-flow-scroll) {
+    min-height: 0;
+    height: 100%;
+}
+
+.reference-dialog-layout :deep(.reference-check) {
+    flex: 1 1 auto;
+}
+
+.reference-dialog-layout :deep(.reference-flow-scroll) {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
 }
 
 @media (max-width: 920px) {

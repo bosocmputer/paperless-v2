@@ -1,5 +1,7 @@
 <script setup>
 import { api } from '@/services/api';
+import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
+import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -15,6 +17,8 @@ const hasMore = ref(false);
 const loading = ref(false);
 const loadingMore = ref(false);
 const searchQuery = ref('');
+const attachmentsDialog = ref(false);
+const attachmentsRow = ref(null);
 const historyOpenRecorded = ref(false);
 const sessionId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 const openedAt = Date.now();
@@ -29,6 +33,16 @@ const emptyDescription = computed(() => {
     if (searchQuery.value) return 'ลองค้นหาด้วยเลขเอกสาร ชื่อคู่ค้า หรือตำแหน่งอีกครั้ง';
     return 'เมื่อคุณเซ็นหรือปฏิเสธเอกสาร รายการจะแสดงที่นี่';
 });
+const attachmentsDialogTitle = computed(() => {
+    const docNo = attachmentsRow.value?.docNo || '';
+    return docNo ? `ไฟล์แนบอ้างอิง · ${docNo}` : 'ไฟล์แนบอ้างอิง';
+});
+const attachmentsDialogSubtitle = computed(() => {
+    const row = attachmentsRow.value || {};
+    const parts = [row.docFormatCode, row.partyName || row.partyCode, formatDate(row.docDate)].filter((part) => part && part !== '-');
+    return parts.join(' · ');
+});
+const attachmentsDialogKey = computed(() => attachmentsRow.value?.taskId || '');
 
 onMounted(() => loadHistory());
 onBeforeUnmount(() => {
@@ -75,6 +89,22 @@ async function loadMore() {
 
 function openHistory(row) {
     router.push({ name: 'my-signing-history-detail', params: { taskId: row.taskId } });
+}
+
+function openAttachmentsDialog(row) {
+    if (!row?.taskId || attachmentCount(row) <= 0) return;
+    attachmentsRow.value = row;
+    attachmentsDialog.value = true;
+}
+
+function loadAttachmentsForDialog() {
+    if (!attachmentsRow.value?.taskId) return Promise.resolve({ attachments: [] });
+    return api.getMyTaskAttachments(attachmentsRow.value.taskId);
+}
+
+function attachmentFileUrlForDialog(attachment) {
+    if (!attachmentsRow.value?.taskId || !attachment?.id) return '';
+    return api.myTaskAttachmentFileUrl(attachmentsRow.value.taskId, attachment.id);
 }
 
 function recordHistoryOpen() {
@@ -153,7 +183,6 @@ function attachmentCount(row) {
                         </div>
                         <span class="history-tags">
                             <Tag :value="statusView(row).label" :severity="statusView(row).severity" />
-                            <Tag v-if="attachmentCount(row)" :value="`แนบ ${attachmentCount(row)}`" severity="info" />
                         </span>
                     </div>
 
@@ -176,12 +205,25 @@ function attachmentCount(row) {
                     <Message v-if="row.taskStatus === 'rejected' && row.rejectReason" severity="warn" class="history-message">เหตุผล: {{ row.rejectReason }}</Message>
                     <Message v-else-if="!row.hasFinalPdf && row.hasCurrentPdf" severity="secondary" class="history-message">เอกสารยังรอขั้นตอนผู้ดูแล จะแสดง PDF ล่าสุดที่ระบบมี</Message>
 
-                    <Button label="ดูเอกสาร" icon="pi pi-eye" class="open-button" @click="openHistory(row)" />
+                    <div class="card-actions">
+                        <DocumentAttachmentActionButton :count="attachmentCount(row)" @click="openAttachmentsDialog(row)" />
+                        <Button label="ดูเอกสาร" icon="pi pi-eye" class="open-button" @click="openHistory(row)" />
+                    </div>
                 </article>
             </div>
 
             <Button v-if="hasMore" label="โหลดประวัติเพิ่ม" icon="pi pi-angle-down" severity="secondary" outlined :loading="loadingMore" @click="loadMore" />
         </template>
+
+        <DocumentAttachmentsDialog
+            v-model:visible="attachmentsDialog"
+            :title="attachmentsDialogTitle"
+            :subtitle="attachmentsDialogSubtitle"
+            :loader-key="attachmentsDialogKey"
+            :loader="loadAttachmentsForDialog"
+            :file-url-resolver="attachmentFileUrlForDialog"
+            :headers="api.authHeaders()"
+        />
     </section>
 </template>
 
@@ -289,6 +331,13 @@ function attachmentCount(row) {
     gap: 0.35rem;
 }
 
+.card-actions {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.6rem;
+}
+
 .history-main > div {
     min-width: 0;
     display: grid;
@@ -365,6 +414,7 @@ dd i {
 
 .open-button {
     min-height: 44px;
+    width: 100%;
 }
 
 @media (min-width: 760px) {

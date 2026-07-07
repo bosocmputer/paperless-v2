@@ -1,6 +1,8 @@
 <script setup>
 import { api } from '@/services/api';
 import { authStore } from '@/stores/auth';
+import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
+import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -19,6 +21,8 @@ const loading = ref(false);
 const loadingReadyMore = ref(false);
 const loadingWaitingMore = ref(false);
 const searchQuery = ref('');
+const attachmentsDialog = ref(false);
+const attachmentsRow = ref(null);
 const waitingSeenRecorded = ref(false);
 const sessionId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 const openedAt = Date.now();
@@ -37,6 +41,16 @@ const emptyDescription = computed(() => {
     if (searchQuery.value) return 'ลองค้นหาด้วยเลขเอกสาร ชื่อคู่ค้า หรือชื่อผู้เซ็นอีกครั้ง';
     return 'เมื่อมีเอกสารส่งถึงคุณ ระบบจะแสดงทั้งงานที่เซ็นได้และงานที่ยังรอคิว';
 });
+const attachmentsDialogTitle = computed(() => {
+    const docNo = attachmentsRow.value?.doc?.docNo || '';
+    return docNo ? `ไฟล์แนบอ้างอิง · ${docNo}` : 'ไฟล์แนบอ้างอิง';
+});
+const attachmentsDialogSubtitle = computed(() => {
+    const doc = attachmentsRow.value?.doc || {};
+    const parts = [doc.docFormatCode, doc.partyName || doc.partyCode, formatDate(doc.docDate)].filter((part) => part && part !== '-');
+    return parts.join(' · ');
+});
+const attachmentsDialogKey = computed(() => attachmentsRow.value?.task?.id || '');
 
 onMounted(() => loadTasks());
 
@@ -131,6 +145,22 @@ function openTask(row) {
     router.push({ name: 'my-signing-task', params: { taskId: row.task.id } });
 }
 
+function openAttachmentsDialog(row) {
+    if (!row?.task?.id || attachmentCount(row.doc) <= 0) return;
+    attachmentsRow.value = row;
+    attachmentsDialog.value = true;
+}
+
+function loadAttachmentsForDialog() {
+    if (!attachmentsRow.value?.task?.id) return Promise.resolve({ attachments: [] });
+    return api.getMyTaskAttachments(attachmentsRow.value.task.id);
+}
+
+function attachmentFileUrlForDialog(attachment) {
+    if (!attachmentsRow.value?.task?.id || !attachment?.id) return '';
+    return api.myTaskAttachmentFileUrl(attachmentsRow.value.task.id, attachment.id);
+}
+
 function recordWaitingQueueSeen() {
     if (waitingSeenRecorded.value || waitingRows.value.length === 0) return;
     waitingSeenRecorded.value = true;
@@ -214,7 +244,6 @@ function attachmentCount(doc) {
                                 </div>
                                 <span class="task-tags">
                                     <Tag value="รอเซ็น" severity="info" />
-                                    <Tag v-if="attachmentCount(row.doc)" :value="`แนบ ${attachmentCount(row.doc)}`" severity="secondary" />
                                 </span>
                             </div>
                             <div class="position-banner">
@@ -227,7 +256,10 @@ function attachmentCount(doc) {
                                     <dd>{{ formatDate(row.doc.docDate) }}</dd>
                                 </div>
                             </dl>
-                            <Button label="เปิดเอกสาร" icon="pi pi-pencil" class="open-button" @click="openTask(row, 'ready')" />
+                            <div class="card-actions">
+                                <DocumentAttachmentActionButton :count="attachmentCount(row.doc)" @click="openAttachmentsDialog(row)" />
+                                <Button label="เปิดเอกสาร" icon="pi pi-pencil" class="open-button" @click="openTask(row, 'ready')" />
+                            </div>
                         </article>
                     </div>
 
@@ -264,7 +296,6 @@ function attachmentCount(doc) {
                                 </div>
                                 <span class="task-tags">
                                     <Tag value="ยังไม่ถึงคิว" severity="secondary" />
-                                    <Tag v-if="attachmentCount(row.doc)" :value="`แนบ ${attachmentCount(row.doc)}`" severity="info" />
                                 </span>
                             </div>
                             <div class="position-banner waiting-position">
@@ -278,7 +309,10 @@ function attachmentCount(doc) {
                                 </div>
                             </dl>
                             <Message severity="warn" class="block-message">{{ row.doc.blockSummary || 'รอขั้นตอนก่อนหน้าเสร็จก่อน' }}</Message>
-                            <Button label="ดูความคืบหน้า" icon="pi pi-eye" severity="secondary" outlined class="open-button" @click="openTask(row, 'waiting')" />
+                            <div class="card-actions">
+                                <DocumentAttachmentActionButton :count="attachmentCount(row.doc)" @click="openAttachmentsDialog(row)" />
+                                <Button label="ดูความคืบหน้า" icon="pi pi-eye" severity="secondary" outlined class="open-button" @click="openTask(row, 'waiting')" />
+                            </div>
                         </article>
                     </div>
 
@@ -294,6 +328,16 @@ function attachmentCount(doc) {
                 </section>
             </template>
         </template>
+
+        <DocumentAttachmentsDialog
+            v-model:visible="attachmentsDialog"
+            :title="attachmentsDialogTitle"
+            :subtitle="attachmentsDialogSubtitle"
+            :loader-key="attachmentsDialogKey"
+            :loader="loadAttachmentsForDialog"
+            :file-url-resolver="attachmentFileUrlForDialog"
+            :headers="api.authHeaders()"
+        />
     </section>
 </template>
 
@@ -431,6 +475,13 @@ function attachmentCount(doc) {
     gap: 0.35rem;
 }
 
+.card-actions {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.6rem;
+}
+
 .task-main > div {
     min-width: 0;
     display: grid;
@@ -500,6 +551,7 @@ dd {
 
 .open-button {
     min-height: 44px;
+    width: 100%;
 }
 
 @media (min-width: 760px) {

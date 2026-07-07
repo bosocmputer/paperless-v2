@@ -1,6 +1,8 @@
 <script setup>
 import { api } from '@/services/api';
 import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
+import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
+import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -21,6 +23,8 @@ const loading = ref(false);
 const loadingReadyMore = ref(false);
 const loadingWaitingMore = ref(false);
 const openingTaskId = ref('');
+const attachmentsDialog = ref(false);
+const attachmentsRow = ref(null);
 let requestSequence = 0;
 
 const readyRows = computed(() => readyDocuments.value.map(normalizeQueueRow).filter(Boolean));
@@ -28,6 +32,16 @@ const waitingRows = computed(() => waitingDocuments.value.map(normalizeQueueRow)
 const filteredReadyRows = computed(() => filterRows(readyRows.value));
 const filteredWaitingRows = computed(() => filterRows(waitingRows.value));
 const totalTasks = computed(() => Number(counts.value.ready || 0) + Number(counts.value.waiting || 0));
+const attachmentsDialogTitle = computed(() => {
+    const docNo = attachmentsRow.value?.doc?.docNo || '';
+    return docNo ? `ไฟล์แนบอ้างอิง · ${docNo}` : 'ไฟล์แนบอ้างอิง';
+});
+const attachmentsDialogSubtitle = computed(() => {
+    const doc = attachmentsRow.value?.doc || {};
+    const parts = [doc.docFormatCode, partyLine(doc), formatDocumentDate(doc.docDate)].filter((part) => part && part !== '-');
+    return parts.join(' · ');
+});
+const attachmentsDialogKey = computed(() => attachmentsRow.value?.task?.id || '');
 
 onMounted(() => loadTasks());
 
@@ -127,6 +141,22 @@ function openTask(row) {
     });
 }
 
+function openAttachmentsDialog(row) {
+    if (!row?.task?.id || attachmentCount(row.doc) <= 0) return;
+    attachmentsRow.value = row;
+    attachmentsDialog.value = true;
+}
+
+function loadAttachmentsForDialog() {
+    if (!attachmentsRow.value?.task?.id) return Promise.resolve({ attachments: [] });
+    return api.getMyTaskAttachments(attachmentsRow.value.task.id);
+}
+
+function attachmentFileUrlForDialog(attachment) {
+    if (!attachmentsRow.value?.task?.id || !attachment?.id) return '';
+    return api.myTaskAttachmentFileUrl(attachmentsRow.value.task.id, attachment.id);
+}
+
 function documentLine(doc) {
     return [doc.docNo, doc.docFormatCode].filter(Boolean).join(' · ') || '-';
 }
@@ -190,10 +220,7 @@ function normalizeSearch(value) {
                         </template>
                         <Column header="เลขที่เอกสาร" style="min-width: 15rem">
                             <template #body="{ data }">
-                                <div class="grid gap-1">
-                                    <Button link class="p-0 font-bold text-left" @click="openTask(data)">{{ documentLine(data.doc) }}</Button>
-                                    <Tag v-if="attachmentCount(data.doc)" :value="`แนบ ${attachmentCount(data.doc)}`" severity="info" class="w-fit" />
-                                </div>
+                                <Button link class="p-0 font-bold text-left" @click="openTask(data)">{{ documentLine(data.doc) }}</Button>
                             </template>
                         </Column>
                         <Column header="คู่ค้า" style="min-width: 14rem">
@@ -214,9 +241,12 @@ function normalizeSearch(value) {
                                 <small class="block text-muted-color mt-1">{{ formatThaiDateTime(data.doc.updatedAt) }}</small>
                             </template>
                         </Column>
-                        <Column header="จัดการ" :exportable="false" style="min-width: 10rem">
+                        <Column header="จัดการ" :exportable="false" style="min-width: 14rem">
                             <template #body="{ data }">
-                                <Button label="เซ็นเอกสาร" icon="pi pi-pencil" size="small" :loading="openingTaskId === data.task.id" @click="openTask(data)" />
+                                <div class="flex items-center gap-2">
+                                    <DocumentAttachmentActionButton :count="attachmentCount(data.doc)" @click="openAttachmentsDialog(data)" />
+                                    <Button label="เซ็นเอกสาร" icon="pi pi-pencil" size="small" :loading="openingTaskId === data.task.id" @click="openTask(data)" />
+                                </div>
                             </template>
                         </Column>
                     </DataTable>
@@ -234,10 +264,7 @@ function normalizeSearch(value) {
                         </template>
                         <Column header="เลขที่เอกสาร" style="min-width: 15rem">
                             <template #body="{ data }">
-                                <div class="grid gap-1">
-                                    <Button link class="p-0 font-bold text-left" @click="openTask(data)">{{ documentLine(data.doc) }}</Button>
-                                    <Tag v-if="attachmentCount(data.doc)" :value="`แนบ ${attachmentCount(data.doc)}`" severity="info" class="w-fit" />
-                                </div>
+                                <Button link class="p-0 font-bold text-left" @click="openTask(data)">{{ documentLine(data.doc) }}</Button>
                             </template>
                         </Column>
                         <Column header="คู่ค้า" style="min-width: 14rem">
@@ -257,9 +284,12 @@ function normalizeSearch(value) {
                                 </div>
                             </template>
                         </Column>
-                        <Column header="จัดการ" :exportable="false" style="min-width: 11rem">
+                        <Column header="จัดการ" :exportable="false" style="min-width: 15rem">
                             <template #body="{ data }">
-                                <Button label="ดูความคืบหน้า" icon="pi pi-eye" size="small" severity="secondary" outlined :loading="openingTaskId === data.task.id" @click="openTask(data)" />
+                                <div class="flex items-center gap-2">
+                                    <DocumentAttachmentActionButton :count="attachmentCount(data.doc)" @click="openAttachmentsDialog(data)" />
+                                    <Button label="ดูความคืบหน้า" icon="pi pi-eye" size="small" severity="secondary" outlined :loading="openingTaskId === data.task.id" @click="openTask(data)" />
+                                </div>
                             </template>
                         </Column>
                     </DataTable>
@@ -269,5 +299,15 @@ function normalizeSearch(value) {
                 </TabPanel>
             </TabPanels>
         </Tabs>
+
+        <DocumentAttachmentsDialog
+            v-model:visible="attachmentsDialog"
+            :title="attachmentsDialogTitle"
+            :subtitle="attachmentsDialogSubtitle"
+            :loader-key="attachmentsDialogKey"
+            :loader="loadAttachmentsForDialog"
+            :file-url-resolver="attachmentFileUrlForDialog"
+            :headers="api.authHeaders()"
+        />
     </div>
 </template>

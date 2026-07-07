@@ -1,6 +1,8 @@
 <script setup>
 import { api } from '@/services/api';
 import { formatDocumentDate, formatThaiDateTime, signingStatusLabel } from '@/utils/signingFormatters';
+import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
+import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -15,10 +17,22 @@ const total = ref(0);
 const loading = ref(false);
 const searchQuery = ref('');
 const openingTaskId = ref('');
+const attachmentsDialog = ref(false);
+const attachmentsRow = ref(null);
 let searchTimer = null;
 let requestSequence = 0;
 
 const firstRow = computed(() => Math.max(0, (Number(page.value || 1) - 1) * Number(size.value || 10)));
+const attachmentsDialogTitle = computed(() => {
+    const docNo = attachmentsRow.value?.docNo || '';
+    return docNo ? `ไฟล์แนบอ้างอิง · ${docNo}` : 'ไฟล์แนบอ้างอิง';
+});
+const attachmentsDialogSubtitle = computed(() => {
+    const row = attachmentsRow.value || {};
+    const parts = [row.docFormatCode, partyLine(row), formatDocumentDate(row.docDate)].filter((part) => part && part !== '-');
+    return parts.join(' · ');
+});
+const attachmentsDialogKey = computed(() => attachmentsRow.value?.taskId || '');
 
 onMounted(() => loadHistory(1));
 onBeforeUnmount(() => {
@@ -59,6 +73,22 @@ function openHistory(row) {
     router.push({ name: 'admin-my-signing-history-detail', params: { taskId: row.taskId } }).finally(() => {
         openingTaskId.value = '';
     });
+}
+
+function openAttachmentsDialog(row) {
+    if (!row?.taskId || attachmentCount(row) <= 0) return;
+    attachmentsRow.value = row;
+    attachmentsDialog.value = true;
+}
+
+function loadAttachmentsForDialog() {
+    if (!attachmentsRow.value?.taskId) return Promise.resolve({ attachments: [] });
+    return api.getMyTaskAttachments(attachmentsRow.value.taskId);
+}
+
+function attachmentFileUrlForDialog(attachment) {
+    if (!attachmentsRow.value?.taskId || !attachment?.id) return '';
+    return api.myTaskAttachmentFileUrl(attachmentsRow.value.taskId, attachment.id);
 }
 
 function statusView(row) {
@@ -126,10 +156,7 @@ function rejectReason(row) {
 
             <Column header="เลขที่เอกสาร" style="min-width: 15rem">
                 <template #body="{ data }">
-                    <div class="grid gap-1">
-                        <Button link class="p-0 font-bold text-left" @click="openHistory(data)">{{ documentLine(data) }}</Button>
-                        <Tag v-if="attachmentCount(data)" :value="`แนบ ${attachmentCount(data)}`" severity="info" class="w-fit" />
-                    </div>
+                    <Button link class="p-0 font-bold text-left" @click="openHistory(data)">{{ documentLine(data) }}</Button>
                 </template>
             </Column>
             <Column header="คู่ค้า" style="min-width: 14rem">
@@ -160,11 +187,24 @@ function rejectReason(row) {
             <Column header="เหตุผลปฏิเสธ" style="min-width: 14rem">
                 <template #body="{ data }">{{ rejectReason(data) }}</template>
             </Column>
-            <Column header="จัดการ" :exportable="false" style="min-width: 10rem">
+            <Column header="จัดการ" :exportable="false" style="min-width: 13rem">
                 <template #body="{ data }">
-                    <Button label="ดูเอกสาร" icon="pi pi-eye" size="small" severity="secondary" outlined :loading="openingTaskId === data.taskId" @click="openHistory(data)" />
+                    <div class="flex items-center gap-2">
+                        <DocumentAttachmentActionButton :count="attachmentCount(data)" @click="openAttachmentsDialog(data)" />
+                        <Button label="ดูเอกสาร" icon="pi pi-eye" size="small" severity="secondary" outlined :loading="openingTaskId === data.taskId" @click="openHistory(data)" />
+                    </div>
                 </template>
             </Column>
         </DataTable>
+
+        <DocumentAttachmentsDialog
+            v-model:visible="attachmentsDialog"
+            :title="attachmentsDialogTitle"
+            :subtitle="attachmentsDialogSubtitle"
+            :loader-key="attachmentsDialogKey"
+            :loader="loadAttachmentsForDialog"
+            :file-url-resolver="attachmentFileUrlForDialog"
+            :headers="api.authHeaders()"
+        />
     </div>
 </template>

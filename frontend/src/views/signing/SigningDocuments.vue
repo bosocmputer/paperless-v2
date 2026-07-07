@@ -1,6 +1,8 @@
 <script setup>
 import { api } from '@/services/api';
 import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity, smlImageFailureDetail } from '@/utils/signingFormatters';
+import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
+import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
 import DocumentReferenceCheck from '@/views/signing/components/DocumentReferenceCheck.vue';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
@@ -25,6 +27,8 @@ const referenceDocument = ref(null);
 const readonlyPdfDialog = ref(false);
 const readonlyPdfUrl = ref('');
 const readonlyPdfTitle = ref('');
+const attachmentsDialog = ref(false);
+const attachmentsDocument = ref(null);
 const externalSignerDialog = ref(false);
 const externalSignerDocument = ref(null);
 const tokenDialog = ref(false);
@@ -80,6 +84,20 @@ const referenceDialogSubtitle = computed(() => {
     ].filter((part) => part && part !== '-');
     return parts.join(' · ');
 });
+const attachmentsDialogTitle = computed(() => {
+    const docNo = attachmentsDocument.value?.docNo || attachmentsDocument.value?.doc_no || '';
+    return docNo ? `ไฟล์แนบอ้างอิง · ${docNo}` : 'ไฟล์แนบอ้างอิง';
+});
+const attachmentsDialogSubtitle = computed(() => {
+    const doc = attachmentsDocument.value || {};
+    const parts = [
+        doc.docFormatCode || doc.doc_format_code,
+        doc.partyName || doc.party_name || doc.partyCode || doc.party_code,
+        formatDocumentDate(doc.docDate || doc.doc_date)
+    ].filter((part) => part && part !== '-');
+    return parts.join(' · ');
+});
+const attachmentsDialogKey = computed(() => attachmentsDocument.value?.id || '');
 
 onMounted(loadPage);
 
@@ -205,6 +223,22 @@ function previewDocumentPDF(doc, version = 'current') {
     readonlyPdfUrl.value = url;
     readonlyPdfTitle.value = `${doc.docNo || 'เอกสาร'} · ${version === 'final' ? 'หลักฐานการลงนาม' : 'เอกสารเซ็นครบ'}`;
     readonlyPdfDialog.value = true;
+}
+
+function openAttachmentsDialog(doc) {
+    if (!doc?.id || attachmentCount(doc) <= 0) return;
+    attachmentsDocument.value = doc;
+    attachmentsDialog.value = true;
+}
+
+function loadAttachmentsForDialog() {
+    if (!attachmentsDocument.value?.id) return Promise.resolve({ attachments: [] });
+    return api.getSigningDocumentAttachments(attachmentsDocument.value.id);
+}
+
+function attachmentFileUrlForDialog(attachment) {
+    if (!attachmentsDocument.value?.id || !attachment?.id) return '';
+    return api.signingDocumentAttachmentFileUrl(attachmentsDocument.value.id, attachment.id);
 }
 
 function confirmSend(doc) {
@@ -503,12 +537,9 @@ function selectInput(event) {
 
             <Column field="docNo" header="เลขที่เอกสาร" sortable style="min-width: 16rem">
                 <template #body="{ data }">
-                    <div class="grid gap-1">
-                        <Button link class="p-0 font-bold text-left" @click="openDetail(data)">
-                            <span class="whitespace-nowrap">{{ documentLine(data) }}</span>
-                        </Button>
-                        <Tag v-if="attachmentCount(data)" :value="`แนบ ${attachmentCount(data)}`" severity="info" class="w-fit" />
-                    </div>
+                    <Button link class="p-0 font-bold text-left" @click="openDetail(data)">
+                        <span class="whitespace-nowrap">{{ documentLine(data) }}</span>
+                    </Button>
                 </template>
             </Column>
             <Column field="docDate" header="วันที่เอกสาร" sortable style="min-width: 10rem">
@@ -528,7 +559,7 @@ function selectInput(event) {
             <Column field="updatedAt" header="อัปเดตล่าสุด" sortable style="min-width: 14rem">
                 <template #body="{ data }">{{ formatThaiDateTime(data.updatedAt) }}</template>
             </Column>
-            <Column header="จัดการ" :exportable="false" style="min-width: 13rem">
+            <Column header="จัดการ" :exportable="false" style="min-width: 16rem">
                 <template #body="{ data }">
                     <div class="flex gap-2">
                         <Button
@@ -560,6 +591,7 @@ function selectInput(event) {
                             aria-label="ดูเอกสารเซ็นครบ"
                             @click="previewDocumentPDF(data, 'current')"
                         />
+                        <DocumentAttachmentActionButton :count="attachmentCount(data)" @click="openAttachmentsDialog(data)" />
                         <Button icon="pi pi-sitemap" rounded outlined severity="secondary" aria-label="ดู Flow เอกสาร" @click="openDocumentFlowFromRow(data)" />
                         <Button v-if="queue !== 'draft'" icon="pi pi-list" rounded outlined severity="secondary" aria-label="ตรวจสอบเอกสารอ้างอิง" @click="openReferenceCheck(data)" />
                         <Button icon="pi pi-eye" rounded outlined severity="secondary" aria-label="ดูเอกสาร" @click="openDetail(data)" />
@@ -579,6 +611,15 @@ function selectInput(event) {
         </DataTable>
 
         <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="(documentId) => openDetail({ id: documentId })" />
+        <DocumentAttachmentsDialog
+            v-model:visible="attachmentsDialog"
+            :title="attachmentsDialogTitle"
+            :subtitle="attachmentsDialogSubtitle"
+            :loader-key="attachmentsDialogKey"
+            :loader="loadAttachmentsForDialog"
+            :file-url-resolver="attachmentFileUrlForDialog"
+            :headers="api.authHeaders()"
+        />
 
         <Dialog v-model:visible="referenceDialog" modal :draggable="false" class="reference-check-dialog" :style="{ width: 'min(1120px, 96vw)', height: 'min(760px, 90vh)' }" :breakpoints="{ '960px': '94vw', '640px': '100vw' }">
             <template #header>
@@ -587,10 +628,9 @@ function selectInput(event) {
                     <small v-if="referenceDialogSubtitle">{{ referenceDialogSubtitle }}</small>
                 </div>
             </template>
-            <DocumentReferenceCheck :document="referenceDocument" :loader="loadReferenceCheckForDialog" compact display-mode="flow" open-in-new-tab :document-route-resolver="referenceDocumentUrl" @open-document="(documentId) => openDetail({ id: documentId })" />
-            <template #footer>
-                <Button label="ปิด" severity="secondary" outlined @click="referenceDialog = false" />
-            </template>
+            <div class="reference-dialog-layout">
+                <DocumentReferenceCheck :document="referenceDocument" :loader="loadReferenceCheckForDialog" compact display-mode="flow" open-in-new-tab :document-route-resolver="referenceDocumentUrl" @open-document="(documentId) => openDetail({ id: documentId })" />
+            </div>
         </Dialog>
 
         <ReadOnlyPdfDialog v-model:visible="readonlyPdfDialog" :url="readonlyPdfUrl" :title="readonlyPdfTitle" />
@@ -730,12 +770,38 @@ function selectInput(event) {
 
 :global(.reference-check-dialog .p-dialog-content) {
     height: calc(100% - 4.25rem);
+    display: flex;
+    flex-direction: column;
     padding-top: 0.75rem;
-    overflow: auto;
+    background: var(--surface-ground);
+    overflow: hidden;
 }
 
-:global(.reference-check-dialog .p-dialog-footer) {
-    padding-top: 0.75rem;
+.reference-dialog-layout {
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    overflow: hidden;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface-ground) 72%, var(--surface-card));
+}
+
+.reference-dialog-layout :deep(.reference-check),
+.reference-dialog-layout :deep(.reference-compact),
+.reference-dialog-layout :deep(.reference-flow-scroll) {
+    min-height: 0;
+    height: 100%;
+}
+
+.reference-dialog-layout :deep(.reference-check) {
+    flex: 1 1 auto;
+}
+
+.reference-dialog-layout :deep(.reference-flow-scroll) {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
 }
 
 .otp-text {

@@ -278,6 +278,12 @@ function openReferencePDF(item = {}) {
     gap: 0.65rem;
 }
 
+.reference-check.compact {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
 .reference-head {
     display: flex;
     align-items: flex-start;
@@ -317,9 +323,22 @@ function openReferencePDF(item = {}) {
     min-width: 0;
 }
 
+.reference-check.compact .reference-compact {
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+}
+
 .reference-list {
     display: grid;
     gap: 0.45rem;
+}
+
+.reference-check.compact .reference-list {
+    min-height: 0;
+    flex: 1 1 auto;
+    align-content: start;
 }
 
 .reference-item {
@@ -377,6 +396,11 @@ function openReferencePDF(item = {}) {
     border-radius: 8px;
     padding: 0.85rem;
     background: color-mix(in srgb, var(--surface-ground) 68%, var(--surface-card));
+}
+
+.reference-check.compact .reference-flow-scroll {
+    min-height: 0;
+    flex: 1 1 auto;
 }
 
 .reference-flow-row {
