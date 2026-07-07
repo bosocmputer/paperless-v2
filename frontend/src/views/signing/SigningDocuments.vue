@@ -67,6 +67,19 @@ const pageConfig = computed(() => {
     };
 });
 const filteredDocuments = computed(() => documents.value);
+const referenceDialogTitle = computed(() => {
+    const docNo = referenceDocument.value?.docNo || referenceDocument.value?.doc_no || '';
+    return docNo ? `ตรวจสอบเอกสารอ้างอิง · ${docNo}` : 'ตรวจสอบเอกสารอ้างอิง';
+});
+const referenceDialogSubtitle = computed(() => {
+    const doc = referenceDocument.value || {};
+    const parts = [
+        doc.docFormatCode || doc.doc_format_code,
+        doc.partyName || doc.party_name || doc.partyCode || doc.party_code,
+        formatDocumentDate(doc.docDate || doc.doc_date)
+    ].filter((part) => part && part !== '-');
+    return parts.join(' · ');
+});
 
 onMounted(loadPage);
 
@@ -560,8 +573,17 @@ function selectInput(event) {
 
         <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="(documentId) => openDetail({ id: documentId })" />
 
-        <Dialog v-model:visible="referenceDialog" modal header="" :style="{ width: 'min(78rem, 96vw)' }" :breakpoints="{ '960px': '96vw', '640px': '100vw' }">
+        <Dialog v-model:visible="referenceDialog" modal :draggable="false" class="reference-check-dialog" :style="{ width: 'min(56rem, 94vw)' }" :breakpoints="{ '960px': '94vw', '640px': '100vw' }">
+            <template #header>
+                <div class="reference-dialog-header">
+                    <strong>{{ referenceDialogTitle }}</strong>
+                    <small v-if="referenceDialogSubtitle">{{ referenceDialogSubtitle }}</small>
+                </div>
+            </template>
             <DocumentReferenceCheck :document="referenceDocument" :loader="loadReferenceCheckForDialog" compact open-in-new-tab :document-route-resolver="referenceDocumentUrl" @open-document="(documentId) => openDetail({ id: documentId })" />
+            <template #footer>
+                <Button label="ปิด" severity="secondary" outlined @click="referenceDialog = false" />
+            </template>
         </Dialog>
 
         <ReadOnlyPdfDialog v-model:visible="readonlyPdfDialog" :url="readonlyPdfUrl" :title="readonlyPdfTitle" />
@@ -678,6 +700,33 @@ function selectInput(event) {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+}
+
+.reference-dialog-header {
+    min-width: 0;
+    display: grid;
+    gap: 0.18rem;
+}
+
+.reference-dialog-header strong,
+.reference-dialog-header small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.reference-dialog-header small {
+    color: var(--text-color-secondary);
+    font-weight: 500;
+}
+
+:global(.reference-check-dialog .p-dialog-content) {
+    padding-top: 0.75rem;
+}
+
+:global(.reference-check-dialog .p-dialog-footer) {
+    padding-top: 0.75rem;
 }
 
 .otp-text {

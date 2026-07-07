@@ -192,7 +192,7 @@ function recordFlowEvent(event, extra = {}) {
         modal
         :draggable="false"
         class="document-flow-dialog"
-        :style="{ width: 'min(1120px, 94vw)', height: 'min(760px, 88vh)' }"
+        :style="{ width: 'min(1280px, 96vw)', height: 'min(820px, 90vh)' }"
         :breakpoints="{ '640px': '100vw' }"
         :header="flowHeader"
         @hide="closeFlowDialog"
@@ -234,7 +234,7 @@ function recordFlowEvent(event, extra = {}) {
         </div>
     </Dialog>
 
-    <ReadOnlyPdfDialog v-model:visible="pdfDialog" :url="pdfUrl" :title="pdfTitle" />
+    <ReadOnlyPdfDialog v-model:visible="pdfDialog" :url="pdfUrl" :title="pdfTitle" full-height />
 </template>
 
 <style scoped>

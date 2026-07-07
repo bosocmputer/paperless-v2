@@ -31,16 +31,6 @@ const timelineItems = computed(() =>
         };
     })
 );
-const statusSummary = computed(() => {
-    const summary = { total: timelineItems.value.length, missing: 0, inProgress: 0, completed: 0 };
-    for (const item of timelineItems.value) {
-        const status = referenceStatusClass(item);
-        if (status === 'completed') summary.completed += 1;
-        else if (status === 'in-progress') summary.inProgress += 1;
-        else summary.missing += 1;
-    }
-    return summary;
-});
 const flowLayout = computed(() => buildFlowLayout(timelineItems.value, edges.value));
 const selectedFlowNode = computed(() => {
     const active = flowLayout.value.items.find((node) => flowNodeKey(node) === activeNodeKey.value);
@@ -341,18 +331,10 @@ function previewCurrentPDF(node) {
 
         <div v-else class="flow-workspace">
             <section class="flow-map-panel" aria-label="แผนผัง Flow เอกสาร">
-                <div class="flow-map-summary">
-                    <div class="flow-summary-tags">
-                        <Tag :value="`ทั้งหมด ${statusSummary.total}`" severity="info" />
-                        <Tag v-if="statusSummary.missing" :value="`ยังไม่เข้า ${statusSummary.missing}`" severity="danger" />
-                        <Tag v-if="statusSummary.inProgress" :value="`กำลังเซ็น ${statusSummary.inProgress}`" severity="warn" />
-                        <Tag v-if="statusSummary.completed" :value="`ครบแล้ว ${statusSummary.completed}`" severity="success" />
-                    </div>
-                    <small v-if="flowLayout.hasFallback" class="flow-fallback-note">
-                        <i class="pi pi-info-circle" aria-hidden="true"></i>
-                        {{ flowLayout.fallbackMessage }}
-                    </small>
-                </div>
+                <small v-if="flowLayout.hasFallback" class="flow-fallback-note flow-map-note">
+                    <i class="pi pi-info-circle" aria-hidden="true"></i>
+                    {{ flowLayout.fallbackMessage }}
+                </small>
 
                 <div class="flow-map-scroll">
                     <div class="flow-map-canvas" :style="flowCanvasStyle">
@@ -377,6 +359,7 @@ function previewCurrentPDF(node) {
                             <span class="flow-node-meta">{{ formatDocumentDateTime(item) }}</span>
                             <span class="flow-node-meta">มูลค่า {{ formatAmount(item.total_amount) }}</span>
                             <span class="flow-node-tags">
+                                <Tag v-if="selectedFlowNodeKey === flowNodeKey(item)" value="กำลังเลือก" severity="info" class="flow-selected-tag" />
                                 <Tag v-if="item.isRoot" value="เอกสารที่ค้นหา" severity="info" />
                                 <Tag :value="referenceStatusMeta(item).label" :severity="referenceStatusMeta(item).severity" :icon="referenceStatusMeta(item).icon" />
                             </span>
@@ -406,18 +389,24 @@ function previewCurrentPDF(node) {
             <aside v-if="selectedFlowNode" class="flow-detail-panel" aria-label="รายละเอียดเอกสารที่เลือก">
                 <div class="flow-detail-head">
                     <div class="min-w-0">
+                        <div class="flow-detail-selection-label">
+                            <i class="pi pi-map-marker" aria-hidden="true"></i>
+                            เอกสารที่เลือก
+                        </div>
                         <div class="flow-detail-type">{{ documentTypeLabel(selectedFlowNode) }}</div>
                         <strong>{{ docNoValue(selectedFlowNode) || '-' }}</strong>
                     </div>
                     <Tag :value="selectedStatus.label" :severity="selectedStatus.severity" :icon="selectedStatus.icon" />
                 </div>
 
-                <Message v-if="isMissingPaperLessPdf(selectedFlowNode)" severity="error" :closable="false" class="flow-detail-message">
-                    {{ missingPaperLessPdfMessage }}
-                </Message>
-                <Message v-if="selectedFlowNode.matchCount > 1" severity="warn" :closable="false" class="flow-detail-message">
-                    พบเอกสารนี้ใน PaperLess มากกว่า 1 รายการ ระบบเลือกเอกสารที่อัปเดตล่าสุดเป็นค่าเริ่มต้น
-                </Message>
+                <div v-if="isMissingPaperLessPdf(selectedFlowNode) || selectedFlowNode.matchCount > 1" class="flow-detail-messages">
+                    <Message v-if="isMissingPaperLessPdf(selectedFlowNode)" severity="error" :closable="false" class="flow-detail-message">
+                        {{ missingPaperLessPdfMessage }}
+                    </Message>
+                    <Message v-if="selectedFlowNode.matchCount > 1" severity="warn" :closable="false" class="flow-detail-message">
+                        พบเอกสารนี้ใน PaperLess มากกว่า 1 รายการ ระบบเลือกเอกสารที่อัปเดตล่าสุดเป็นค่าเริ่มต้น
+                    </Message>
+                </div>
 
                 <dl class="metadata-grid">
                     <dt>วันที่-เวลา</dt>
@@ -477,7 +466,9 @@ function previewCurrentPDF(node) {
     --flow-danger: var(--p-red-500, #ef4444);
     --flow-danger-soft: color-mix(in srgb, var(--flow-danger) 7%, var(--surface-card));
     --flow-root: var(--p-sky-500, #0ea5e9);
+    height: 100%;
     min-width: 0;
+    min-height: 0;
 }
 
 .flow-empty {
@@ -494,9 +485,10 @@ function previewCurrentPDF(node) {
 }
 
 .flow-workspace {
+    height: 100%;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+    grid-template-rows: minmax(320px, 1fr) auto;
     gap: 0.75rem;
 }
 
@@ -515,21 +507,6 @@ function previewCurrentPDF(node) {
     overflow: hidden;
 }
 
-.flow-map-summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.6rem;
-    padding: 0.55rem 0.65rem;
-    border-bottom: 1px solid var(--surface-border);
-}
-
-.flow-summary-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-}
-
 .flow-fallback-note {
     display: inline-flex;
     align-items: center;
@@ -537,8 +514,14 @@ function previewCurrentPDF(node) {
     color: var(--text-color-secondary);
 }
 
+.flow-map-note {
+    padding: 0.45rem 0.65rem;
+    border-bottom: 1px solid var(--surface-border);
+}
+
 .flow-map-scroll {
     min-height: 280px;
+    height: 100%;
     overflow: auto;
     padding: 0.85rem;
     background: color-mix(in srgb, var(--surface-ground) 68%, var(--surface-card));
@@ -603,6 +586,10 @@ function previewCurrentPDF(node) {
 .flow-node.selected {
     border-color: var(--primary-color);
     background: color-mix(in srgb, var(--primary-color) 7%, var(--surface-card));
+    box-shadow:
+        inset 0 0 0 1px var(--primary-color),
+        0 0 0 3px color-mix(in srgb, var(--primary-color) 18%, transparent);
+    transform: translateY(-1px);
 }
 
 .flow-node.root {
@@ -779,15 +766,20 @@ function previewCurrentPDF(node) {
 
 .flow-detail-panel {
     min-height: 0;
-    max-height: 100%;
+    max-height: 16rem;
     overflow: auto;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(220px, 0.75fr) minmax(0, 1.7fr) auto;
+    grid-template-areas:
+        'head meta actions'
+        'messages messages messages';
+    align-items: start;
     gap: 0.75rem;
-    padding: 0.75rem;
+    padding: 0.75rem 0.9rem;
 }
 
 .flow-detail-head {
+    grid-area: head;
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
@@ -807,13 +799,29 @@ function previewCurrentPDF(node) {
     font-weight: 700;
 }
 
+.flow-detail-selection-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--primary-color);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.flow-detail-messages {
+    grid-area: messages;
+    display: grid;
+    gap: 0.5rem;
+}
+
 .flow-detail-message {
     margin: 0;
 }
 
 .metadata-grid {
+    grid-area: meta;
     display: grid;
-    grid-template-columns: 7.5rem minmax(0, 1fr);
+    grid-template-columns: 7rem minmax(0, 1fr);
     gap: 0.45rem 0.65rem;
     margin: 0;
 }
@@ -831,11 +839,12 @@ function previewCurrentPDF(node) {
 }
 
 .flow-detail-actions {
+    grid-area: actions;
     display: flex;
     flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 0.5rem;
-    margin-top: auto;
-    padding-top: 0.25rem;
+    min-width: 12rem;
 }
 
 .flow-fallback-details {
@@ -858,17 +867,13 @@ function previewCurrentPDF(node) {
 
 @media (max-width: 760px) {
     .flow-workspace {
-        grid-template-columns: 1fr;
+        height: auto;
+        grid-template-rows: auto auto;
     }
 
     .flow-map-panel {
         display: block;
         overflow: visible;
-    }
-
-    .flow-map-summary {
-        align-items: flex-start;
-        flex-direction: column;
     }
 
     .flow-map-scroll {
@@ -888,6 +893,21 @@ function previewCurrentPDF(node) {
     .flow-mobile-node:deep(.p-tag) {
         grid-column: 2;
         justify-self: start;
+    }
+
+    .flow-detail-panel {
+        max-height: none;
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            'head'
+            'messages'
+            'meta'
+            'actions';
+    }
+
+    .flow-detail-actions {
+        min-width: 0;
+        justify-content: flex-start;
     }
 
     .metadata-grid {

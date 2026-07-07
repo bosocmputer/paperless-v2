@@ -8,7 +8,8 @@ const props = defineProps({
     visible: { type: Boolean, default: false },
     url: { type: String, default: '' },
     title: { type: String, default: 'ดูเอกสาร' },
-    emptyMessage: { type: String, default: 'ยังไม่มี PDF' }
+    emptyMessage: { type: String, default: 'ยังไม่มี PDF' },
+    fullHeight: { type: Boolean, default: false }
 });
 
 const emit = defineEmits(['update:visible']);
@@ -56,8 +57,16 @@ function blockBrowserPrint(event) {
 </script>
 
 <template>
-    <Dialog v-model:visible="dialogVisible" modal :header="title" :style="{ width: 'min(72rem, 96vw)' }" @hide="dialogVisible = false">
-        <div class="readonly-pdf" @keydown.capture="blockBrowserPrint" @contextmenu.prevent>
+    <Dialog
+        v-model:visible="dialogVisible"
+        modal
+        :header="title"
+        class="readonly-pdf-dialog"
+        :class="{ 'readonly-pdf-dialog-full': fullHeight }"
+        :style="{ width: fullHeight ? 'min(96rem, 98vw)' : 'min(72rem, 96vw)', height: fullHeight ? '96dvh' : undefined }"
+        @hide="dialogVisible = false"
+    >
+        <div class="readonly-pdf" :class="{ 'full-height': fullHeight }" @keydown.capture="blockBrowserPrint" @contextmenu.prevent>
             <Message severity="info" class="m-0">หน้าดูอย่างเดียว หากต้องพิมพ์ให้ใช้ปุ่มพิมพ์เอกสารเพื่อบันทึกประวัติ</Message>
             <ContinuousPdfViewer :url="url" :headers="api.authHeaders()" :empty-message="emptyMessage" toolbar-label="เอกสาร" />
         </div>
@@ -73,5 +82,20 @@ function blockBrowserPrint(event) {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 0.75rem;
+}
+
+.readonly-pdf.full-height {
+    height: 100%;
+    min-height: 0;
+}
+
+:global(.readonly-pdf-dialog-full .p-dialog-content) {
+    height: calc(96dvh - 8rem);
+    display: flex;
+    flex-direction: column;
+}
+
+:global(.readonly-pdf-dialog-full .p-dialog-footer) {
+    flex: 0 0 auto;
 }
 </style>

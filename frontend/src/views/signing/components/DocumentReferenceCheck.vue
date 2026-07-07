@@ -141,6 +141,7 @@ function openPaperless(item = {}) {
             </div>
             <div v-else class="reference-list">
                 <div v-for="item in items" :key="`${docNo(item)}-${sourceLabel(item)}`" class="reference-item" :class="`status-${item.paperlessStatus || 'missing'}`">
+                    <span class="reference-status-dot" aria-hidden="true"></span>
                     <div class="reference-item-main">
                         <div class="reference-item-top">
                             <Tag :value="statusMeta(item).label" :severity="statusMeta(item).severity" :icon="statusMeta(item).icon" />
@@ -225,20 +226,22 @@ function openPaperless(item = {}) {
 .reference-head {
     display: flex;
     align-items: flex-start;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: 1rem;
 }
 
 .reference-actions {
+    width: 100%;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
+    justify-content: space-between;
     gap: 0.5rem;
 }
 
 .reference-summary {
     display: flex;
     flex-wrap: wrap;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: 0.35rem;
 }
 
@@ -265,27 +268,24 @@ function openPaperless(item = {}) {
 }
 
 .reference-item {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
     gap: 0.6rem;
     border: 1px solid var(--surface-border);
-    border-left-width: 4px;
     border-radius: 8px;
-    padding: 0.5rem 0.6rem;
+    padding: 0.58rem 0.68rem;
     background: var(--surface-card);
 }
 
 .reference-item.status-completed {
     border-color: color-mix(in srgb, var(--reference-success) 42%, var(--surface-border));
-    border-left-color: var(--reference-success);
-    background: color-mix(in srgb, var(--reference-success) 4%, var(--surface-card));
+    background: color-mix(in srgb, var(--reference-success) 6%, var(--surface-card));
 }
 
 .reference-item.status-in_progress {
     border-color: color-mix(in srgb, var(--reference-warning) 42%, var(--surface-border));
-    border-left-color: var(--reference-warning);
-    background: color-mix(in srgb, var(--reference-warning) 4%, var(--surface-card));
+    background: color-mix(in srgb, var(--reference-warning) 6%, var(--surface-card));
 }
 
 .reference-item.status-missing,
@@ -297,8 +297,24 @@ function openPaperless(item = {}) {
 .reference-item.status-completed_image_failed,
 .reference-item.status-completed_lock_failed {
     border-color: color-mix(in srgb, var(--reference-danger) 38%, var(--surface-border));
-    border-left-color: var(--reference-danger);
-    background: color-mix(in srgb, var(--reference-danger) 3%, var(--surface-card));
+    background: color-mix(in srgb, var(--reference-danger) 5%, var(--surface-card));
+}
+
+.reference-status-dot {
+    width: 0.62rem;
+    height: 0.62rem;
+    border-radius: 999px;
+    background: var(--reference-danger);
+    align-self: start;
+    margin-top: 0.34rem;
+}
+
+.reference-item.status-completed .reference-status-dot {
+    background: var(--reference-success);
+}
+
+.reference-item.status-in_progress .reference-status-dot {
+    background: var(--reference-warning);
 }
 
 .reference-item-main {
@@ -340,6 +356,7 @@ function openPaperless(item = {}) {
     height: 1.9rem;
     padding: 0;
     flex: 0 0 auto;
+    justify-self: end;
 }
 
 .compact .reference-head {
@@ -349,13 +366,13 @@ function openPaperless(item = {}) {
 }
 
 .compact .reference-actions {
-    width: auto;
+    width: 100%;
     justify-content: space-between;
     align-items: center;
 }
 
 .compact .reference-summary {
-    justify-content: flex-end;
+    justify-content: flex-start;
 }
 
 .compact .reference-summary:deep(.p-tag) {
@@ -374,8 +391,13 @@ function openPaperless(item = {}) {
     }
 
     .reference-item {
-        flex-direction: column;
+        grid-template-columns: auto minmax(0, 1fr);
         align-items: flex-start;
+    }
+
+    .reference-item > :deep(.p-button.p-button-sm) {
+        grid-column: 2;
+        justify-self: start;
     }
 
     .compact .reference-head {
