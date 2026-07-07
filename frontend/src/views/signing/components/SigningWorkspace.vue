@@ -423,6 +423,22 @@ function referenceStatusMeta(payload) {
             detail: parts.join(' · ')
         };
     }
+    if (status === 'none') {
+        return {
+            status: 'none',
+            icon: 'pi pi-info-circle',
+            title: 'ไม่พบเอกสารอ้างอิงก่อนหน้า',
+            detail: 'กดตรวจสอบเอกสารเพื่อดูข้อมูลจาก SML'
+        };
+    }
+    if (status === 'unavailable') {
+        return {
+            status: 'unavailable',
+            icon: 'pi pi-exclamation-triangle',
+            title: 'ยังตรวจสอบเอกสารอ้างอิงไม่ได้',
+            detail: 'กดตรวจสอบเอกสารเพื่อลองใหม่'
+        };
+    }
     return null;
 }
 
@@ -980,6 +996,30 @@ function newRequestKey() {
 
 .reference-status-strip.status-incomplete i {
     background: color-mix(in srgb, #ef4444 12%, var(--surface-card));
+}
+
+.reference-status-strip.status-none {
+    border-color: var(--surface-border);
+    background: color-mix(in srgb, var(--surface-ground) 70%, var(--surface-card));
+}
+
+.reference-status-strip.status-none i,
+.reference-status-strip.status-none strong {
+    color: var(--text-color-secondary);
+}
+
+.reference-status-strip.status-unavailable {
+    border-color: color-mix(in srgb, #f59e0b 48%, var(--surface-border));
+    background: color-mix(in srgb, #f59e0b 10%, var(--surface-card));
+}
+
+.reference-status-strip.status-unavailable i,
+.reference-status-strip.status-unavailable strong {
+    color: #b45309;
+}
+
+.reference-status-strip.status-unavailable i {
+    background: color-mix(in srgb, #f59e0b 16%, var(--surface-card));
 }
 
 .signature-canvas {
