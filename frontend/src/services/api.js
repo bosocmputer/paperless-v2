@@ -443,10 +443,11 @@ export const api = {
     myTaskAttachmentFileUrl(taskId, attachmentId) {
         return `/api/my/signing-tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}/file`;
     },
-    uploadMyTaskAttachment(taskId, file, note = '') {
+    uploadMyTaskAttachment(taskId, file, note = '', requirementKey = '') {
         const form = new FormData();
         form.set('file', file);
         if (note) form.set('note', note);
+        if (requirementKey) form.set('requirementKey', requirementKey);
         return request(`/api/my/signing-tasks/${taskId}/attachments`, {
             method: 'POST',
             body: form
@@ -474,6 +475,14 @@ export const api = {
             headers: { Authorization: `Bearer ${sessionToken}` }
         });
     },
+    getPublicTaskAttachments(token, sessionToken) {
+        return request(`/api/public/signing/${token}/attachments`, {
+            headers: { Authorization: `Bearer ${sessionToken}` }
+        });
+    },
+    publicTaskAttachmentFileUrl(token, attachmentId) {
+        return `/api/public/signing/${encodeURIComponent(token)}/attachments/${encodeURIComponent(attachmentId)}/file`;
+    },
     signPublicTask(token, sessionToken, payload) {
         const { body, headers } = splitIdempotencyPayload(payload);
         return request(`/api/public/signing/${token}/sign`, {
@@ -497,10 +506,11 @@ export const api = {
             body: JSON.stringify(payload)
         });
     },
-    uploadPublicTaskAttachment(token, sessionToken, file, note = '') {
+    uploadPublicTaskAttachment(token, sessionToken, file, note = '', requirementKey = '') {
         const form = new FormData();
         form.set('file', file);
         if (note) form.set('note', note);
+        if (requirementKey) form.set('requirementKey', requirementKey);
         return request(`/api/public/signing/${token}/attachments`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${sessionToken}` },

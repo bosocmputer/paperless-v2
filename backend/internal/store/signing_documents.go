@@ -196,12 +196,13 @@ RETURNING id::text
 INSERT INTO signing_document_signers (
     document_id, step_id, position_code, position_name, sequence_no, condition_type,
     signer_slot, signer_type, signer_user, signer_name, status,
-    page_no, x_ratio, y_ratio, width_ratio, height_ratio, label
+    page_no, x_ratio, y_ratio, width_ratio, height_ratio, label, attachment_requirements_snapshot
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
 `, documentID, stepID, step.PositionCode, step.PositionName, step.SequenceNo, step.ConditionType,
 				signer.SignerSlot, signer.SignerType, signer.SignerUser, signer.SignerName, signer.Status,
-				signer.PageNo, signer.XRatio, signer.YRatio, signer.WidthRatio, signer.HeightRatio, signer.Label); err != nil {
+				signer.PageNo, signer.XRatio, signer.YRatio, signer.WidthRatio, signer.HeightRatio, signer.Label,
+				attachmentRequirementsJSON(signer.AttachmentRequirementsSnapshot)); err != nil {
 				return models.SigningDocument{}, err
 			}
 		}
@@ -1423,12 +1424,12 @@ WHERE sg.id = $1
 	return signer, err
 }
 
-func (s *Store) SignInternalTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion string) (SignTaskResult, error) {
-	return s.signTask(ctx, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, false)
+func (s *Store) SignInternalTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string) (SignTaskResult, error) {
+	return s.signTask(ctx, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote, false)
 }
 
-func (s *Store) SignExternalTask(ctx context.Context, taskID, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion string) (SignTaskResult, error) {
-	return s.signTask(ctx, taskID, "", signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, true)
+func (s *Store) SignExternalTask(ctx context.Context, taskID, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string) (SignTaskResult, error) {
+	return s.signTask(ctx, taskID, "", signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote, true)
 }
 
 func (s *Store) RejectInternalTask(ctx context.Context, taskID, username, reason, deviceID, ipAddress, userAgent string) (string, error) {
@@ -1546,11 +1547,11 @@ func (s *Store) AddSigningEvent(ctx context.Context, documentID, actorUserID, ac
 	return insertSigningEvent(ctx, s.pool, documentID, actorUserID, actorLabel, action, message, ipAddress, userAgent, metadata)
 }
 
-func (s *Store) AddSigningAttachment(ctx context.Context, documentID, signerID, fileID, note, createdBy string) error {
+func (s *Store) AddSigningAttachment(ctx context.Context, documentID, signerID, fileID, requirementKey, requirementLabel, note, createdBy string) error {
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO signing_document_attachments (document_id, signer_id, file_id, note, created_by)
-VALUES ($1, NULLIF($2,'')::uuid, $3, $4, NULLIF($5,'')::uuid)
-`, documentID, signerID, fileID, strings.TrimSpace(note), createdBy)
+INSERT INTO signing_document_attachments (document_id, signer_id, file_id, requirement_key, requirement_label, note, created_by)
+VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, $6, NULLIF($7,'')::uuid)
+`, documentID, signerID, fileID, strings.TrimSpace(requirementKey), strings.TrimSpace(requirementLabel), strings.TrimSpace(note), createdBy)
 	return err
 }
 
@@ -1755,7 +1756,8 @@ ORDER BY created_at DESC
 
 func (s *Store) ListSigningDocumentAttachments(ctx context.Context, documentID string) ([]models.SigningDocumentAttachment, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT a.id::text, a.document_id::text, COALESCE(a.signer_id::text,''), a.file_id::text, a.note, COALESCE(a.created_by::text,''), a.created_at,
+SELECT a.id::text, a.document_id::text, COALESCE(a.signer_id::text,''), a.file_id::text,
+       a.requirement_key, a.requirement_label, a.note, COALESCE(a.created_by::text,''), a.created_at,
        f.id::text, f.original_name, f.stored_name, f.storage_path, f.content_type, f.size_bytes, f.page_count, f.sha256, COALESCE(f.created_by::text,''), f.created_at
 FROM signing_document_attachments a
 JOIN uploaded_files f ON f.id = a.file_id
@@ -1768,15 +1770,110 @@ ORDER BY a.created_at DESC
 	defer rows.Close()
 	out := []models.SigningDocumentAttachment{}
 	for rows.Next() {
-		var item models.SigningDocumentAttachment
-		if err := rows.Scan(&item.ID, &item.DocumentID, &item.SignerID, &item.FileID, &item.Note, &item.CreatedBy, &item.CreatedAt,
-			&item.File.ID, &item.File.OriginalName, &item.File.StoredName, &item.File.StoragePath, &item.File.ContentType,
-			&item.File.SizeBytes, &item.File.PageCount, &item.File.SHA256, &item.File.CreatedBy, &item.File.CreatedAt); err != nil {
+		item, err := scanSigningDocumentAttachment(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListSigningTaskAttachments(ctx context.Context, signerID string) ([]models.SigningDocumentAttachment, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT a.id::text, a.document_id::text, COALESCE(a.signer_id::text,''), a.file_id::text,
+       a.requirement_key, a.requirement_label, a.note, COALESCE(a.created_by::text,''), a.created_at,
+       f.id::text, f.original_name, f.stored_name, f.storage_path, f.content_type, f.size_bytes, f.page_count, f.sha256, COALESCE(f.created_by::text,''), f.created_at
+FROM signing_document_attachments a
+JOIN uploaded_files f ON f.id = a.file_id
+WHERE a.signer_id = $1
+ORDER BY a.created_at DESC
+`, signerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.SigningDocumentAttachment{}
+	for rows.Next() {
+		item, err := scanSigningDocumentAttachment(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) MissingRequiredAttachments(ctx context.Context, signerID string) ([]models.AttachmentRequirement, error) {
+	signer, err := s.FindSigningTaskByID(ctx, signerID)
+	if err != nil {
+		return nil, err
+	}
+	if len(signer.AttachmentRequirementsSnapshot) == 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT DISTINCT requirement_key
+FROM signing_document_attachments
+WHERE signer_id = $1
+  AND requirement_key <> ''
+`, signerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	completed := map[string]bool{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		completed[strings.TrimSpace(key)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	missing := []models.AttachmentRequirement{}
+	for _, requirement := range signer.AttachmentRequirementsSnapshot {
+		if !completed[strings.TrimSpace(requirement.Key)] {
+			missing = append(missing, requirement)
+		}
+	}
+	return missing, nil
+}
+
+func missingRequiredAttachmentsTx(ctx context.Context, tx pgx.Tx, signer models.SigningDocumentSigner) ([]models.AttachmentRequirement, error) {
+	if len(signer.AttachmentRequirementsSnapshot) == 0 {
+		return nil, nil
+	}
+	rows, err := tx.Query(ctx, `
+SELECT DISTINCT requirement_key
+FROM signing_document_attachments
+WHERE signer_id = $1
+  AND requirement_key <> ''
+`, signer.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	completed := map[string]bool{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		completed[strings.TrimSpace(key)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	missing := []models.AttachmentRequirement{}
+	for _, requirement := range signer.AttachmentRequirementsSnapshot {
+		if !completed[strings.TrimSpace(requirement.Key)] {
+			missing = append(missing, requirement)
+		}
+	}
+	return missing, nil
 }
 
 func (s *Store) ListSigningDocumentPrintEvents(ctx context.Context, documentID string) ([]models.SigningDocumentPrintEvent, error) {
@@ -1853,7 +1950,7 @@ RETURNING id::text
 	return s.FindSigningDocumentPrintEvent(ctx, input.DocumentID, id)
 }
 
-func (s *Store) signTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion string, external bool) (SignTaskResult, error) {
+func (s *Store) signTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string, external bool) (SignTaskResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return SignTaskResult{}, err
@@ -1888,6 +1985,13 @@ FOR UPDATE OF sg
 	if documentStatus != "in_progress" {
 		return SignTaskResult{}, ErrSigningTaskUnavailable
 	}
+	missing, err := missingRequiredAttachmentsTx(ctx, tx, signer)
+	if err != nil {
+		return SignTaskResult{}, err
+	}
+	if len(missing) > 0 {
+		return SignTaskResult{}, ErrRequiredAttachmentsMissing
+	}
 
 	if _, err := tx.Exec(ctx, `
 UPDATE signing_document_signers
@@ -1896,9 +2000,10 @@ SET status = 'signed',
     signed_at = now(),
     device_id = $3,
     ip_address = $4,
-    user_agent = $5
+    user_agent = $5,
+    sign_note = $6
 WHERE id = $1
-`, taskID, signatureFileID, deviceID, ipAddress, userAgent); err != nil {
+`, taskID, signatureFileID, deviceID, ipAddress, userAgent, strings.TrimSpace(signNote)); err != nil {
 		return SignTaskResult{}, err
 	}
 	if err := insertSigningEvent(ctx, tx, signer.DocumentID, "", signer.SignerName, "signed", signer.PositionName+" เซ็นเอกสารแล้ว", ipAddress, userAgent, map[string]any{
@@ -1906,6 +2011,7 @@ WHERE id = $1
 		"position":         signer.PositionCode,
 		"legalTextVersion": strings.TrimSpace(legalTextVersion),
 		"legalAccepted":    true,
+		"signNotePresent":  strings.TrimSpace(signNote) != "",
 	}); err != nil {
 		return SignTaskResult{}, err
 	}
@@ -2094,22 +2200,42 @@ func signerFromBox(step models.DocumentConfigStep, box models.SignatureTemplateB
 		display = "บุคคลภายนอก"
 	}
 	return models.SigningDocumentSigner{
-		PositionCode:  step.PositionCode,
-		PositionName:  step.PositionName,
-		SequenceNo:    step.SequenceNo,
-		ConditionType: step.ConditionType,
-		SignerSlot:    slot,
-		SignerType:    signerType,
-		SignerUser:    username,
-		SignerName:    display,
-		Status:        status,
-		PageNo:        box.PageNo,
-		XRatio:        box.XRatio,
-		YRatio:        box.YRatio,
-		WidthRatio:    box.WidthRatio,
-		HeightRatio:   box.HeightRatio,
-		Label:         box.Label,
+		PositionCode:                   step.PositionCode,
+		PositionName:                   step.PositionName,
+		SequenceNo:                     step.SequenceNo,
+		ConditionType:                  step.ConditionType,
+		SignerSlot:                     slot,
+		SignerType:                     signerType,
+		SignerUser:                     username,
+		SignerName:                     display,
+		Status:                         status,
+		PageNo:                         box.PageNo,
+		XRatio:                         box.XRatio,
+		YRatio:                         box.YRatio,
+		WidthRatio:                     box.WidthRatio,
+		HeightRatio:                    box.HeightRatio,
+		Label:                          box.Label,
+		AttachmentRequirementsSnapshot: attachmentRequirementsForSignerSlot(step.AttachmentRequirements, slot),
 	}
+}
+
+func attachmentRequirementsForSignerSlot(requirements []models.AttachmentRequirement, slot int) []models.AttachmentRequirement {
+	if len(requirements) == 0 || slot <= 0 {
+		return nil
+	}
+	out := make([]models.AttachmentRequirement, 0, len(requirements))
+	for _, requirement := range requirements {
+		if requirement.SignerSlot != slot {
+			continue
+		}
+		requirement.Key = strings.TrimSpace(requirement.Key)
+		requirement.Label = strings.TrimSpace(requirement.Label)
+		if requirement.Key == "" || requirement.Label == "" {
+			continue
+		}
+		out = append(out, requirement)
+	}
+	return out
 }
 
 func findBoxForUser(boxes []models.SignatureTemplateBoxRequest, user string) models.SignatureTemplateBoxRequest {
@@ -2183,6 +2309,7 @@ SELECT sg.id::text, sg.document_id::text, sg.step_id::text, sg.position_code, sg
        sg.condition_type, sg.signer_slot, sg.signer_type, sg.signer_user, sg.signer_name, sg.status,
        sg.page_no, sg.x_ratio, sg.y_ratio, sg.width_ratio, sg.height_ratio, sg.label,
        COALESCE(sg.signature_file_id::text,''), sg.signed_at, sg.rejected_at, sg.reject_reason,
+       sg.sign_note, COALESCE(sg.attachment_requirements_snapshot, '[]'::jsonb)::text,
        sg.device_id, sg.ip_address, sg.user_agent, COALESCE(sg.external_token_id::text,'')
 FROM signing_document_signers sg
 `
@@ -2253,10 +2380,11 @@ func scanSigningDocumentStep(row rowScanner) (models.SigningDocumentStep, error)
 func scanSigningDocumentSigner(row rowScanner) (models.SigningDocumentSigner, error) {
 	var signer models.SigningDocumentSigner
 	var signedAt, rejectedAt sql.NullTime
+	var attachmentRequirementsRaw string
 	err := row.Scan(&signer.ID, &signer.DocumentID, &signer.StepID, &signer.PositionCode, &signer.PositionName, &signer.SequenceNo,
 		&signer.ConditionType, &signer.SignerSlot, &signer.SignerType, &signer.SignerUser, &signer.SignerName, &signer.Status,
 		&signer.PageNo, &signer.XRatio, &signer.YRatio, &signer.WidthRatio, &signer.HeightRatio, &signer.Label,
-		&signer.SignatureFileID, &signedAt, &rejectedAt, &signer.RejectReason, &signer.DeviceID, &signer.IPAddress,
+		&signer.SignatureFileID, &signedAt, &rejectedAt, &signer.RejectReason, &signer.SignNote, &attachmentRequirementsRaw, &signer.DeviceID, &signer.IPAddress,
 		&signer.UserAgent, &signer.ExternalTokenID)
 	if signedAt.Valid {
 		signer.SignedAt = &signedAt.Time
@@ -2264,6 +2392,7 @@ func scanSigningDocumentSigner(row rowScanner) (models.SigningDocumentSigner, er
 	if rejectedAt.Valid {
 		signer.RejectedAt = &rejectedAt.Time
 	}
+	signer.AttachmentRequirementsSnapshot = parseAttachmentRequirements(attachmentRequirementsRaw)
 	return signer, err
 }
 
@@ -2280,6 +2409,32 @@ func scanSigningDocumentEvent(row rowScanner) (models.SigningDocumentEvent, erro
 		_ = json.Unmarshal(metadataBytes, &event.Metadata)
 	}
 	return event, nil
+}
+
+func scanSigningDocumentAttachment(row rowScanner) (models.SigningDocumentAttachment, error) {
+	var item models.SigningDocumentAttachment
+	err := row.Scan(
+		&item.ID,
+		&item.DocumentID,
+		&item.SignerID,
+		&item.FileID,
+		&item.RequirementKey,
+		&item.RequirementLabel,
+		&item.Note,
+		&item.CreatedBy,
+		&item.CreatedAt,
+		&item.File.ID,
+		&item.File.OriginalName,
+		&item.File.StoredName,
+		&item.File.StoragePath,
+		&item.File.ContentType,
+		&item.File.SizeBytes,
+		&item.File.PageCount,
+		&item.File.SHA256,
+		&item.File.CreatedBy,
+		&item.File.CreatedAt,
+	)
+	return item, err
 }
 
 func scanSigningDocumentPrintEvent(row rowScanner) (models.SigningDocumentPrintEvent, error) {

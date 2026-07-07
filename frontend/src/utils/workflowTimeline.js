@@ -124,7 +124,8 @@ function normalizeSigner(signer) {
         statusLabel: signingStatusLabel(signer.status || 'waiting'),
         severity: signingStatusSeverity(signer.status || 'waiting'),
         signedAt: signer.signedAt || '',
-        rejectedAt: signer.rejectedAt || ''
+        rejectedAt: signer.rejectedAt || '',
+        signNote: signer.signNote || ''
     };
 }
 

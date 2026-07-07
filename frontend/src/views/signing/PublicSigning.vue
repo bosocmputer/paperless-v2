@@ -16,6 +16,9 @@ const task = ref(null);
 const legal = ref(null);
 const loading = ref(false);
 const saving = ref(false);
+const attachments = ref([]);
+const attachmentsLoading = ref(false);
+const attachmentsError = ref('');
 const externalState = ref(sessionToken.value ? 'loading' : 'otp');
 const terminalMessage = ref('');
 const terminalDocNo = ref('');
@@ -98,6 +101,7 @@ async function loadDocument() {
         legal.value = result.legal;
         if (task.value?.status === 'pending') {
             externalState.value = 'signing';
+            await loadAttachments();
         } else {
             setTerminalFromTask(task.value?.status);
         }
@@ -124,6 +128,29 @@ async function signTask(payload) {
     }
 }
 
+async function attachFile(file, note, requirementKey = '') {
+    await api.uploadPublicTaskAttachment(token, sessionToken.value, file, note, requirementKey);
+    await loadAttachments();
+}
+
+async function loadAttachments() {
+    if (!sessionToken.value || !task.value?.id) return;
+    attachmentsLoading.value = true;
+    attachmentsError.value = '';
+    try {
+        const result = await api.getPublicTaskAttachments(token, sessionToken.value);
+        attachments.value = Array.isArray(result.attachments) ? result.attachments : [];
+    } catch (err) {
+        attachmentsError.value = err.message || 'โหลดไฟล์แนบไม่สำเร็จ';
+    } finally {
+        attachmentsLoading.value = false;
+    }
+}
+
+function attachmentFileUrl(attachment) {
+    return api.publicTaskAttachmentFileUrl(token, attachment?.id || '');
+}
+
 function recordEvent(payload) {
     if (!sessionToken.value || externalState.value !== 'signing') return;
     api.recordPublicSigningTaskEvent(token, sessionToken.value, payload).catch(() => {});
@@ -144,6 +171,8 @@ function clearSigningData() {
     document.value = null;
     task.value = null;
     legal.value = null;
+    attachments.value = [];
+    attachmentsError.value = '';
 }
 
 function setSignedSuccess(result = {}) {
@@ -235,7 +264,7 @@ function resetToOTP() {
                     <p>ลิงก์นี้ใช้สำหรับเซ็นเอกสารเท่านั้น</p>
                 </div>
             </div>
-            <Message severity="info" class="otp-copy">กรอก OTP 6 หลักเพื่อเปิดหน้าเซ็น ไม่มีเมนูดาวน์โหลด พิมพ์ ปฏิเสธ หรือเอกสารประกอบในหน้านี้</Message>
+            <Message severity="info" class="otp-copy">กรอก OTP 6 หลักเพื่อเปิดหน้าเซ็น หน้านี้ใช้สำหรับเซ็นและแนบเอกสารที่ระบบกำหนดเท่านั้น</Message>
             <InputText
                 :modelValue="otp"
                 inputmode="numeric"
@@ -278,8 +307,15 @@ function resetToOTP() {
             :loading="loading"
             :saving="saving"
             :identity-label="identityLabel"
+            :attachments="attachments"
+            :attachments-loading="attachmentsLoading"
+            :attachments-error="attachmentsError"
+            :allow-external-attachments="true"
             :on-reload="loadDocument"
             :on-sign="signTask"
+            :on-attach="attachFile"
+            :on-reload-attachments="loadAttachments"
+            :attachment-file-url="attachmentFileUrl"
             :on-record-event="recordEvent"
         />
     </main>

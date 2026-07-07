@@ -67,6 +67,7 @@ var (
 	ErrSigningDocumentInvalidStatus   = errors.New("signing document status does not allow this action")
 	ErrSigningTaskNotFound            = errors.New("signing task not found")
 	ErrSigningTaskUnavailable         = errors.New("signing task is not available")
+	ErrRequiredAttachmentsMissing     = errors.New("required signing attachments are missing")
 	ErrExternalSignerNotTurn          = errors.New("external signer is not the active turn")
 	ErrExternalSignerUnavailable      = errors.New("external signer is unavailable")
 	ErrExternalTokenNotFound          = errors.New("external signing token not found")
@@ -179,12 +180,16 @@ CREATE TABLE IF NOT EXISTS document_config_steps (
     user03 TEXT NOT NULL DEFAULT '',
     sequence_no DOUBLE PRECISION NOT NULL CHECK (sequence_no > 0),
     condition_type INTEGER NOT NULL CHECK (condition_type IN (1, 2, 3)),
+    attachment_requirements JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 ALTER TABLE document_config_steps
 ADD COLUMN IF NOT EXISTS sml_tenant TEXT NOT NULL DEFAULT 'sml1_2026';
+
+ALTER TABLE document_config_steps
+ADD COLUMN IF NOT EXISTS attachment_requirements JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 ALTER TABLE document_config_steps
 DROP CONSTRAINT IF EXISTS document_config_steps_screen_code_check;
@@ -430,12 +435,20 @@ CREATE TABLE IF NOT EXISTS signing_document_signers (
     signed_at TIMESTAMPTZ,
     rejected_at TIMESTAMPTZ,
     reject_reason TEXT NOT NULL DEFAULT '',
+    sign_note TEXT NOT NULL DEFAULT '',
+    attachment_requirements_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
     device_id TEXT NOT NULL DEFAULT '',
     ip_address TEXT NOT NULL DEFAULT '',
     user_agent TEXT NOT NULL DEFAULT '',
     external_token_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE signing_document_signers
+ADD COLUMN IF NOT EXISTS sign_note TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE signing_document_signers
+ADD COLUMN IF NOT EXISTS attachment_requirements_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE INDEX IF NOT EXISTS signing_document_signers_user_idx
 ON signing_document_signers (lower(signer_user), status, sequence_no);
@@ -470,13 +483,25 @@ CREATE TABLE IF NOT EXISTS signing_document_attachments (
     document_id UUID NOT NULL REFERENCES signing_documents(id) ON DELETE CASCADE,
     signer_id UUID REFERENCES signing_document_signers(id) ON DELETE SET NULL,
     file_id UUID NOT NULL REFERENCES uploaded_files(id),
+    requirement_key TEXT NOT NULL DEFAULT '',
+    requirement_label TEXT NOT NULL DEFAULT '',
     note TEXT NOT NULL DEFAULT '',
     created_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE signing_document_attachments
+ADD COLUMN IF NOT EXISTS requirement_key TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE signing_document_attachments
+ADD COLUMN IF NOT EXISTS requirement_label TEXT NOT NULL DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS signing_document_attachments_doc_idx
 ON signing_document_attachments (document_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS signing_document_attachments_signer_requirement_idx
+ON signing_document_attachments (signer_id, requirement_key)
+WHERE signer_id IS NOT NULL AND requirement_key <> '';
 
 CREATE TABLE IF NOT EXISTS signing_document_print_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -788,7 +813,7 @@ func (s *Store) ListDocumentConfigSteps(ctx context.Context, screenCode, docForm
 	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, `
 SELECT id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
-       sequence_no, condition_type, created_at, updated_at
+       sequence_no, condition_type, COALESCE(attachment_requirements, '[]'::jsonb)::text, created_at, updated_at
 FROM document_config_steps
 WHERE ($1 = '' OR sml_tenant = $1)
   AND ($2 = '' OR screen_code = $2)
@@ -815,7 +840,7 @@ func (s *Store) FindDocumentConfigStepByID(ctx context.Context, id string) (mode
 	tenant := tenantFilterValue(ctx)
 	step, err := scanDocumentConfigStep(s.pool.QueryRow(ctx, `
 SELECT id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
-       sequence_no, condition_type, created_at, updated_at
+       sequence_no, condition_type, COALESCE(attachment_requirements, '[]'::jsonb)::text, created_at, updated_at
 FROM document_config_steps
 WHERE id = $1
   AND ($2 = '' OR sml_tenant = $2)
@@ -829,7 +854,7 @@ WHERE id = $1
 func (s *Store) ListDocumentConfigUserReferences(ctx context.Context, username string) ([]models.DocumentConfigStep, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
-       sequence_no, condition_type, created_at, updated_at
+       sequence_no, condition_type, COALESCE(attachment_requirements, '[]'::jsonb)::text, created_at, updated_at
 FROM document_config_steps
 WHERE lower(split_part(user01, ':', 1)) = lower($1)
    OR lower(split_part(user02, ':', 1)) = lower($1)
@@ -857,12 +882,12 @@ func (s *Store) CreateDocumentConfigStep(ctx context.Context, req models.Documen
 	step, err := scanDocumentConfigStep(s.pool.QueryRow(ctx, `
 INSERT INTO document_config_steps (
     sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
-    sequence_no, condition_type
+    sequence_no, condition_type, attachment_requirements
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
 RETURNING id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
-          sequence_no, condition_type, created_at, updated_at
-`, tenant, req.ScreenCode, req.DocFormatCode, req.PositionCode, req.PositionName, req.User01, req.User02, req.User03, req.SequenceNo, req.ConditionType))
+          sequence_no, condition_type, COALESCE(attachment_requirements, '[]'::jsonb)::text, created_at, updated_at
+`, tenant, req.ScreenCode, req.DocFormatCode, req.PositionCode, req.PositionName, req.User01, req.User02, req.User03, req.SequenceNo, req.ConditionType, attachmentRequirementsJSON(req.AttachmentRequirements)))
 	if err != nil {
 		if strings.Contains(err.Error(), "document_config_steps_unique_position_idx") {
 			return models.DocumentConfigStep{}, ErrDocumentConfigDuplicate
@@ -886,12 +911,13 @@ SET sml_tenant = $1,
     user03 = $8,
     sequence_no = $9,
     condition_type = $10,
+    attachment_requirements = $11::jsonb,
     updated_at = now()
-WHERE id = $11
-  AND ($12 = '' OR sml_tenant = $12)
+WHERE id = $12
+  AND ($13 = '' OR sml_tenant = $13)
 RETURNING id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
-          sequence_no, condition_type, created_at, updated_at
-`, tenant, req.ScreenCode, req.DocFormatCode, req.PositionCode, req.PositionName, req.User01, req.User02, req.User03, req.SequenceNo, req.ConditionType, id, tenantFilterValue(ctx)))
+          sequence_no, condition_type, COALESCE(attachment_requirements, '[]'::jsonb)::text, created_at, updated_at
+`, tenant, req.ScreenCode, req.DocFormatCode, req.PositionCode, req.PositionName, req.User01, req.User02, req.User03, req.SequenceNo, req.ConditionType, attachmentRequirementsJSON(req.AttachmentRequirements), id, tenantFilterValue(ctx)))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.DocumentConfigStep{}, ErrDocumentConfigNotFound
 	}
@@ -995,10 +1021,10 @@ WHERE sml_tenant = $1
 		if _, err := tx.Exec(ctx, `
 INSERT INTO document_config_steps (
     sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
-    sequence_no, condition_type
+    sequence_no, condition_type, attachment_requirements
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-`, tenant, screenCode, docFormatCode, step.PositionCode, step.PositionName, step.User01, step.User02, step.User03, step.SequenceNo, step.ConditionType); err != nil {
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+`, tenant, screenCode, docFormatCode, step.PositionCode, step.PositionName, step.User01, step.User02, step.User03, step.SequenceNo, step.ConditionType, attachmentRequirementsJSON(step.AttachmentRequirements)); err != nil {
 			if strings.Contains(err.Error(), "document_config_steps_unique_position_idx") {
 				return nil, ErrDocumentConfigDuplicate
 			}
@@ -1020,7 +1046,7 @@ func listDocumentConfigStepsTx(ctx context.Context, tx pgx.Tx, screenCode, docFo
 	tenant := tenantFilterValue(ctx)
 	query := `
 SELECT id::text, sml_tenant, screen_code, doc_format_code, position_code, position_name, user01, user02, user03,
-       sequence_no, condition_type, created_at, updated_at
+       sequence_no, condition_type, COALESCE(attachment_requirements, '[]'::jsonb)::text, created_at, updated_at
 FROM document_config_steps
 WHERE ($1 = '' OR sml_tenant = $1)
   AND screen_code = $2
@@ -1052,7 +1078,7 @@ func ComputeDocumentConfigWorkflowRevision(steps []models.DocumentConfigStep) st
 	for _, step := range steps {
 		_, _ = fmt.Fprintf(
 			hash,
-			"%s|%s|%s|%s|%s|%s|%s|%s|%s|%.8f|%d|%s\n",
+			"%s|%s|%s|%s|%s|%s|%s|%s|%s|%.8f|%d|%s|%s\n",
 			step.ID,
 			step.ScreenCode,
 			step.SMLTenant,
@@ -1064,6 +1090,7 @@ func ComputeDocumentConfigWorkflowRevision(steps []models.DocumentConfigStep) st
 			step.User03,
 			step.SequenceNo,
 			step.ConditionType,
+			attachmentRequirementsJSON(step.AttachmentRequirements),
 			step.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		)
 	}
@@ -1482,6 +1509,7 @@ func scanUser(row rowScanner) (models.User, error) {
 
 func scanDocumentConfigStep(row rowScanner) (models.DocumentConfigStep, error) {
 	var step models.DocumentConfigStep
+	var attachmentRequirementsRaw string
 	err := row.Scan(
 		&step.ID,
 		&step.SMLTenant,
@@ -1494,9 +1522,11 @@ func scanDocumentConfigStep(row rowScanner) (models.DocumentConfigStep, error) {
 		&step.User03,
 		&step.SequenceNo,
 		&step.ConditionType,
+		&attachmentRequirementsRaw,
 		&step.CreatedAt,
 		&step.UpdatedAt,
 	)
+	step.AttachmentRequirements = parseAttachmentRequirements(attachmentRequirementsRaw)
 	return step, err
 }
 
@@ -1663,6 +1693,50 @@ func parseSignaturePlacementSnapshots(raw string) []models.SignaturePlacementSna
 		out = append(out, snapshot)
 	}
 	return out
+}
+
+func parseAttachmentRequirements(raw string) []models.AttachmentRequirement {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" || raw == "null" {
+		return nil
+	}
+	var requirements []models.AttachmentRequirement
+	if err := json.Unmarshal([]byte(raw), &requirements); err != nil {
+		return nil
+	}
+	out := make([]models.AttachmentRequirement, 0, len(requirements))
+	for _, requirement := range requirements {
+		requirement.Key = strings.TrimSpace(requirement.Key)
+		requirement.Label = strings.TrimSpace(requirement.Label)
+		if requirement.Key == "" || requirement.Label == "" || requirement.SignerSlot <= 0 {
+			continue
+		}
+		out = append(out, requirement)
+	}
+	return out
+}
+
+func attachmentRequirementsJSON(requirements []models.AttachmentRequirement) string {
+	if len(requirements) == 0 {
+		return "[]"
+	}
+	normalized := make([]models.AttachmentRequirement, 0, len(requirements))
+	for _, requirement := range requirements {
+		requirement.Key = strings.TrimSpace(requirement.Key)
+		requirement.Label = strings.TrimSpace(requirement.Label)
+		if requirement.Key == "" || requirement.Label == "" || requirement.SignerSlot <= 0 {
+			continue
+		}
+		normalized = append(normalized, requirement)
+	}
+	if len(normalized) == 0 {
+		return "[]"
+	}
+	data, err := json.Marshal(normalized)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
 }
 
 func scanSignatureTemplateBox(row rowScanner) (models.SignatureTemplateBox, error) {

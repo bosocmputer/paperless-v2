@@ -567,6 +567,9 @@ func addFinalEvidencePage(pdf *gofpdf.Fpdf, evidence finalEvidencePage) error {
 			{"รหัสอุปกรณ์ (hash)", shortHash(signer.DeviceID)},
 			{"ยืนยันข้อความกฎหมาย", "ใช่"},
 		}
+		if strings.TrimSpace(signer.SignNote) != "" {
+			rows = append(rows, evidenceRow{"หมายเหตุผู้เซ็น", truncateEvidence(signer.SignNote, 180)})
+		}
 		y = drawEvidenceRows(pdf, 48, y, rows)
 		y += 10
 	}

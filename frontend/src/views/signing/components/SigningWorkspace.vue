@@ -21,6 +21,7 @@ const props = defineProps({
     identityLabel: { type: String, default: '' },
     publicMode: { type: Boolean, default: false },
     externalSignOnly: { type: Boolean, default: false },
+    allowExternalAttachments: { type: Boolean, default: false },
     adminWorkspace: { type: Boolean, default: false },
     referenceStatus: { type: Object, default: null },
     attachments: { type: Array, default: () => [] },
@@ -51,6 +52,7 @@ const pageCount = ref(0);
 const pdfReady = ref(false);
 const hasSignature = ref(false);
 const legalAccepted = ref(false);
+const signNote = ref('');
 const rejectVisible = ref(false);
 const rejectReason = ref('');
 const localSaving = ref(false);
@@ -72,10 +74,25 @@ const isBusy = computed(() => props.saving || localSaving.value);
 const legalText = computed(() => props.legal?.text || 'ข้าพเจ้ายืนยันการลงลายเซ็นอิเล็กทรอนิกส์นี้ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ และยอมรับให้ใช้เป็นหลักฐานประกอบเอกสารนี้');
 const taskStatus = computed(() => props.task?.status || '');
 const canInteract = computed(() => !props.readOnly && taskStatus.value === 'pending');
-const canConfirm = computed(() => canInteract.value && pdfReady.value && hasSignature.value && legalAccepted.value && !isBusy.value);
+const requiredAttachments = computed(() =>
+    (props.task?.attachmentRequirements || [])
+        .map((item) => ({ key: String(item?.key || '').trim(), label: String(item?.label || '').trim() }))
+        .filter((item) => item.key && item.label)
+);
+const ownRequirementAttachmentKeys = computed(() => {
+    const keys = new Set();
+    for (const attachment of props.attachments || []) {
+        if (props.task?.id && String(attachment?.signerId || '').trim() !== props.task.id) continue;
+        const key = String(attachment?.requirementKey || '').trim();
+        if (key) keys.add(key);
+    }
+    return keys;
+});
+const missingRequiredAttachments = computed(() => requiredAttachments.value.filter((item) => !ownRequirementAttachmentKeys.value.has(item.key)));
+const canConfirm = computed(() => canInteract.value && pdfReady.value && hasSignature.value && legalAccepted.value && missingRequiredAttachments.value.length === 0 && !isBusy.value);
 const allowFullPDF = computed(() => !props.externalSignOnly);
 const allowReject = computed(() => !props.externalSignOnly && !!props.onReject);
-const allowAttachments = computed(() => !props.externalSignOnly && !!props.onAttach);
+const allowAttachments = computed(() => (!props.externalSignOnly || props.allowExternalAttachments) && !!props.onAttach);
 const allowRelatedDocuments = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.relatedLoader);
 const allowReferenceCheck = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.referenceCheckLoader);
 const showReadOnlyPanel = computed(() => !props.externalSignOnly && !props.historyFocus);
@@ -110,6 +127,7 @@ const primaryDisabledReason = computed(() => {
     if (!pdfReady.value) return 'รอให้ PDF โหลดเสร็จก่อน';
     if (!hasSignature.value) return 'กรุณาวาดลายเซ็นก่อน';
     if (!legalAccepted.value) return 'กรุณายืนยันข้อความ พ.ร.บ. ก่อน';
+    if (missingRequiredAttachments.value.length) return `กรุณาแนบเอกสารให้ครบ: ${missingRequiredAttachments.value.map((item) => item.label).join(', ')}`;
     return '';
 });
 
@@ -180,6 +198,7 @@ watch(
                 referenceDialogVisible.value = false;
                 legalDialogVisible.value = false;
                 pdfDialogVisible.value = false;
+                signNote.value = '';
             }
         }
     },
@@ -270,6 +289,7 @@ async function confirmSign() {
             signatureDataUrl: signCanvas.value.toDataURL('image/png'),
             legalAccepted: true,
             legalText: legalText.value,
+            signNote: signNote.value,
             deviceId: deviceId(),
             idempotencyKey: signIdempotencyKey.value
         };
@@ -324,8 +344,8 @@ async function submitRejectTask(reason) {
     }
 }
 
-async function handleAttachmentUpload(file, note) {
-    await props.onAttach?.(file, note);
+async function handleAttachmentUpload(file, note, requirementKey = '') {
+    await props.onAttach?.(file, note, requirementKey);
     recordEvent('attachment_upload');
 }
 
@@ -537,12 +557,20 @@ function newRequestKey() {
                     :attachments="attachments"
                     :loading="attachmentsLoading"
                     :error="attachmentsError"
+                    :requirements="requiredAttachments"
+                    :signer-id="task?.id || ''"
+                    :allow-optional-upload="!externalSignOnly"
                     :headers="pdfHeaders"
                     :can-upload="canInteract"
                     :on-upload="handleAttachmentUpload"
                     :on-reload="onReloadAttachments"
                     :file-url-resolver="attachmentFileUrl"
                 />
+
+                <div class="sign-note-field">
+                    <label for="signNote">หมายเหตุผู้เซ็น (ถ้ามี)</label>
+                    <Textarea id="signNote" v-model="signNote" rows="3" autoResize :maxlength="1000" :disabled="!canInteract" placeholder="ระบุหมายเหตุเพิ่มเติมสำหรับการเซ็นครั้งนี้" />
+                </div>
 
                 <div class="legal-check">
                     <Checkbox v-model="legalAccepted" inputId="legalAccepted" binary :disabled="!canInteract" />
@@ -611,6 +639,8 @@ function newRequestKey() {
             :attachments="attachments"
             :loading="attachmentsLoading"
             :error="attachmentsError"
+            :requirements="requiredAttachments"
+            :signer-id="task?.id || ''"
             :headers="pdfHeaders"
             :on-reload="onReloadAttachments"
             :file-url-resolver="attachmentFileUrl"
@@ -1028,6 +1058,15 @@ function newRequestKey() {
 
 .signature-canvas.disabled {
     opacity: 0.65;
+}
+
+.sign-note-field {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.sign-note-field label {
+    font-weight: 700;
 }
 
 .legal-check {

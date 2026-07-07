@@ -49,31 +49,39 @@ type SMLScreenCode struct {
 }
 
 type DocumentConfigStep struct {
-	ID            string    `json:"id"`
-	SMLTenant     string    `json:"smlTenant"`
-	ScreenCode    string    `json:"screenCode"`
-	DocFormatCode string    `json:"docFormatCode"`
-	PositionCode  string    `json:"positionCode"`
-	PositionName  string    `json:"positionName"`
-	User01        string    `json:"user01"`
-	User02        string    `json:"user02"`
-	User03        string    `json:"user03"`
-	SequenceNo    float64   `json:"sequenceNo"`
-	ConditionType int       `json:"conditionType"`
-	CreatedAt     time.Time `json:"createdAt"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	ID                     string                  `json:"id"`
+	SMLTenant              string                  `json:"smlTenant"`
+	ScreenCode             string                  `json:"screenCode"`
+	DocFormatCode          string                  `json:"docFormatCode"`
+	PositionCode           string                  `json:"positionCode"`
+	PositionName           string                  `json:"positionName"`
+	User01                 string                  `json:"user01"`
+	User02                 string                  `json:"user02"`
+	User03                 string                  `json:"user03"`
+	SequenceNo             float64                 `json:"sequenceNo"`
+	ConditionType          int                     `json:"conditionType"`
+	AttachmentRequirements []AttachmentRequirement `json:"attachmentRequirements,omitempty"`
+	CreatedAt              time.Time               `json:"createdAt"`
+	UpdatedAt              time.Time               `json:"updatedAt"`
 }
 
 type DocumentConfigStepRequest struct {
-	ScreenCode    string  `json:"screenCode"`
-	DocFormatCode string  `json:"docFormatCode"`
-	PositionCode  string  `json:"positionCode"`
-	PositionName  string  `json:"positionName"`
-	User01        string  `json:"user01"`
-	User02        string  `json:"user02"`
-	User03        string  `json:"user03"`
-	SequenceNo    float64 `json:"sequenceNo"`
-	ConditionType int     `json:"conditionType"`
+	ScreenCode             string                  `json:"screenCode"`
+	DocFormatCode          string                  `json:"docFormatCode"`
+	PositionCode           string                  `json:"positionCode"`
+	PositionName           string                  `json:"positionName"`
+	User01                 string                  `json:"user01"`
+	User02                 string                  `json:"user02"`
+	User03                 string                  `json:"user03"`
+	SequenceNo             float64                 `json:"sequenceNo"`
+	ConditionType          int                     `json:"conditionType"`
+	AttachmentRequirements []AttachmentRequirement `json:"attachmentRequirements,omitempty"`
+}
+
+type AttachmentRequirement struct {
+	Key        string `json:"key"`
+	Label      string `json:"label"`
+	SignerSlot int    `json:"signerSlot,omitempty"`
 }
 
 type DocumentConfigWorkflowSummary struct {
@@ -500,33 +508,35 @@ type SigningDocumentStep struct {
 }
 
 type SigningDocumentSigner struct {
-	ID              string     `json:"id"`
-	DocumentID      string     `json:"documentId"`
-	StepID          string     `json:"stepId"`
-	PositionCode    string     `json:"positionCode"`
-	PositionName    string     `json:"positionName"`
-	SequenceNo      float64    `json:"sequenceNo"`
-	ConditionType   int        `json:"conditionType"`
-	SignerSlot      int        `json:"signerSlot"`
-	SignerType      string     `json:"signerType"`
-	SignerUser      string     `json:"signerUser"`
-	SignerName      string     `json:"signerName"`
-	Status          string     `json:"status"`
-	PageNo          int        `json:"pageNo"`
-	XRatio          float64    `json:"xRatio"`
-	YRatio          float64    `json:"yRatio"`
-	WidthRatio      float64    `json:"widthRatio"`
-	HeightRatio     float64    `json:"heightRatio"`
-	Label           string     `json:"label"`
-	SignatureFileID string     `json:"signatureFileId"`
-	SignedAt        *time.Time `json:"signedAt,omitempty"`
-	RejectedAt      *time.Time `json:"rejectedAt,omitempty"`
-	RejectReason    string     `json:"rejectReason"`
-	DeviceID        string     `json:"deviceId"`
-	IPAddress       string     `json:"ipAddress"`
-	UserAgent       string     `json:"userAgent"`
-	ExternalTokenID string     `json:"externalTokenId"`
-	ExternalURL     string     `json:"externalUrl,omitempty"`
+	ID                             string                  `json:"id"`
+	DocumentID                     string                  `json:"documentId"`
+	StepID                         string                  `json:"stepId"`
+	PositionCode                   string                  `json:"positionCode"`
+	PositionName                   string                  `json:"positionName"`
+	SequenceNo                     float64                 `json:"sequenceNo"`
+	ConditionType                  int                     `json:"conditionType"`
+	SignerSlot                     int                     `json:"signerSlot"`
+	SignerType                     string                  `json:"signerType"`
+	SignerUser                     string                  `json:"signerUser"`
+	SignerName                     string                  `json:"signerName"`
+	Status                         string                  `json:"status"`
+	PageNo                         int                     `json:"pageNo"`
+	XRatio                         float64                 `json:"xRatio"`
+	YRatio                         float64                 `json:"yRatio"`
+	WidthRatio                     float64                 `json:"widthRatio"`
+	HeightRatio                    float64                 `json:"heightRatio"`
+	Label                          string                  `json:"label"`
+	SignatureFileID                string                  `json:"signatureFileId"`
+	SignedAt                       *time.Time              `json:"signedAt,omitempty"`
+	RejectedAt                     *time.Time              `json:"rejectedAt,omitempty"`
+	RejectReason                   string                  `json:"rejectReason"`
+	SignNote                       string                  `json:"signNote"`
+	AttachmentRequirementsSnapshot []AttachmentRequirement `json:"attachmentRequirements,omitempty"`
+	DeviceID                       string                  `json:"deviceId"`
+	IPAddress                      string                  `json:"ipAddress"`
+	UserAgent                      string                  `json:"userAgent"`
+	ExternalTokenID                string                  `json:"externalTokenId"`
+	ExternalURL                    string                  `json:"externalUrl,omitempty"`
 }
 
 type MySigningTaskQueue struct {
@@ -641,14 +651,16 @@ type SigningDocumentEvent struct {
 }
 
 type SigningDocumentAttachment struct {
-	ID         string       `json:"id"`
-	DocumentID string       `json:"documentId"`
-	SignerID   string       `json:"signerId"`
-	FileID     string       `json:"fileId"`
-	Note       string       `json:"note"`
-	CreatedBy  string       `json:"createdBy"`
-	CreatedAt  time.Time    `json:"createdAt"`
-	File       UploadedFile `json:"file"`
+	ID               string       `json:"id"`
+	DocumentID       string       `json:"documentId"`
+	SignerID         string       `json:"signerId"`
+	FileID           string       `json:"fileId"`
+	RequirementKey   string       `json:"requirementKey,omitempty"`
+	RequirementLabel string       `json:"requirementLabel,omitempty"`
+	Note             string       `json:"note"`
+	CreatedBy        string       `json:"createdBy"`
+	CreatedAt        time.Time    `json:"createdAt"`
+	File             UploadedFile `json:"file"`
 }
 
 type SigningDocumentPrintEvent struct {
@@ -684,6 +696,7 @@ type SignTaskRequest struct {
 	DeviceID         string `json:"deviceId"`
 	LegalText        string `json:"legalText"`
 	LegalAccepted    bool   `json:"legalAccepted"`
+	SignNote         string `json:"signNote"`
 }
 
 type RejectTaskRequest struct {

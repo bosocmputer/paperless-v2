@@ -207,15 +207,16 @@ func (s *Server) copyDocumentConfigWorkflow(w http.ResponseWriter, r *http.Reque
 	copySteps := make([]models.DocumentConfigStepRequest, 0, len(sourceSteps))
 	for _, step := range sourceSteps {
 		copySteps = append(copySteps, models.DocumentConfigStepRequest{
-			ScreenCode:    normalizeScreenCode(targetFormat.ScreenCode),
-			DocFormatCode: strings.TrimSpace(targetFormat.Code),
-			PositionCode:  step.PositionCode,
-			PositionName:  step.PositionName,
-			User01:        step.User01,
-			User02:        step.User02,
-			User03:        step.User03,
-			SequenceNo:    step.SequenceNo,
-			ConditionType: step.ConditionType,
+			ScreenCode:             normalizeScreenCode(targetFormat.ScreenCode),
+			DocFormatCode:          strings.TrimSpace(targetFormat.Code),
+			PositionCode:           step.PositionCode,
+			PositionName:           step.PositionName,
+			User01:                 step.User01,
+			User02:                 step.User02,
+			User03:                 step.User03,
+			SequenceNo:             step.SequenceNo,
+			ConditionType:          step.ConditionType,
+			AttachmentRequirements: step.AttachmentRequirements,
 		})
 	}
 	normalizedSteps, validationMessages := normalizeDocumentConfigWorkflowSteps(targetFormat, copySteps)
@@ -572,6 +573,7 @@ func normalizeDocumentConfigStep(req models.DocumentConfigStepRequest) models.Do
 	req.User01 = strings.TrimSpace(req.User01)
 	req.User02 = strings.TrimSpace(req.User02)
 	req.User03 = strings.TrimSpace(req.User03)
+	req.AttachmentRequirements, _ = normalizeAttachmentRequirementsForStep(req)
 	return req
 }
 
@@ -593,6 +595,9 @@ func validateDocumentConfigStep(req models.DocumentConfigStepRequest) string {
 	}
 	if (req.ConditionType == 1 || req.ConditionType == 2) && len(documentConfigStepUsers(req.User01, req.User02, req.User03)) == 0 {
 		return "Condition 1 or 2 requires at least one user."
+	}
+	if _, messages := normalizeAttachmentRequirementsForStep(req); len(messages) > 0 {
+		return strings.Join(messages, " ")
 	}
 	return ""
 }
@@ -634,6 +639,11 @@ func normalizeDocumentConfigWorkflowSteps(format models.SMLDocFormat, rawSteps [
 		if (step.ConditionType == 1 || step.ConditionType == 2) && len(documentConfigStepUsers(step.User01, step.User02, step.User03)) == 0 {
 			messages = append(messages, fmt.Sprintf("%s: Condition 1 or 2 requires at least one active user slot.", label))
 		}
+		normalizedRequirements, requirementMessages := normalizeAttachmentRequirementsForStep(step)
+		step.AttachmentRequirements = normalizedRequirements
+		for _, message := range requirementMessages {
+			messages = append(messages, fmt.Sprintf("%s: %s", label, message))
+		}
 		duplicateKey := strings.ToLower(step.PositionCode)
 		if duplicateKey != "" {
 			if seen[duplicateKey] {
@@ -644,6 +654,91 @@ func normalizeDocumentConfigWorkflowSteps(format models.SMLDocFormat, rawSteps [
 		steps = append(steps, step)
 	}
 	return steps, messages
+}
+
+func normalizeAttachmentRequirementsForStep(step models.DocumentConfigStepRequest) ([]models.AttachmentRequirement, []string) {
+	const maxRequirementsPerStep = 12
+	const maxRequirementLabelLength = 80
+
+	raw := step.AttachmentRequirements
+	messages := []string{}
+	if len(raw) > maxRequirementsPerStep {
+		messages = append(messages, fmt.Sprintf("Required attachments support at most %d items per step.", maxRequirementsPerStep))
+		raw = raw[:maxRequirementsPerStep]
+	}
+	userSlotCount := len(documentConfigStepUsers(step.User01, step.User02, step.User03))
+	if step.ConditionType == 3 {
+		userSlotCount = 1
+	}
+	if userSlotCount <= 0 {
+		userSlotCount = 1
+	}
+
+	seen := map[string]bool{}
+	out := make([]models.AttachmentRequirement, 0, len(raw))
+	for index, requirement := range raw {
+		label := strings.TrimSpace(requirement.Label)
+		if label == "" {
+			messages = append(messages, "Required attachment name is required.")
+			continue
+		}
+		if len([]rune(label)) > maxRequirementLabelLength {
+			messages = append(messages, fmt.Sprintf("Required attachment %q is longer than %d characters.", label, maxRequirementLabelLength))
+			label = truncateRunes(label, maxRequirementLabelLength)
+		}
+		slot := requirement.SignerSlot
+		if slot <= 0 {
+			slot = 1
+		}
+		if slot > userSlotCount {
+			messages = append(messages, fmt.Sprintf("Required attachment %q points to signer slot %d, but this step has only %d signer slot(s).", label, slot, userSlotCount))
+			continue
+		}
+		key := normalizeRequirementKey(requirement.Key)
+		if key == "" {
+			key = fmt.Sprintf("slot-%d-%d", slot, index+1)
+		}
+		duplicateKey := fmt.Sprintf("%d:%s", slot, strings.ToLower(label))
+		if seen[duplicateKey] {
+			messages = append(messages, fmt.Sprintf("Required attachment %q is duplicated for signer slot %d.", label, slot))
+			continue
+		}
+		seen[duplicateKey] = true
+		out = append(out, models.AttachmentRequirement{
+			Key:        key,
+			Label:      label,
+			SignerSlot: slot,
+		})
+	}
+	return out, messages
+}
+
+func normalizeRequirementKey(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var builder strings.Builder
+	for _, r := range strings.ToLower(value) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			builder.WriteRune(r)
+		}
+		if builder.Len() >= 80 {
+			break
+		}
+	}
+	return builder.String()
+}
+
+func truncateRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit])
 }
 
 func documentConfigStepUsers(values ...string) []string {

@@ -79,6 +79,12 @@ const saveDisabledReason = computed(() => {
 });
 const stepDialogTitle = computed(() => (editingStepKey.value ? 'แก้ไขขั้นตอน' : 'เพิ่มขั้นตอน'));
 const stepFormIssues = computed(() => validateStepForm(stepForm.value, editingStepKey.value));
+const stepFormSignerSlotOptions = computed(() => {
+    if (Number(stepForm.value.conditionType) === 3) return [{ label: 'บุคคลภายนอก', value: 1 }];
+    const values = signerValues(stepForm.value);
+    if (values.length === 0) return [{ label: 'ผู้เซ็น 1', value: 1 }];
+    return values.map((value, index) => ({ label: `ผู้เซ็น ${index + 1} · ${value}`, value: index + 1 }));
+});
 
 onMounted(async () => {
     window.addEventListener('beforeunload', beforeUnload);
@@ -152,7 +158,8 @@ function openEditStep(step) {
         user01: step.user01 || '',
         user02: step.user02 || '',
         user03: step.user03 || '',
-        conditionType: Number(step.conditionType || 1)
+        conditionType: Number(step.conditionType || 1),
+        attachmentRequirements: cloneAttachmentRequirements(step.attachmentRequirements)
     };
     stepDialogVisible.value = true;
 }
@@ -167,7 +174,8 @@ function saveStepDialog() {
         user01: Number(stepForm.value.conditionType) === 3 ? '' : String(stepForm.value.user01 || '').trim(),
         user02: Number(stepForm.value.conditionType) === 3 ? '' : String(stepForm.value.user02 || '').trim(),
         user03: Number(stepForm.value.conditionType) === 3 ? '' : String(stepForm.value.user03 || '').trim(),
-        conditionType: Number(stepForm.value.conditionType || 1)
+        conditionType: Number(stepForm.value.conditionType || 1),
+        attachmentRequirements: normalizeAttachmentRequirements(stepForm.value)
     };
 
     if (editingStepKey.value) {
@@ -260,7 +268,8 @@ async function saveWorkflow() {
                 user02: String(step.user02 || '').trim(),
                 user03: String(step.user03 || '').trim(),
                 sequenceNo: index + 1,
-                conditionType: Number(step.conditionType || 0)
+                conditionType: Number(step.conditionType || 0),
+                attachmentRequirements: normalizeAttachmentRequirements(step)
             }))
         };
         const result = await api.saveDocumentConfigWorkflow(docFormatCode.value, payload);
@@ -293,7 +302,8 @@ function toEditorStep(step) {
         user02: step.user02 || '',
         user03: step.user03 || '',
         sequenceNo: Number(step.sequenceNo || 0),
-        conditionType: Number(step.conditionType || 1)
+        conditionType: Number(step.conditionType || 1),
+        attachmentRequirements: cloneAttachmentRequirements(step.attachmentRequirements)
     };
 }
 
@@ -304,7 +314,8 @@ function emptyStepForm() {
         user01: '',
         user02: '',
         user03: '',
-        conditionType: 1
+        conditionType: 1,
+        attachmentRequirements: []
     };
 }
 
@@ -334,7 +345,8 @@ function validateStepForm(form, editingKey) {
         user01: form.user01,
         user02: form.user02,
         user03: form.user03,
-        conditionType: form.conditionType
+        conditionType: form.conditionType,
+        attachmentRequirements: form.attachmentRequirements
     };
     const issues = validateSingleStep(draft, draft.key);
     const duplicate = steps.value.find((step) => step.key !== editingKey && normalizeCode(step.positionCode) === normalizeCode(form.positionCode));
@@ -360,6 +372,18 @@ function validateSingleStep(step, key) {
             if (username) seenUsers.add(username);
         });
     }
+    const requirements = normalizeAttachmentRequirements(step);
+    if (requirements.length > 12) issues.push({ key, message: `${label}: เอกสารแนบบังคับได้ไม่เกิน 12 รายการ` });
+    const seenRequirements = new Set();
+    const slotCount = Number(step.conditionType) === 3 ? 1 : Math.max(1, signerValues(step).length);
+    requirements.forEach((requirement) => {
+        if (!requirement.label) issues.push({ key, message: `${label}: ต้องระบุชื่อเอกสารแนบบังคับ` });
+        if (requirement.label.length > 80) issues.push({ key, message: `${label}: ชื่อเอกสารแนบบังคับยาวเกิน 80 ตัวอักษร` });
+        if (requirement.signerSlot < 1 || requirement.signerSlot > slotCount) issues.push({ key, message: `${label}: ช่องเอกสารแนบบังคับไม่ตรงกับผู้เซ็น` });
+        const duplicateKey = `${requirement.signerSlot}:${requirement.label.trim().toLowerCase()}`;
+        if (seenRequirements.has(duplicateKey)) issues.push({ key, message: `${label}: เอกสารแนบบังคับ "${requirement.label}" ซ้ำในผู้เซ็นเดียวกัน` });
+        seenRequirements.add(duplicateKey);
+    });
     return issues;
 }
 
@@ -399,6 +423,60 @@ function routePreview(step) {
     return count > 0 ? `ส่งให้ ${count} คน, ใครเซ็นก่อนถือว่าผ่าน` : 'ยังไม่ได้เลือกผู้เซ็น';
 }
 
+function attachmentRequirementCount(step) {
+    return normalizeAttachmentRequirements(step).length;
+}
+
+function cloneAttachmentRequirements(requirements = []) {
+    return (requirements || []).map((item, index) => ({
+        key: item.key || `req-${Date.now()}-${index}-${Math.random().toString(16).slice(2)}`,
+        label: item.label || '',
+        signerSlot: Number(item.signerSlot || 1)
+    }));
+}
+
+function normalizeAttachmentRequirements(step) {
+    return (step.attachmentRequirements || [])
+        .map((item, index) => ({
+            key: String(item.key || `req-${index + 1}`).trim(),
+            label: String(item.label || '').trim(),
+            signerSlot: Number(item.signerSlot || 1)
+        }))
+        .filter((item) => item.key || item.label);
+}
+
+function addAttachmentRequirement() {
+    stepForm.value.attachmentRequirements = [
+        ...(stepForm.value.attachmentRequirements || []),
+        {
+            key: `req-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            label: '',
+            signerSlot: stepFormSignerSlotOptions.value[0]?.value || 1
+        }
+    ];
+}
+
+function removeAttachmentRequirement(key) {
+    stepForm.value.attachmentRequirements = (stepForm.value.attachmentRequirements || []).filter((item) => item.key !== key);
+}
+
+function applyRequirementsToAllSigners() {
+    const current = normalizeAttachmentRequirements(stepForm.value);
+    const labels = [...new Set(current.map((item) => item.label).filter(Boolean))];
+    if (!labels.length) return;
+    const next = [];
+    for (const option of stepFormSignerSlotOptions.value) {
+        for (const label of labels) {
+            next.push({
+                key: `req-${option.value}-${next.length + 1}-${Date.now()}`,
+                label,
+                signerSlot: option.value
+            });
+        }
+    }
+    stepForm.value.attachmentRequirements = next;
+}
+
 function nextPositionCode() {
     const numericCodes = steps.value
         .map((step) => Number(step.positionCode))
@@ -416,7 +494,8 @@ function snapshotSteps(list) {
             user02: String(step.user02 || '').trim(),
             user03: String(step.user03 || '').trim(),
             sequenceNo: index + 1,
-            conditionType: Number(step.conditionType || 0)
+            conditionType: Number(step.conditionType || 0),
+            attachmentRequirements: normalizeAttachmentRequirements(step)
         }))
     );
 }
@@ -519,6 +598,12 @@ function normalizeCode(value) {
                     <span v-else class="text-muted-color">ไม่ใช้ user ภายใน</span>
                 </template>
             </Column>
+            <Column header="เอกสารแนบ" style="min-width: 10rem">
+                <template #body="{ data }">
+                    <Tag v-if="attachmentRequirementCount(data)" :value="`บังคับ ${attachmentRequirementCount(data)}`" severity="warn" />
+                    <span v-else class="text-muted-color">ไม่บังคับ</span>
+                </template>
+            </Column>
             <Column header="สถานะ" style="min-width: 9rem">
                 <template #body="{ data }">
                     <Tag :severity="rowSeverity(data)" :value="rowStatus(data)" />
@@ -575,6 +660,35 @@ function normalizeCode(value) {
                     <label for="user03" class="block font-bold mb-3">ผู้เซ็น 3</label>
                     <Select id="user03" v-model="stepForm.user03" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(stepForm.conditionType) === 3" />
                 </div>
+            </div>
+
+            <div class="border border-surface rounded-lg p-4 bg-surface-50 dark:bg-surface-900">
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+                    <div>
+                        <div class="font-bold">เอกสารแนบบังคับ</div>
+                        <small class="text-muted-color">กำหนดช่องเอกสารที่ผู้เซ็นต้องแนบก่อนกดยืนยันเซ็น</small>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <Button label="ใช้กับทุกผู้เซ็น" icon="pi pi-copy" severity="secondary" outlined size="small" :disabled="!normalizeAttachmentRequirements(stepForm).some((item) => item.label)" @click="applyRequirementsToAllSigners" />
+                        <Button label="เพิ่มเอกสาร" icon="pi pi-plus" severity="secondary" size="small" @click="addAttachmentRequirement" />
+                    </div>
+                </div>
+                <div v-if="stepForm.attachmentRequirements.length" class="grid gap-3">
+                    <div v-for="requirement in stepForm.attachmentRequirements" :key="requirement.key" class="grid grid-cols-12 gap-3 items-end">
+                        <div class="col-span-12 md:col-span-7">
+                            <label class="block font-medium mb-2">ชื่อเอกสาร</label>
+                            <InputText v-model.trim="requirement.label" placeholder="เช่น ใบเสนอราคา" fluid />
+                        </div>
+                        <div class="col-span-10 md:col-span-4">
+                            <label class="block font-medium mb-2">บังคับกับ</label>
+                            <Select v-model="requirement.signerSlot" :options="stepFormSignerSlotOptions" optionLabel="label" optionValue="value" fluid />
+                        </div>
+                        <div class="col-span-2 md:col-span-1 flex justify-end">
+                            <Button icon="pi pi-trash" severity="danger" outlined rounded aria-label="ลบเอกสารแนบบังคับ" @click="removeAttachmentRequirement(requirement.key)" />
+                        </div>
+                    </div>
+                </div>
+                <Message v-else severity="info" class="m-0">ถ้าไม่กำหนด ผู้เซ็นสามารถเซ็นได้โดยไม่ต้องแนบไฟล์</Message>
             </div>
         </div>
 

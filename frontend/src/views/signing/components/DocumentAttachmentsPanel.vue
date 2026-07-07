@@ -9,6 +9,9 @@ const props = defineProps({
     error: { type: String, default: '' },
     readonly: { type: Boolean, default: false },
     canUpload: { type: Boolean, default: false },
+    requirements: { type: Array, default: () => [] },
+    signerId: { type: String, default: '' },
+    allowOptionalUpload: { type: Boolean, default: true },
     uploadLabel: { type: String, default: 'เลือก PDF/รูปภาพ' },
     title: { type: String, default: 'ไฟล์แนบอ้างอิง' },
     headers: { type: Object, default: () => ({}) },
@@ -29,6 +32,26 @@ const imageTitle = ref('ดูไฟล์แนบ');
 
 const attachmentCount = computed(() => props.attachments.length || 0);
 const showUpload = computed(() => !props.readonly && props.canUpload && !!props.onUpload);
+const requirementItems = computed(() =>
+    (props.requirements || [])
+        .map((item) => ({
+            key: String(item?.key || '').trim(),
+            label: String(item?.label || '').trim()
+        }))
+        .filter((item) => item.key && item.label)
+);
+const hasRequirements = computed(() => requirementItems.value.length > 0);
+const attachmentsByRequirement = computed(() => {
+    const map = new Map();
+    for (const attachment of props.attachments || []) {
+        const key = String(attachment?.requirementKey || '').trim();
+        if (!key) continue;
+        if (props.signerId && String(attachment?.signerId || '').trim() !== props.signerId) continue;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(attachment);
+    }
+    return map;
+});
 
 watch(
     () => imageVisible.value,
@@ -82,14 +105,18 @@ function formatDate(value) {
     }).format(date);
 }
 
-async function uploadAttachment(event) {
+function requirementAttachments(requirement) {
+    return attachmentsByRequirement.value.get(requirement.key) || [];
+}
+
+async function uploadAttachment(event, requirement = null) {
     const input = event.target;
     const file = input.files?.[0];
     input.value = '';
     if (!file || !showUpload.value || uploading.value) return;
     uploading.value = true;
     try {
-        await props.onUpload(file, note.value);
+        await props.onUpload(file, note.value, requirement?.key || '');
         note.value = '';
         toast.add({ severity: 'success', summary: 'แนบไฟล์แล้ว', life: 2200 });
     } catch (err) {
@@ -162,6 +189,22 @@ function revokeImageUrl() {
         </div>
 
         <Message v-if="error" severity="warn" class="m-0">{{ error }}</Message>
+        <div v-if="hasRequirements" class="requirements-list">
+            <article v-for="requirement in requirementItems" :key="requirement.key" class="requirement-row" :class="{ complete: requirementAttachments(requirement).length > 0 }">
+                <div class="requirement-copy">
+                    <i :class="requirementAttachments(requirement).length ? 'pi pi-check-circle' : 'pi pi-exclamation-circle'"></i>
+                    <div>
+                        <strong>{{ requirement.label }}</strong>
+                        <small>{{ requirementAttachments(requirement).length ? `${requirementAttachments(requirement).length} ไฟล์` : 'ยังไม่ได้แนบ' }}</small>
+                    </div>
+                </div>
+                <label v-if="showUpload" class="slot-upload-button" :class="{ disabled: uploading }">
+                    <input type="file" accept="application/pdf,image/png,image/jpeg" :disabled="uploading" @change="uploadAttachment($event, requirement)" />
+                    <i :class="uploading ? 'pi pi-spin pi-spinner' : 'pi pi-upload'"></i>
+                    <span>{{ uploading ? 'กำลังแนบ' : 'แนบไฟล์' }}</span>
+                </label>
+            </article>
+        </div>
         <div v-if="loading" class="attachments-loading">
             <i class="pi pi-spin pi-spinner"></i>
             <span>กำลังโหลดไฟล์แนบ</span>
@@ -173,6 +216,7 @@ function revokeImageUrl() {
                     <div class="attachment-copy">
                         <strong>{{ fileName(attachment) }}</strong>
                         <span>{{ fileMeta(attachment) }}</span>
+                        <small v-if="attachment.requirementLabel">เอกสารบังคับ: {{ attachment.requirementLabel }}</small>
                         <small v-if="signerMeta(attachment)">แนบโดย {{ signerMeta(attachment) }}</small>
                         <small v-if="attachment.note">หมายเหตุ: {{ attachment.note }}</small>
                         <small v-if="formatDate(attachment.createdAt)">แนบเมื่อ {{ formatDate(attachment.createdAt) }}</small>
@@ -183,10 +227,10 @@ function revokeImageUrl() {
         </div>
         <Message v-else severity="info" class="m-0">ยังไม่มีไฟล์แนบอ้างอิง</Message>
 
-        <div v-if="showUpload" class="attachment-upload">
+        <div v-if="showUpload && allowOptionalUpload" class="attachment-upload">
             <InputText v-model="note" placeholder="หมายเหตุไฟล์แนบ (ถ้ามี)" :disabled="uploading" />
             <label class="upload-button" :class="{ disabled: uploading }">
-                <input type="file" accept="application/pdf,image/png,image/jpeg" :disabled="uploading" @change="uploadAttachment" />
+                <input type="file" accept="application/pdf,image/png,image/jpeg" :disabled="uploading" @change="uploadAttachment($event)" />
                 <i :class="uploading ? 'pi pi-spin pi-spinner' : 'pi pi-paperclip'"></i>
                 <span>{{ uploading ? 'กำลังแนบไฟล์' : uploadLabel }}</span>
             </label>
@@ -237,6 +281,84 @@ function revokeImageUrl() {
 .attachments-list {
     display: grid;
     gap: 0.75rem;
+    max-height: min(24rem, 42vh);
+    overflow-y: auto;
+    padding-right: 0.15rem;
+}
+
+.requirements-list {
+    display: grid;
+    gap: 0.6rem;
+}
+
+.requirement-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid color-mix(in srgb, var(--orange-400) 55%, var(--surface-border));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--orange-50) 65%, var(--surface-card));
+}
+
+.requirement-row.complete {
+    border-color: color-mix(in srgb, var(--green-400) 60%, var(--surface-border));
+    background: color-mix(in srgb, var(--green-50) 70%, var(--surface-card));
+}
+
+.requirement-copy {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+}
+
+.requirement-copy i {
+    color: var(--orange-500);
+}
+
+.requirement-row.complete .requirement-copy i {
+    color: var(--green-600);
+}
+
+.requirement-copy div {
+    min-width: 0;
+    display: grid;
+    gap: 0.1rem;
+}
+
+.requirement-copy strong,
+.requirement-copy small {
+    overflow-wrap: anywhere;
+}
+
+.requirement-copy small {
+    color: var(--text-color-secondary);
+}
+
+.slot-upload-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    min-height: 2.35rem;
+    padding: 0 0.75rem;
+    border: 1px solid var(--primary-color);
+    border-radius: 9px;
+    color: var(--primary-color);
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.slot-upload-button input {
+    display: none;
+}
+
+.slot-upload-button.disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
 }
 
 .attachment-row {
@@ -321,12 +443,14 @@ function revokeImageUrl() {
 
 @media (max-width: 640px) {
     .attachments-head,
-    .attachment-row {
+    .attachment-row,
+    .requirement-row {
         align-items: stretch;
         flex-direction: column;
     }
 
-    .attachment-row :deep(.p-button) {
+    .attachment-row :deep(.p-button),
+    .slot-upload-button {
         width: 100%;
     }
 }

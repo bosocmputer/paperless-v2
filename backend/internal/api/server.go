@@ -100,6 +100,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/public/signing/{token}/related-documents", s.getPublicSigningRelatedDocuments)
 	mux.HandleFunc("GET /api/public/signing/{token}/pdf", s.getPublicSigningPDF)
 	mux.HandleFunc("POST /api/public/signing/{token}/events", s.recordPublicSigningTaskEvent)
+	mux.HandleFunc("GET /api/public/signing/{token}/attachments", s.listPublicSigningTaskAttachments)
+	mux.HandleFunc("GET /api/public/signing/{token}/attachments/{attachmentId}/file", s.getPublicSigningTaskAttachmentFile)
 	mux.HandleFunc("POST /api/public/signing/{token}/attachments", s.uploadPublicSigningTaskAttachment)
 	mux.HandleFunc("POST /api/public/signing/{token}/sign", s.signPublicSigningTask)
 	mux.HandleFunc("POST /api/public/signing/{token}/reject", s.rejectPublicSigningTask)

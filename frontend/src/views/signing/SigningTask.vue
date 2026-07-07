@@ -95,8 +95,8 @@ async function rejectTask(payload) {
     }
 }
 
-async function attachFile(file, note) {
-    await api.uploadMyTaskAttachment(route.params.taskId, file, note);
+async function attachFile(file, note, requirementKey = '') {
+    await api.uploadMyTaskAttachment(route.params.taskId, file, note, requirementKey);
     await loadAttachments(route.params.taskId);
 }
 

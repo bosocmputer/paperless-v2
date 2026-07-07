@@ -1764,21 +1764,25 @@ type signingAttachmentFileResponse struct {
 }
 
 type signingAttachmentResponse struct {
-	ID           string                        `json:"id"`
-	SignerID     string                        `json:"signerId,omitempty"`
-	SignerName   string                        `json:"signerName,omitempty"`
-	PositionName string                        `json:"positionName,omitempty"`
-	Note         string                        `json:"note"`
-	CreatedAt    time.Time                     `json:"createdAt"`
-	File         signingAttachmentFileResponse `json:"file"`
+	ID               string                        `json:"id"`
+	SignerID         string                        `json:"signerId,omitempty"`
+	SignerName       string                        `json:"signerName,omitempty"`
+	PositionName     string                        `json:"positionName,omitempty"`
+	RequirementKey   string                        `json:"requirementKey,omitempty"`
+	RequirementLabel string                        `json:"requirementLabel,omitempty"`
+	Note             string                        `json:"note"`
+	CreatedAt        time.Time                     `json:"createdAt"`
+	File             signingAttachmentFileResponse `json:"file"`
 }
 
 func sanitizeSigningAttachmentForUser(attachment models.SigningDocumentAttachment, signers []models.SigningDocumentSigner) signingAttachmentResponse {
 	response := signingAttachmentResponse{
-		ID:        attachment.ID,
-		SignerID:  attachment.SignerID,
-		Note:      attachment.Note,
-		CreatedAt: attachment.CreatedAt,
+		ID:               attachment.ID,
+		SignerID:         attachment.SignerID,
+		RequirementKey:   attachment.RequirementKey,
+		RequirementLabel: attachment.RequirementLabel,
+		Note:             attachment.Note,
+		CreatedAt:        attachment.CreatedAt,
 		File: signingAttachmentFileResponse{
 			ID:           attachment.File.ID,
 			OriginalName: attachment.File.OriginalName,
@@ -1955,6 +1959,35 @@ func findSigningDocumentAttachment(attachments []models.SigningDocumentAttachmen
 	return models.SigningDocumentAttachment{}, false
 }
 
+func findAttachmentRequirement(signer models.SigningDocumentSigner, key string) (models.AttachmentRequirement, bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return models.AttachmentRequirement{}, false
+	}
+	for _, requirement := range signer.AttachmentRequirementsSnapshot {
+		if strings.TrimSpace(requirement.Key) == key {
+			return requirement, true
+		}
+	}
+	return models.AttachmentRequirement{}, false
+}
+
+func (s *Server) writeRequiredAttachmentsMissing(w http.ResponseWriter, missing []models.AttachmentRequirement) {
+	items := make([]map[string]any, 0, len(missing))
+	for _, requirement := range missing {
+		items = append(items, map[string]any{
+			"key":        requirement.Key,
+			"label":      requirement.Label,
+			"signerSlot": requirement.SignerSlot,
+		})
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":   "required_attachments_missing",
+		"message": "กรุณาแนบเอกสารที่กำหนดให้ครบก่อนเซ็น",
+		"missing": items,
+	})
+}
+
 func (s *Server) recordMySigningTaskEvent(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r)
 	taskID := strings.TrimSpace(r.PathValue("taskId"))
@@ -2011,11 +2044,24 @@ func (s *Server) uploadMySigningTaskAttachment(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
 		return
 	}
-	uploaded, note, err := s.readAndStoreSigningAttachment(w, r, user.ID)
+	requirementKey := strings.TrimSpace(r.FormValue("requirementKey"))
+	requirementLabel := ""
+	uploaded, note, err := s.readAndStoreSigningAttachment(w, r, user.ID, func(r *http.Request) error {
+		requirementKey = strings.TrimSpace(r.FormValue("requirementKey"))
+		if requirementKey != "" {
+			requirement, ok := findAttachmentRequirement(signer, requirementKey)
+			if !ok {
+				writeError(w, http.StatusBadRequest, "attachment_requirement_invalid", "Attachment requirement is invalid.")
+				return fmt.Errorf("attachment requirement is invalid")
+			}
+			requirementLabel = requirement.Label
+		}
+		return nil
+	})
 	if err != nil {
 		return
 	}
-	if err := s.store.AddSigningAttachment(r.Context(), signer.DocumentID, signer.ID, uploaded.ID, note, user.ID); err != nil {
+	if err := s.store.AddSigningAttachment(r.Context(), signer.DocumentID, signer.ID, uploaded.ID, requirementKey, requirementLabel, note, user.ID); err != nil {
 		s.logger.Error("add signing attachment failed", "error", err, "signerID", signer.ID)
 		writeError(w, http.StatusInternalServerError, "attachment_upload_failed", "Cannot attach file right now.")
 		return
@@ -2059,6 +2105,14 @@ func (s *Server) signMySigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
 		return
 	}
+	if missing, err := s.store.MissingRequiredAttachments(r.Context(), signer.ID); err != nil {
+		s.logger.Error("check required attachments before sign failed", "error", err, "signerID", signer.ID)
+		writeError(w, http.StatusInternalServerError, "required_attachments_check_failed", "Cannot verify required attachments right now.")
+		return
+	} else if len(missing) > 0 {
+		s.writeRequiredAttachmentsMissing(w, missing)
+		return
+	}
 	scope := "internal-sign:" + taskID
 	if s.replayIdempotentResponse(w, r, scope, user.ID) {
 		return
@@ -2072,7 +2126,7 @@ func (s *Server) signMySigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_signature", err.Error())
 		return
 	}
-	result, err := s.store.SignInternalTask(r.Context(), taskID, user.Username, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion)
+	result, err := s.store.SignInternalTask(r.Context(), taskID, user.Username, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion, truncateForMetadata(req.SignNote, 1000))
 	s.writeTaskMutationResult(w, r, scope, user.ID, result, err)
 }
 
@@ -2207,12 +2261,96 @@ func (s *Server) recordPublicSigningTaskEvent(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) uploadPublicSigningTaskAttachment(w http.ResponseWriter, r *http.Request) {
-	_, ok := s.externalSignerFromRequest(w, r)
+func (s *Server) listPublicSigningTaskAttachments(w http.ResponseWriter, r *http.Request) {
+	signer, ok := s.externalSignerFromRequest(w, r)
 	if !ok {
 		return
 	}
-	externalSignOnlyForbidden(w)
+	attachments, err := s.store.ListSigningTaskAttachments(r.Context(), signer.ID)
+	if err != nil {
+		s.logger.Error("list public signing attachments failed", "error", err, "signerID", signer.ID)
+		writeError(w, http.StatusInternalServerError, "attachments_failed", "Cannot load attachments right now.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"attachments": sanitizeSigningAttachmentsForUser(attachments, []models.SigningDocumentSigner{signer}),
+	})
+}
+
+func (s *Server) getPublicSigningTaskAttachmentFile(w http.ResponseWriter, r *http.Request) {
+	signer, ok := s.externalSignerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	attachments, err := s.store.ListSigningTaskAttachments(r.Context(), signer.ID)
+	if err != nil {
+		s.logger.Error("load public signing attachments for file failed", "error", err, "signerID", signer.ID)
+		writeError(w, http.StatusInternalServerError, "attachments_failed", "Cannot load attachments right now.")
+		return
+	}
+	attachmentID := strings.TrimSpace(r.PathValue("attachmentId"))
+	attachment, ok := findSigningDocumentAttachment(attachments, attachmentID)
+	if !ok || strings.TrimSpace(attachment.File.StoragePath) == "" {
+		writeError(w, http.StatusNotFound, "attachment_not_found", "Attachment was not found.")
+		return
+	}
+	if err := s.store.WriteAuditWithMetadata(r.Context(), "", "signing_attachment.view", "signing_attachment", attachment.ID, clientIP(r), r.UserAgent(), map[string]any{
+		"documentId":   signer.DocumentID,
+		"signerId":     signer.ID,
+		"attachmentId": attachment.ID,
+		"fileId":       attachment.File.ID,
+		"contentType":  attachment.File.ContentType,
+		"sizeBytes":    attachment.File.SizeBytes,
+	}); err != nil {
+		s.logger.Warn("write public signing attachment view audit failed", "error", err, "attachmentID", attachment.ID)
+	}
+	serveInlineUploadedFile(w, r, attachment.File)
+}
+
+func (s *Server) uploadPublicSigningTaskAttachment(w http.ResponseWriter, r *http.Request) {
+	signer, ok := s.externalSignerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if signer.Status != "pending" {
+		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
+		return
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil || document.Status != "in_progress" {
+		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
+		return
+	}
+	requirementKey := strings.TrimSpace(r.FormValue("requirementKey"))
+	var requirement models.AttachmentRequirement
+	uploaded, note, err := s.readAndStoreSigningAttachment(w, r, "", func(r *http.Request) error {
+		requirementKey = strings.TrimSpace(r.FormValue("requirementKey"))
+		var ok bool
+		requirement, ok = findAttachmentRequirement(signer, requirementKey)
+		if requirementKey == "" || !ok {
+			writeError(w, http.StatusBadRequest, "attachment_requirement_required", "Attachment requirement is required.")
+			return fmt.Errorf("attachment requirement is required")
+		}
+		return nil
+	})
+	if err != nil {
+		return
+	}
+	if err := s.store.AddSigningAttachment(r.Context(), signer.DocumentID, signer.ID, uploaded.ID, requirement.Key, requirement.Label, note, ""); err != nil {
+		s.logger.Error("add public signing attachment failed", "error", err, "signerID", signer.ID)
+		writeError(w, http.StatusInternalServerError, "attachment_upload_failed", "Cannot attach file right now.")
+		return
+	}
+	var attachmentResponse any
+	if attachments, err := s.store.ListSigningTaskAttachments(r.Context(), signer.ID); err == nil {
+		for _, attachment := range attachments {
+			if attachment.FileID == uploaded.ID {
+				attachmentResponse = sanitizeSigningAttachmentForUser(attachment, []models.SigningDocumentSigner{signer})
+				break
+			}
+		}
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"attachment": attachmentResponse})
 }
 
 func (s *Server) signPublicSigningTask(w http.ResponseWriter, r *http.Request) {
@@ -2237,6 +2375,14 @@ func (s *Server) signPublicSigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
 		return
 	}
+	if missing, err := s.store.MissingRequiredAttachments(r.Context(), signer.ID); err != nil {
+		s.logger.Error("check public required attachments before sign failed", "error", err, "signerID", signer.ID)
+		writeError(w, http.StatusInternalServerError, "required_attachments_check_failed", "Cannot verify required attachments right now.")
+		return
+	} else if len(missing) > 0 {
+		s.writeRequiredAttachmentsMissing(w, missing)
+		return
+	}
 	claimed := strings.TrimSpace(r.Header.Get("Idempotency-Key")) != ""
 	uploaded, err := s.storeSignatureImage(r.Context(), req.SignatureDataURL, "")
 	if err != nil {
@@ -2246,7 +2392,7 @@ func (s *Server) signPublicSigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_signature", err.Error())
 		return
 	}
-	result, err := s.store.SignExternalTask(r.Context(), signer.ID, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion)
+	result, err := s.store.SignExternalTask(r.Context(), signer.ID, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion, truncateForMetadata(req.SignNote, 1000))
 	s.writePublicTaskMutationResult(w, r, scope, signer.ID, result, err)
 }
 
@@ -2267,6 +2413,11 @@ func (s *Server) writeTaskMutationResult(w http.ResponseWriter, r *http.Request,
 	if errors.Is(err, store.ErrSigningTaskUnavailable) {
 		s.releaseIdempotency(idempotencyScope, actorUserID, r)
 		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
+		return
+	}
+	if errors.Is(err, store.ErrRequiredAttachmentsMissing) {
+		s.releaseIdempotency(idempotencyScope, actorUserID, r)
+		writeError(w, http.StatusConflict, "required_attachments_missing", "กรุณาแนบเอกสารที่กำหนดให้ครบก่อนเซ็น")
 		return
 	}
 	if err != nil {
@@ -2299,6 +2450,11 @@ func (s *Server) writePublicTaskMutationResult(w http.ResponseWriter, r *http.Re
 	if errors.Is(err, store.ErrSigningTaskUnavailable) {
 		s.releaseIdempotency(idempotencyScope, "", r)
 		writeError(w, http.StatusConflict, "signing_task_unavailable", "This signing task is not available.")
+		return
+	}
+	if errors.Is(err, store.ErrRequiredAttachmentsMissing) {
+		s.releaseIdempotency(idempotencyScope, "", r)
+		writeError(w, http.StatusConflict, "required_attachments_missing", "กรุณาแนบเอกสารที่กำหนดให้ครบก่อนเซ็น")
 		return
 	}
 	if err != nil {
@@ -2691,12 +2847,17 @@ func (s *Server) storeSignatureImage(ctx context.Context, dataURL, actorID strin
 	return s.storeUploadedBytes(ctx, normalized, "signature.png", "signature.png", "image/png", ".png", 0, actorID)
 }
 
-func (s *Server) readAndStoreSigningAttachment(w http.ResponseWriter, r *http.Request, actorID string) (models.UploadedFile, string, error) {
+func (s *Server) readAndStoreSigningAttachment(w http.ResponseWriter, r *http.Request, actorID string, validate func(*http.Request) error) (models.UploadedFile, string, error) {
 	maxBytes := s.cfg.MaxUploadMB * 1024 * 1024
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+1024)
 	if err := r.ParseMultipartForm(maxBytes + 1024); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_form", "Attachment form is invalid.")
 		return models.UploadedFile{}, "", err
+	}
+	if validate != nil {
+		if err := validate(r); err != nil {
+			return models.UploadedFile{}, "", err
+		}
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {

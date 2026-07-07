@@ -60,6 +60,7 @@ function canGenerateExternal(signer) {
                                 <strong>{{ signer.label }}</strong>
                                 <small v-if="signer.signedAt">เซ็นเมื่อ {{ formatThaiDateTime(signer.signedAt) }}</small>
                                 <small v-else-if="signer.rejectedAt">ปฏิเสธเมื่อ {{ formatThaiDateTime(signer.rejectedAt) }}</small>
+                                <small v-if="signer.signNote" class="workflow-note">หมายเหตุ: {{ signer.signNote }}</small>
                             </span>
                             <span class="workflow-signer-actions">
                                 <Tag :value="signer.statusLabel" :severity="signer.severity" />
