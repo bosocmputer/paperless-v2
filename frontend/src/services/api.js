@@ -452,6 +452,12 @@ export const api = {
             body: form
         });
     },
+    getSigningDocumentAttachments(id) {
+        return request(`/api/signing-documents/${id}/attachments`);
+    },
+    signingDocumentAttachmentFileUrl(id, attachmentId) {
+        return `/api/signing-documents/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}/file`;
+    },
     verifyExternalOTP(token, otp) {
         return request(`/api/public/signing/${token}/verify-otp`, {
             method: 'POST',

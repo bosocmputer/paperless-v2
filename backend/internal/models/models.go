@@ -428,6 +428,7 @@ type SigningDocument struct {
 	Signers             []SigningDocumentSigner      `json:"signers,omitempty"`
 	PendingSigners      []SigningDocumentSigner      `json:"pendingSigners,omitempty"`
 	Events              []SigningDocumentEvent       `json:"events,omitempty"`
+	AttachmentCount     int                          `json:"attachmentCount"`
 	Attachments         []SigningDocumentAttachment  `json:"attachments,omitempty"`
 	PrintEvents         []SigningDocumentPrintEvent  `json:"printEvents,omitempty"`
 }
@@ -552,19 +553,20 @@ type PageMeta struct {
 }
 
 type MySigningTaskDocument struct {
-	ID            string                 `json:"id"`
-	DocNo         string                 `json:"docNo"`
-	DocFormatCode string                 `json:"docFormatCode"`
-	PartyCode     string                 `json:"partyCode"`
-	PartyName     string                 `json:"partyName"`
-	DocDate       string                 `json:"docDate"`
-	TotalAmount   float64                `json:"totalAmount"`
-	Status        string                 `json:"status"`
-	UpdatedAt     time.Time              `json:"updatedAt"`
-	Task          MySigningTaskSigner    `json:"task"`
-	Signers       []MySigningTaskSigner  `json:"signers,omitempty"`
-	BlockedBy     []MySigningTaskBlocker `json:"blockedBy,omitempty"`
-	BlockSummary  string                 `json:"blockSummary,omitempty"`
+	ID              string                 `json:"id"`
+	DocNo           string                 `json:"docNo"`
+	DocFormatCode   string                 `json:"docFormatCode"`
+	PartyCode       string                 `json:"partyCode"`
+	PartyName       string                 `json:"partyName"`
+	DocDate         string                 `json:"docDate"`
+	TotalAmount     float64                `json:"totalAmount"`
+	Status          string                 `json:"status"`
+	UpdatedAt       time.Time              `json:"updatedAt"`
+	Task            MySigningTaskSigner    `json:"task"`
+	Signers         []MySigningTaskSigner  `json:"signers,omitempty"`
+	BlockedBy       []MySigningTaskBlocker `json:"blockedBy,omitempty"`
+	BlockSummary    string                 `json:"blockSummary,omitempty"`
+	AttachmentCount int                    `json:"attachmentCount"`
 }
 
 type MySigningTaskSigner struct {
@@ -603,25 +605,26 @@ type MySigningHistoryResult struct {
 }
 
 type MySigningHistoryDocument struct {
-	ID             string     `json:"id"`
-	DocNo          string     `json:"docNo"`
-	DocFormatCode  string     `json:"docFormatCode"`
-	PartyCode      string     `json:"partyCode"`
-	PartyName      string     `json:"partyName"`
-	DocDate        string     `json:"docDate"`
-	TotalAmount    float64    `json:"totalAmount"`
-	DocumentStatus string     `json:"documentStatus"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
-	TaskID         string     `json:"taskId"`
-	PositionCode   string     `json:"positionCode"`
-	PositionName   string     `json:"positionName"`
-	SignerName     string     `json:"signerName"`
-	TaskStatus     string     `json:"taskStatus"`
-	SignedAt       *time.Time `json:"signedAt,omitempty"`
-	RejectedAt     *time.Time `json:"rejectedAt,omitempty"`
-	RejectReason   string     `json:"rejectReason,omitempty"`
-	HasFinalPDF    bool       `json:"hasFinalPdf"`
-	HasCurrentPDF  bool       `json:"hasCurrentPdf"`
+	ID              string     `json:"id"`
+	DocNo           string     `json:"docNo"`
+	DocFormatCode   string     `json:"docFormatCode"`
+	PartyCode       string     `json:"partyCode"`
+	PartyName       string     `json:"partyName"`
+	DocDate         string     `json:"docDate"`
+	TotalAmount     float64    `json:"totalAmount"`
+	DocumentStatus  string     `json:"documentStatus"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+	TaskID          string     `json:"taskId"`
+	PositionCode    string     `json:"positionCode"`
+	PositionName    string     `json:"positionName"`
+	SignerName      string     `json:"signerName"`
+	TaskStatus      string     `json:"taskStatus"`
+	SignedAt        *time.Time `json:"signedAt,omitempty"`
+	RejectedAt      *time.Time `json:"rejectedAt,omitempty"`
+	RejectReason    string     `json:"rejectReason,omitempty"`
+	HasFinalPDF     bool       `json:"hasFinalPdf"`
+	HasCurrentPDF   bool       `json:"hasCurrentPdf"`
+	AttachmentCount int        `json:"attachmentCount"`
 }
 
 type SigningDocumentEvent struct {

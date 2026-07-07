@@ -131,6 +131,10 @@ function documentLine(doc) {
     return [doc.docNo, doc.docFormatCode].filter(Boolean).join(' · ') || '-';
 }
 
+function attachmentCount(doc) {
+    return Number(doc?.attachmentCount || 0);
+}
+
 function partyLine(doc) {
     return doc.partyName || doc.partyCode || '-';
 }
@@ -186,7 +190,10 @@ function normalizeSearch(value) {
                         </template>
                         <Column header="เลขที่เอกสาร" style="min-width: 15rem">
                             <template #body="{ data }">
-                                <Button link class="p-0 font-bold text-left" @click="openTask(data)">{{ documentLine(data.doc) }}</Button>
+                                <div class="grid gap-1">
+                                    <Button link class="p-0 font-bold text-left" @click="openTask(data)">{{ documentLine(data.doc) }}</Button>
+                                    <Tag v-if="attachmentCount(data.doc)" :value="`แนบ ${attachmentCount(data.doc)}`" severity="info" class="w-fit" />
+                                </div>
                             </template>
                         </Column>
                         <Column header="คู่ค้า" style="min-width: 14rem">
@@ -227,7 +234,10 @@ function normalizeSearch(value) {
                         </template>
                         <Column header="เลขที่เอกสาร" style="min-width: 15rem">
                             <template #body="{ data }">
-                                <Button link class="p-0 font-bold text-left" @click="openTask(data)">{{ documentLine(data.doc) }}</Button>
+                                <div class="grid gap-1">
+                                    <Button link class="p-0 font-bold text-left" @click="openTask(data)">{{ documentLine(data.doc) }}</Button>
+                                    <Tag v-if="attachmentCount(data.doc)" :value="`แนบ ${attachmentCount(data.doc)}`" severity="info" class="w-fit" />
+                                </div>
                             </template>
                         </Column>
                         <Column header="คู่ค้า" style="min-width: 14rem">

@@ -106,6 +106,10 @@ function formatDateTime(value) {
     if (!value) return '-';
     return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
+
+function attachmentCount(row) {
+    return Number(row?.attachmentCount || 0);
+}
 </script>
 
 <template>
@@ -147,7 +151,10 @@ function formatDateTime(value) {
                             <strong>{{ row.docNo }}</strong>
                             <span>{{ row.docFormatCode }} · {{ row.partyName || row.partyCode || '-' }}</span>
                         </div>
-                        <Tag :value="statusView(row).label" :severity="statusView(row).severity" />
+                        <span class="history-tags">
+                            <Tag :value="statusView(row).label" :severity="statusView(row).severity" />
+                            <Tag v-if="attachmentCount(row)" :value="`แนบ ${attachmentCount(row)}`" severity="info" />
+                        </span>
                     </div>
 
                     <div class="position-banner" :class="{ rejected: row.taskStatus === 'rejected' }">
@@ -273,6 +280,13 @@ function formatDateTime(value) {
     align-items: flex-start;
     justify-content: space-between;
     gap: 0.75rem;
+}
+
+.history-tags {
+    display: inline-flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.35rem;
 }
 
 .history-main > div {

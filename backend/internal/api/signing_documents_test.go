@@ -551,6 +551,7 @@ func TestSanitizeSigningAttachmentForUserKeepsOnlySafeMetadata(t *testing.T) {
 	createdAt := time.Date(2026, 7, 7, 13, 54, 0, 0, time.UTC)
 	attachment := models.SigningDocumentAttachment{
 		ID:        "attachment-1",
+		SignerID:  "signer-1",
 		Note:      "ใบเสนอราคา",
 		CreatedAt: createdAt,
 		File: models.UploadedFile{
@@ -567,7 +568,9 @@ func TestSanitizeSigningAttachmentForUserKeepsOnlySafeMetadata(t *testing.T) {
 		},
 	}
 
-	sanitized := sanitizeSigningAttachmentForUser(attachment)
+	sanitized := sanitizeSigningAttachmentForUser(attachment, []models.SigningDocumentSigner{
+		{ID: "signer-1", SignerName: "นาย B", PositionName: "ผู้จัดทำ"},
+	})
 	payload, err := json.Marshal(sanitized)
 	if err != nil {
 		t.Fatalf("marshal sanitized attachment: %v", err)
@@ -580,6 +583,9 @@ func TestSanitizeSigningAttachmentForUserKeepsOnlySafeMetadata(t *testing.T) {
 	}
 	if sanitized.ID != "attachment-1" || sanitized.File.OriginalName != "ใบเสนอราคาสาขา.pdf" || sanitized.File.ContentType != "application/pdf" || sanitized.File.SizeBytes != 123938 {
 		t.Fatalf("safe attachment metadata missing: %#v", sanitized)
+	}
+	if sanitized.SignerID != "signer-1" || sanitized.SignerName != "นาย B" || sanitized.PositionName != "ผู้จัดทำ" {
+		t.Fatalf("signer attachment metadata missing: %#v", sanitized)
 	}
 }
 

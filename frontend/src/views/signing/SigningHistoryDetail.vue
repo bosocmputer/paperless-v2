@@ -14,6 +14,10 @@ const document = ref(null);
 const task = ref(null);
 const legal = ref(null);
 const loading = ref(false);
+const attachments = ref([]);
+const attachmentsLoading = ref(false);
+const attachmentsError = ref('');
+let attachmentRequestSeq = 0;
 
 const pdfUrl = computed(() => api.mySigningHistoryPDFUrlForTask(task.value, document.value, 'current'));
 const identityLabel = computed(() => authStore.user?.displayName || authStore.user?.username || task.value?.signerName || task.value?.signerUser || '');
@@ -33,11 +37,37 @@ async function loadHistory() {
         document.value = result.document;
         task.value = result.task;
         legal.value = result.legal;
+        loadAttachments(route.params.taskId);
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลดประวัติไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         loading.value = false;
     }
+}
+
+async function loadAttachments(taskId = route.params.taskId) {
+    if (!taskId) return;
+    const requestSeq = ++attachmentRequestSeq;
+    attachmentsLoading.value = true;
+    attachmentsError.value = '';
+    try {
+        const result = await api.getMyTaskAttachments(taskId);
+        if (requestSeq === attachmentRequestSeq) {
+            attachments.value = Array.isArray(result.attachments) ? result.attachments : [];
+        }
+    } catch (err) {
+        if (requestSeq === attachmentRequestSeq) {
+            attachmentsError.value = err.message || 'โหลดไฟล์แนบไม่สำเร็จ';
+        }
+    } finally {
+        if (requestSeq === attachmentRequestSeq) {
+            attachmentsLoading.value = false;
+        }
+    }
+}
+
+function attachmentFileUrl(attachment) {
+    return api.myTaskAttachmentFileUrl(route.params.taskId, attachment?.id || '');
 }
 
 function recordEvent(payload) {
@@ -60,6 +90,11 @@ function goBackToHistory() {
         :loading="loading"
         :identity-label="identityLabel"
         :admin-workspace="isAdminSignerWorkspace"
+        :attachments="attachments"
+        :attachments-loading="attachmentsLoading"
+        :attachments-error="attachmentsError"
+        :on-reload-attachments="loadAttachments"
+        :attachment-file-url="attachmentFileUrl"
         :on-back="goBackToHistory"
         :on-reload="loadHistory"
         :on-record-event="recordEvent"

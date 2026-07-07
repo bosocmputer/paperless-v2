@@ -74,6 +74,10 @@ function documentLine(row) {
     return [row.docNo, row.docFormatCode].filter(Boolean).join(' · ') || '-';
 }
 
+function attachmentCount(row) {
+    return Number(row?.attachmentCount || 0);
+}
+
 function partyLine(row) {
     return row.partyName || row.partyCode || '-';
 }
@@ -122,7 +126,10 @@ function rejectReason(row) {
 
             <Column header="เลขที่เอกสาร" style="min-width: 15rem">
                 <template #body="{ data }">
-                    <Button link class="p-0 font-bold text-left" @click="openHistory(data)">{{ documentLine(data) }}</Button>
+                    <div class="grid gap-1">
+                        <Button link class="p-0 font-bold text-left" @click="openHistory(data)">{{ documentLine(data) }}</Button>
+                        <Tag v-if="attachmentCount(data)" :value="`แนบ ${attachmentCount(data)}`" severity="info" class="w-fit" />
+                    </div>
                 </template>
             </Column>
             <Column header="คู่ค้า" style="min-width: 14rem">

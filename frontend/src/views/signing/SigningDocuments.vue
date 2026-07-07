@@ -329,6 +329,10 @@ function documentLine(doc) {
     return `${doc.docNo || '-'} ~ ${doc.docFormatCode || '-'} · ${doc.partyName || doc.partyCode || '-'}`;
 }
 
+function attachmentCount(doc) {
+    return Number(doc?.attachmentCount || 0);
+}
+
 function formatMoney(value) {
     return Number(value || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
 }
@@ -499,9 +503,12 @@ function selectInput(event) {
 
             <Column field="docNo" header="เลขที่เอกสาร" sortable style="min-width: 16rem">
                 <template #body="{ data }">
-                    <Button link class="p-0 font-bold text-left" @click="openDetail(data)">
-                        <span class="whitespace-nowrap">{{ documentLine(data) }}</span>
-                    </Button>
+                    <div class="grid gap-1">
+                        <Button link class="p-0 font-bold text-left" @click="openDetail(data)">
+                            <span class="whitespace-nowrap">{{ documentLine(data) }}</span>
+                        </Button>
+                        <Tag v-if="attachmentCount(data)" :value="`แนบ ${attachmentCount(data)}`" severity="info" class="w-fit" />
+                    </div>
                 </template>
             </Column>
             <Column field="docDate" header="วันที่เอกสาร" sortable style="min-width: 10rem">

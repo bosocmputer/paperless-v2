@@ -1128,9 +1128,15 @@ SELECT d.id::text,
        sg.rejected_at,
        sg.reject_reason,
        d.current_file_id IS NOT NULL,
-       d.final_file_id IS NOT NULL
+       d.final_file_id IS NOT NULL,
+       COALESCE(ac.attachment_count, 0)
 FROM signing_documents d
 JOIN signing_document_signers sg ON sg.document_id = d.id
+LEFT JOIN (
+    SELECT document_id, COUNT(*)::int AS attachment_count
+    FROM signing_document_attachments
+    GROUP BY document_id
+) ac ON ac.document_id = d.id
 `+where+fmt.Sprintf(`
 ORDER BY COALESCE(sg.signed_at, sg.rejected_at, d.updated_at) DESC, d.updated_at DESC, d.doc_no, sg.sequence_no, sg.position_code
 LIMIT $%d OFFSET $%d
@@ -1164,7 +1170,7 @@ func scanMySigningHistoryDocument(row rowScanner) (models.MySigningHistoryDocume
 		&item.ID, &item.DocNo, &item.DocFormatCode, &item.PartyCode, &item.PartyName, &item.DocDate,
 		&item.TotalAmount, &item.DocumentStatus, &item.UpdatedAt, &item.TaskID, &item.PositionCode,
 		&item.PositionName, &item.SignerName, &item.TaskStatus, &signedAt, &rejectedAt, &item.RejectReason,
-		&item.HasCurrentPDF, &item.HasFinalPDF,
+		&item.HasCurrentPDF, &item.HasFinalPDF, &item.AttachmentCount,
 	)
 	if signedAt.Valid {
 		item.SignedAt = &signedAt.Time
@@ -1215,9 +1221,15 @@ SELECT d.id::text,
        sg.signer_name,
        sg.status,
        sg.signed_at,
-       sg.rejected_at
+       sg.rejected_at,
+       COALESCE(ac.attachment_count, 0)
 FROM signing_documents d
 JOIN signing_document_signers sg ON sg.document_id = d.id
+LEFT JOIN (
+    SELECT document_id, COUNT(*)::int AS attachment_count
+    FROM signing_document_attachments
+    GROUP BY document_id
+) ac ON ac.document_id = d.id
 WHERE d.status = 'in_progress'
   AND sg.status = $2
   AND lower(sg.signer_user) = lower($1)
@@ -1256,7 +1268,7 @@ func scanMySigningTaskDocument(row rowScanner) (models.MySigningTaskDocument, er
 		&item.TotalAmount, &item.Status, &item.UpdatedAt,
 		&task.ID, &task.StepID, &task.PositionCode, &task.PositionName, &task.SequenceNo, &task.ConditionType,
 		&task.SignerSlot, &task.SignerType, &task.SignerUser, &task.SignerName, &task.Status,
-		&task.SignedAt, &task.RejectedAt,
+		&task.SignedAt, &task.RejectedAt, &item.AttachmentCount,
 	)
 	if err != nil {
 		return item, err
@@ -2149,10 +2161,16 @@ SELECT d.id::text, d.sml_tenant, d.sml_data_group, d.sml_data_code,
        COALESCE(d.signature_template_id::text,''), COALESCE(d.created_by::text,''),
        d.created_at, d.updated_at, d.completed_at, d.locked_at, COALESCE(d.legal_notice_snapshot, '{}'::jsonb)::text,
        COALESCE(d.signature_placement_snapshot, '[]'::jsonb)::text, COALESCE(d.legal_notice_boxes_snapshot, '[]'::jsonb)::text,
+       COALESCE(ac.attachment_count, 0),
        COALESCE(of.id::text,''), COALESCE(of.original_name,''), COALESCE(of.stored_name,''), COALESCE(of.storage_path,''), COALESCE(of.content_type,''), COALESCE(of.size_bytes,0), COALESCE(of.page_count,0), COALESCE(of.sha256,''), COALESCE(of.created_by::text,''), of.created_at,
        COALESCE(cf.id::text,''), COALESCE(cf.original_name,''), COALESCE(cf.stored_name,''), COALESCE(cf.storage_path,''), COALESCE(cf.content_type,''), COALESCE(cf.size_bytes,0), COALESCE(cf.page_count,0), COALESCE(cf.sha256,''), COALESCE(cf.created_by::text,''), cf.created_at,
        COALESCE(ff.id::text,''), COALESCE(ff.original_name,''), COALESCE(ff.stored_name,''), COALESCE(ff.storage_path,''), COALESCE(ff.content_type,''), COALESCE(ff.size_bytes,0), COALESCE(ff.page_count,0), COALESCE(ff.sha256,''), COALESCE(ff.created_by::text,''), ff.created_at
 FROM signing_documents d
+LEFT JOIN (
+    SELECT document_id, COUNT(*)::int AS attachment_count
+    FROM signing_document_attachments
+    GROUP BY document_id
+) ac ON ac.document_id = d.id
 LEFT JOIN uploaded_files of ON of.id = d.original_file_id
 LEFT JOIN uploaded_files cf ON cf.id = d.current_file_id
 LEFT JOIN uploaded_files ff ON ff.id = d.final_file_id
@@ -2183,6 +2201,7 @@ func scanSigningDocument(row rowScanner) (models.SigningDocument, error) {
 		&doc.SMLIsLockRecord, &doc.Status, &doc.CurrentVersion,
 		&doc.OriginalFileID, &doc.CurrentFileID, &doc.FinalFileID, &doc.SignatureTemplateID, &doc.CreatedBy,
 		&doc.CreatedAt, &doc.UpdatedAt, &completedAt, &lockedAt, &legalNoticeRaw, &signaturePlacementsRaw, &legalNoticeBoxesRaw,
+		&doc.AttachmentCount,
 		&original.ID, &original.OriginalName, &original.StoredName, &original.StoragePath, &original.ContentType, &original.SizeBytes, &original.PageCount, &original.SHA256, &original.CreatedBy, &originalCreated,
 		&current.ID, &current.OriginalName, &current.StoredName, &current.StoragePath, &current.ContentType, &current.SizeBytes, &current.PageCount, &current.SHA256, &current.CreatedBy, &currentCreated,
 		&final.ID, &final.OriginalName, &final.StoredName, &final.StoragePath, &final.ContentType, &final.SizeBytes, &final.PageCount, &final.SHA256, &final.CreatedBy, &finalCreated,

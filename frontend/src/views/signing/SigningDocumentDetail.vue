@@ -4,6 +4,7 @@ import { api } from '@/services/api';
 import { formatThaiDateTime, signingStatusLabel, signingStatusSeverity, smlImageFailureDetail } from '@/utils/signingFormatters';
 import { isSigningDocumentMenuKey, normalizeSigningDocumentQueue, signingDocumentMenuKeyForQueue, signingDocumentQueueForStatus } from '@/utils/signingQueue';
 import ContinuousPdfViewer from '@/views/signing/components/ContinuousPdfViewer.vue';
+import DocumentAttachmentsPanel from '@/views/signing/components/DocumentAttachmentsPanel.vue';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
 import DocumentReferenceCheck from '@/views/signing/components/DocumentReferenceCheck.vue';
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
@@ -31,6 +32,9 @@ const cancellingDocument = ref(false);
 const tokenDialog = ref(false);
 const generatedToken = ref(null);
 const activeTab = ref('progress');
+const documentAttachments = ref([]);
+const documentAttachmentsLoading = ref(false);
+const documentAttachmentsError = ref('');
 const flowDialog = ref(false);
 const flowDocument = ref(null);
 const evidenceDialog = ref(false);
@@ -45,6 +49,7 @@ const importantEvents = computed(() =>
         .filter((event) => event.view)
 );
 const printEvents = computed(() => document.value?.printEvents || []);
+const documentAttachmentCount = computed(() => Math.max(Number(document.value?.attachmentCount || 0), documentAttachments.value.length));
 const pdfPreviewUrl = computed(() => (document.value?.id ? api.signingDocumentPDFUrlForDocument(document.value) : ''));
 const externalSigners = computed(() => (document.value?.signers || []).filter((signer) => signer.signerType === 'external'));
 const documentHeaderLine = computed(() => {
@@ -107,11 +112,30 @@ async function loadPage() {
         const result = await api.getSigningDocument(route.params.id);
         document.value = result.document;
         syncActiveMenuFromDocument();
+        loadDocumentAttachments();
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลดเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         loading.value = false;
     }
+}
+
+async function loadDocumentAttachments() {
+    if (!document.value?.id) return;
+    documentAttachmentsLoading.value = true;
+    documentAttachmentsError.value = '';
+    try {
+        const result = await api.getSigningDocumentAttachments(document.value.id);
+        documentAttachments.value = Array.isArray(result.attachments) ? result.attachments : [];
+    } catch (err) {
+        documentAttachmentsError.value = err.message || 'โหลดไฟล์แนบไม่สำเร็จ';
+    } finally {
+        documentAttachmentsLoading.value = false;
+    }
+}
+
+function documentAttachmentFileUrl(attachment) {
+    return api.signingDocumentAttachmentFileUrl(document.value?.id || route.params.id, attachment?.id || '');
 }
 
 async function retryLock() {
@@ -600,6 +624,7 @@ function movementEventView(event) {
                     <TabList>
                         <Tab value="progress">ความคืบหน้า</Tab>
                         <Tab value="references">ตรวจสอบเอกสาร</Tab>
+                        <Tab value="attachments">ไฟล์แนบอ้างอิง ({{ documentAttachmentCount }})</Tab>
                         <Tab value="print">พิมพ์</Tab>
                         <Tab value="events">เหตุการณ์</Tab>
                     </TabList>
@@ -649,6 +674,17 @@ function movementEventView(event) {
                             <div class="info-block">
                                 <DocumentReferenceCheck :document="document" :loader="loadReferenceCheck" compact open-in-new-tab :document-route-resolver="referenceDocumentUrl" @open-document="openFlowDocument" />
                             </div>
+                        </TabPanel>
+                        <TabPanel value="attachments">
+                            <DocumentAttachmentsPanel
+                                readonly
+                                :attachments="documentAttachments"
+                                :loading="documentAttachmentsLoading"
+                                :error="documentAttachmentsError"
+                                :headers="api.authHeaders()"
+                                :on-reload="loadDocumentAttachments"
+                                :file-url-resolver="documentAttachmentFileUrl"
+                            />
                         </TabPanel>
                         <TabPanel value="print">
                             <div class="info-block">

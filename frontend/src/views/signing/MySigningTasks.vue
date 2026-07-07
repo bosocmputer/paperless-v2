@@ -150,6 +150,10 @@ function formatDate(value) {
     if (!value) return '-';
     return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium' }).format(new Date(value));
 }
+
+function attachmentCount(doc) {
+    return Number(doc?.attachmentCount || 0);
+}
 </script>
 
 <template>
@@ -208,7 +212,10 @@ function formatDate(value) {
                                     <strong>{{ row.doc.docNo }}</strong>
                                     <span>{{ row.doc.docFormatCode }} · {{ row.doc.partyName || row.doc.partyCode || '-' }}</span>
                                 </div>
-                                <Tag value="รอเซ็น" severity="info" />
+                                <span class="task-tags">
+                                    <Tag value="รอเซ็น" severity="info" />
+                                    <Tag v-if="attachmentCount(row.doc)" :value="`แนบ ${attachmentCount(row.doc)}`" severity="secondary" />
+                                </span>
                             </div>
                             <div class="position-banner">
                                 <span><i class="pi pi-user-edit"></i> ตำแหน่งของคุณ</span>
@@ -255,7 +262,10 @@ function formatDate(value) {
                                     <strong>{{ row.doc.docNo }}</strong>
                                     <span>{{ row.doc.docFormatCode }} · {{ row.doc.partyName || row.doc.partyCode || '-' }}</span>
                                 </div>
-                                <Tag value="ยังไม่ถึงคิว" severity="secondary" />
+                                <span class="task-tags">
+                                    <Tag value="ยังไม่ถึงคิว" severity="secondary" />
+                                    <Tag v-if="attachmentCount(row.doc)" :value="`แนบ ${attachmentCount(row.doc)}`" severity="info" />
+                                </span>
                             </div>
                             <div class="position-banner waiting-position">
                                 <span><i class="pi pi-user-edit"></i> ตำแหน่งของคุณ</span>
@@ -412,6 +422,13 @@ function formatDate(value) {
     align-items: flex-start;
     justify-content: space-between;
     gap: 0.75rem;
+}
+
+.task-tags {
+    display: inline-flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.35rem;
 }
 
 .task-main > div {
