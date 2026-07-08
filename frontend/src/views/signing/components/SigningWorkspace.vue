@@ -114,8 +114,12 @@ const showReadonlyAttachments = computed(() => !props.externalSignOnly && !canIn
 const signatureTitle = computed(() => ['ลายเซ็น', props.task?.positionName].filter(Boolean).join(' · '));
 const signerLine = computed(() => props.identityLabel || props.task?.signerName || props.task?.signerUser || '-');
 const selectedSignNoteBox = computed(() => signNoteBoxes.value.find((box) => box.clientKey === selectedSignNoteBoxKey.value) || null);
+const selectedSignNoteIndex = computed(() => signNoteBoxes.value.findIndex((box) => box.clientKey === selectedSignNoteBoxKey.value));
+const selectedSignNoteLabel = computed(() => {
+    if (!selectedSignNoteBox.value || selectedSignNoteIndex.value < 0) return 'กล่องที่เลือก';
+    return `หน้า ${selectedSignNoteBox.value.pageNo || 1} · กล่อง ${selectedSignNoteIndex.value + 1}`;
+});
 const selectedSignNoteFontSize = computed(() => clampNoteFontSize(selectedSignNoteBox.value?.fontSizePt));
-const selectedSignNotePadding = computed(() => clampNotePadding(selectedSignNoteBox.value?.paddingPt));
 const selectedSignNoteTextAlign = computed(() => normalizeNoteTextAlign(selectedSignNoteBox.value?.textAlign));
 const selectedSignNoteVerticalAlign = computed(() => normalizeNoteVerticalAlign(selectedSignNoteBox.value?.verticalAlign));
 const historySummary = computed(() => {
@@ -334,8 +338,7 @@ function addSignNoteBox() {
         label: 'หมายเหตุผู้เซ็น',
         fontSizePt: 10,
         textAlign: 'left',
-        verticalAlign: 'middle',
-        paddingPt: 2
+        verticalAlign: 'middle'
     };
     signNoteBoxes.value = [...signNoteBoxes.value, box];
     selectedSignNoteBoxKey.value = box.clientKey;
@@ -389,18 +392,13 @@ function stepSelectedSignNoteFont(delta) {
     updateSelectedSignNoteStyle({ fontSizePt: clampNoteFontSize(selectedSignNoteFontSize.value + delta) });
 }
 
-function stepSelectedSignNotePadding(delta) {
-    updateSelectedSignNoteStyle({ paddingPt: clampNotePadding(selectedSignNotePadding.value + delta) });
-}
-
 function normalizeSignNoteBox(box) {
     return {
         ...box,
         text: String(box.text || '').slice(0, 500),
         fontSizePt: clampNoteFontSize(box.fontSizePt),
         textAlign: normalizeNoteTextAlign(box.textAlign),
-        verticalAlign: normalizeNoteVerticalAlign(box.verticalAlign),
-        paddingPt: clampNotePadding(box.paddingPt)
+        verticalAlign: normalizeNoteVerticalAlign(box.verticalAlign)
     };
 }
 
@@ -408,12 +406,6 @@ function clampNoteFontSize(value) {
     const numeric = Number(value || 0);
     if (!Number.isFinite(numeric) || numeric <= 0) return 10;
     return Math.min(Math.max(numeric, 8), 18);
-}
-
-function clampNotePadding(value) {
-    const numeric = Number(value || 0);
-    if (!Number.isFinite(numeric) || numeric <= 0) return 2;
-    return Math.min(Math.max(numeric, 1), 6);
 }
 
 function normalizeNoteTextAlign(value) {
@@ -440,8 +432,7 @@ function toSignNotePayload(box) {
         label: 'หมายเหตุผู้เซ็น',
         fontSizePt: clampNoteFontSize(box.fontSizePt),
         textAlign: normalizeNoteTextAlign(box.textAlign),
-        verticalAlign: normalizeNoteVerticalAlign(box.verticalAlign),
-        paddingPt: clampNotePadding(box.paddingPt)
+        verticalAlign: normalizeNoteVerticalAlign(box.verticalAlign)
     };
 }
 
@@ -724,7 +715,7 @@ function newRequestKey() {
                         <Button label="เพิ่มกล่อง" icon="pi pi-comment" severity="secondary" outlined size="small" :disabled="!canInteract || !pdfReady" @click="addSignNoteBox" />
                     </div>
                     <Message v-if="incompleteSignNoteBoxes.length" severity="warn" class="compact-status">มีกล่องหมายเหตุที่ยังไม่ได้กรอกข้อความ</Message>
-                    <small v-else class="runtime-note-help">พิมพ์ข้อความในกล่องบน PDF โดยตรง ลากกล่องจากไอคอนลูกศร และปรับขนาดจากมุมกล่อง</small>
+                    <small v-else class="runtime-note-help">พิมพ์ในกรอบบน PDF แล้วปรับรูปแบบของกล่องที่เลือก</small>
                     <div v-if="signNoteBoxes.length" class="runtime-note-list">
                         <div
                             v-for="(box, index) in signNoteBoxes"
@@ -739,46 +730,36 @@ function newRequestKey() {
                             <Button
                                 v-if="canInteract"
                                 icon="pi pi-trash"
-                                severity="danger"
+                                severity="secondary"
                                 text
                                 rounded
                                 size="small"
+                                class="runtime-note-delete-button"
                                 aria-label="ลบกล่องหมายเหตุ"
                                 @click.stop="deleteSelectedSignNoteBox(box.clientKey)"
                             />
                         </div>
                     </div>
-                    <div v-if="selectedSignNoteBox" class="runtime-note-style-panel">
-                        <div class="runtime-note-style-row">
-                            <span>ขนาด</span>
-                            <div class="runtime-note-style-controls">
+                    <div v-if="selectedSignNoteBox" class="runtime-note-format-bar">
+                        <div class="runtime-note-format-header">
+                            <span>ปรับรูปแบบ</span>
+                            <strong>{{ selectedSignNoteLabel }}</strong>
+                        </div>
+                        <div class="runtime-note-format-controls">
+                            <div class="runtime-note-format-group font-group" aria-label="ขนาดตัวอักษร">
                                 <Button icon="pi pi-minus" severity="secondary" outlined rounded size="small" aria-label="ลดขนาดตัวอักษร" :disabled="!canInteract || selectedSignNoteFontSize <= 8" @click="stepSelectedSignNoteFont(-1)" />
                                 <strong>{{ selectedSignNoteFontSize }} pt</strong>
                                 <Button icon="pi pi-plus" severity="secondary" outlined rounded size="small" aria-label="เพิ่มขนาดตัวอักษร" :disabled="!canInteract || selectedSignNoteFontSize >= 18" @click="stepSelectedSignNoteFont(1)" />
                             </div>
-                        </div>
-                        <div class="runtime-note-style-row">
-                            <span>จัดข้อความ</span>
-                            <div class="runtime-note-style-controls">
+                            <div class="runtime-note-format-group icon-group" aria-label="จัดข้อความ">
                                 <Button icon="pi pi-align-left" :severity="selectedSignNoteTextAlign === 'left' ? 'info' : 'secondary'" :outlined="selectedSignNoteTextAlign !== 'left'" rounded size="small" aria-label="จัดซ้าย" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ textAlign: 'left' })" />
                                 <Button icon="pi pi-align-center" :severity="selectedSignNoteTextAlign === 'center' ? 'info' : 'secondary'" :outlined="selectedSignNoteTextAlign !== 'center'" rounded size="small" aria-label="จัดกลาง" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ textAlign: 'center' })" />
                                 <Button icon="pi pi-align-right" :severity="selectedSignNoteTextAlign === 'right' ? 'info' : 'secondary'" :outlined="selectedSignNoteTextAlign !== 'right'" rounded size="small" aria-label="จัดขวา" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ textAlign: 'right' })" />
                             </div>
-                        </div>
-                        <div class="runtime-note-style-row">
-                            <span>แนวตั้ง</span>
-                            <div class="runtime-note-style-controls text-controls">
+                            <div class="runtime-note-format-group text-controls" aria-label="จัดแนวตั้ง">
                                 <Button label="บน" :severity="selectedSignNoteVerticalAlign === 'top' ? 'info' : 'secondary'" :outlined="selectedSignNoteVerticalAlign !== 'top'" size="small" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ verticalAlign: 'top' })" />
                                 <Button label="กลาง" :severity="selectedSignNoteVerticalAlign === 'middle' ? 'info' : 'secondary'" :outlined="selectedSignNoteVerticalAlign !== 'middle'" size="small" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ verticalAlign: 'middle' })" />
                                 <Button label="ล่าง" :severity="selectedSignNoteVerticalAlign === 'bottom' ? 'info' : 'secondary'" :outlined="selectedSignNoteVerticalAlign !== 'bottom'" size="small" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ verticalAlign: 'bottom' })" />
-                            </div>
-                        </div>
-                        <div class="runtime-note-style-row">
-                            <span>ระยะขอบ</span>
-                            <div class="runtime-note-style-controls">
-                                <Button icon="pi pi-minus" severity="secondary" outlined rounded size="small" aria-label="ลดระยะขอบข้อความ" :disabled="!canInteract || selectedSignNotePadding <= 1" @click="stepSelectedSignNotePadding(-1)" />
-                                <strong>{{ selectedSignNotePadding }} pt</strong>
-                                <Button icon="pi pi-plus" severity="secondary" outlined rounded size="small" aria-label="เพิ่มระยะขอบข้อความ" :disabled="!canInteract || selectedSignNotePadding >= 6" @click="stepSelectedSignNotePadding(1)" />
                             </div>
                         </div>
                     </div>
@@ -1290,7 +1271,7 @@ function newRequestKey() {
     border: 1px solid var(--surface-border);
     border-radius: 8px;
     padding: 0.7rem;
-    background: color-mix(in srgb, #f59e0b 5%, var(--surface-card));
+    background: var(--surface-card);
 }
 
 .runtime-note-list {
@@ -1312,11 +1293,11 @@ function newRequestKey() {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: 0.25rem;
-    padding: 0.3rem 0.35rem 0.3rem 0.55rem;
-    border: 1px solid color-mix(in srgb, #f59e0b 34%, var(--surface-border));
+    gap: 0.35rem;
+    padding: 0.38rem 0.4rem 0.38rem 0.62rem;
+    border: 1px solid var(--surface-border);
     border-radius: 7px;
-    background: var(--surface-card);
+    background: color-mix(in srgb, var(--surface-ground) 38%, var(--surface-card));
     color: var(--text-color);
     text-align: left;
 }
@@ -1342,13 +1323,13 @@ function newRequestKey() {
 }
 
 .runtime-note-item-main span {
-    color: #b45309;
+    color: var(--text-color-secondary);
     font-size: 0.78rem;
     font-weight: 700;
 }
 
 .runtime-note-item-main strong {
-    font-size: 0.88rem;
+    font-size: 0.9rem;
 }
 
 .runtime-note-item.empty strong {
@@ -1361,42 +1342,86 @@ function newRequestKey() {
     box-shadow: 0 0 0 2px color-mix(in srgb, #38bdf8 20%, transparent);
 }
 
-.runtime-note-style-panel {
+.runtime-note-delete-button {
+    opacity: 0.62;
+}
+
+.runtime-note-item:hover .runtime-note-delete-button,
+.runtime-note-item.selected .runtime-note-delete-button {
+    opacity: 1;
+}
+
+.runtime-note-format-bar {
     display: grid;
-    gap: 0.35rem;
-    padding-top: 0.15rem;
+    gap: 0.55rem;
+    padding: 0.58rem 0.62rem;
+    border: 1px solid color-mix(in srgb, #38bdf8 28%, var(--surface-border));
+    border-radius: 8px;
+    background: color-mix(in srgb, #38bdf8 6%, var(--surface-card));
 }
 
-.runtime-note-style-row {
-    display: grid;
-    grid-template-columns: 5.5rem minmax(0, 1fr);
-    align-items: center;
-    gap: 0.45rem;
-}
-
-.runtime-note-style-row > span {
-    color: var(--text-color-secondary);
-    font-size: 0.8rem;
-    font-weight: 700;
-}
-
-.runtime-note-style-controls {
+.runtime-note-format-header {
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 0.25rem;
+    justify-content: space-between;
+    gap: 0.65rem;
+    line-height: 1.2;
+}
+
+.runtime-note-format-header span {
+    color: var(--text-color-secondary);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.runtime-note-format-header strong {
+    min-width: 0;
+    overflow: hidden;
+    color: #0369a1;
+    font-size: 0.82rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.runtime-note-format-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.42rem;
     flex-wrap: wrap;
 }
 
-.runtime-note-style-controls strong {
-    min-width: 3.4rem;
+.runtime-note-format-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.24rem;
+    min-width: 0;
+}
+
+.runtime-note-format-group.font-group {
+    padding-right: 0.25rem;
+}
+
+.runtime-note-format-group strong {
+    min-width: 2.9rem;
     color: var(--text-color);
-    font-size: 0.84rem;
+    font-size: 0.83rem;
     text-align: center;
 }
 
-.runtime-note-style-controls.text-controls :deep(.p-button) {
-    padding-inline: 0.55rem;
+.runtime-note-format-group.text-controls :deep(.p-button) {
+    padding-inline: 0.52rem;
+}
+
+.runtime-note-format-group :deep(.p-button.p-button-sm) {
+    width: 2.05rem;
+    height: 2.05rem;
+}
+
+.runtime-note-format-group.text-controls :deep(.p-button.p-button-sm) {
+    width: auto;
+    min-width: 2.35rem;
+    height: 2.05rem;
 }
 
 .legal-check {

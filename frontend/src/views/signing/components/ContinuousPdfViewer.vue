@@ -396,7 +396,7 @@ function noteBoxStyle(box) {
 
 function noteBoxContentStyle(box) {
     const fontSize = clampNoteFontSize(box.fontSizePt) * zoom.value;
-    const padding = clampNotePadding(box.paddingPt) * zoom.value;
+    const padding = 2 * zoom.value;
     return {
         fontSize: `${fontSize}px`,
         padding: `${padding}px ${padding + 12}px ${padding}px ${padding}px`,
@@ -628,11 +628,6 @@ function clampNoteFontSize(value) {
     return clamp(numeric, 8, 18);
 }
 
-function clampNotePadding(value) {
-    const numeric = Number(value || 0);
-    if (!Number.isFinite(numeric) || numeric <= 0) return 2;
-    return clamp(numeric, 1, 6);
-}
 </script>
 
 <template>
