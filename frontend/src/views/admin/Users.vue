@@ -9,9 +9,14 @@ const toast = useToast();
 const users = ref([]);
 const loading = ref(false);
 const saving = ref(false);
+const syncLoading = ref(false);
+const syncSaving = ref(false);
+const syncDialogVisible = ref(false);
+const syncPreview = ref(null);
 const dialogVisible = ref(false);
 const editingUser = ref(null);
 const error = ref('');
+const syncError = ref('');
 const searchQuery = ref('');
 const form = ref(emptyForm());
 
@@ -28,6 +33,8 @@ const statusOptions = [
 
 const dialogTitle = computed(() => (editingUser.value ? 'แก้ไขผู้ใช้' : 'เพิ่มผู้ใช้'));
 const passwordHint = computed(() => (editingUser.value ? 'เว้นว่างไว้ถ้าไม่ต้องการเปลี่ยนรหัสผ่าน' : 'รหัสผ่านอย่างน้อย 6 ตัวอักษร'));
+const syncUsers = computed(() => syncPreview.value?.users || []);
+const canConfirmSync = computed(() => !!syncPreview.value && syncPreview.value.dryRun !== false && Number(syncPreview.value.toCreate || 0) > 0 && !syncSaving.value);
 const filteredUsers = computed(() => {
     const query = normalizeSearch(searchQuery.value);
     if (!query) return users.value;
@@ -59,6 +66,41 @@ async function loadUsers() {
         toast.add({ severity: 'error', summary: 'โหลดผู้ใช้ไม่สำเร็จ', detail: err.message, life: 3500 });
     } finally {
         loading.value = false;
+    }
+}
+
+async function openSyncDialog() {
+    syncLoading.value = true;
+    syncError.value = '';
+    try {
+        syncPreview.value = await api.syncSMLUsers({ dryRun: true });
+        syncDialogVisible.value = true;
+    } catch (err) {
+        syncError.value = err.message;
+        toast.add({ severity: 'error', summary: 'ตรวจผู้ใช้จาก SML ไม่สำเร็จ', detail: err.message, life: 4500 });
+    } finally {
+        syncLoading.value = false;
+    }
+}
+
+async function confirmSyncSMLUsers() {
+    if (!canConfirmSync.value) return;
+    syncSaving.value = true;
+    syncError.value = '';
+    try {
+        const result = await api.syncSMLUsers({ dryRun: false });
+        syncPreview.value = result;
+        if (Number(result.created || 0) > 0) {
+            toast.add({ severity: 'success', summary: 'Sync user จาก SML สำเร็จ', detail: `เพิ่มผู้ใช้ใหม่ ${result.created} คน`, life: 3500 });
+        } else {
+            toast.add({ severity: 'info', summary: 'ไม่มีผู้ใช้ใหม่จาก SML', life: 3000 });
+        }
+        await loadUsers();
+    } catch (err) {
+        syncError.value = err.message;
+        toast.add({ severity: 'error', summary: 'Sync จาก SML ไม่สำเร็จ', detail: err.message, life: 4500 });
+    } finally {
+        syncSaving.value = false;
     }
 }
 
@@ -155,6 +197,11 @@ function statusSeverity(status) {
     return status === 'active' ? 'success' : 'secondary';
 }
 
+function syncTenantLabel(result) {
+    if (!result) return '-';
+    return [result.dataCode, result.dataName].filter(Boolean).join(' · ') || result.tenant || '-';
+}
+
 function normalizeSearch(value) {
     return String(value || '').toLowerCase().trim();
 }
@@ -169,6 +216,7 @@ function normalizeSearch(value) {
             </div>
             <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
                 <InputText v-model="searchQuery" type="search" placeholder="ค้นหา user, ชื่อ, สิทธิ์" class="w-full sm:w-72" />
+                <Button label="Sync จาก SML" icon="pi pi-sync" severity="secondary" outlined :loading="syncLoading" @click="openSyncDialog" />
                 <Button label="เพิ่มผู้ใช้" icon="pi pi-plus" @click="openCreate" />
             </div>
         </div>
@@ -246,5 +294,65 @@ function normalizeSearch(value) {
                 <Button type="submit" label="บันทึกผู้ใช้" icon="pi pi-save" :loading="saving" />
             </div>
         </form>
+    </Dialog>
+
+    <Dialog v-model:visible="syncDialogVisible" modal header="Sync user จาก SML" :style="{ width: 'min(52rem, 94vw)' }">
+        <div class="flex flex-col gap-4">
+            <Message v-if="syncError" severity="error">{{ syncError }}</Message>
+            <Message v-if="syncPreview && !syncPreview.dryRun" severity="success" :closable="false"> Sync สำเร็จ เพิ่มผู้ใช้ใหม่ {{ syncPreview.created || 0 }} คน </Message>
+            <Message v-else-if="syncPreview && syncPreview.passwordNotSynced > 0" severity="warn" :closable="false">
+                มี {{ syncPreview.passwordNotSynced }} user ที่ไม่สามารถ sync รหัส local ได้ ระบบยังให้ login ผ่าน SML ได้ตามปกติ
+            </Message>
+
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div>
+                    <div class="text-sm text-muted-color">Database</div>
+                    <div class="font-semibold">{{ syncTenantLabel(syncPreview) }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-muted-color">มีสิทธิ์ทั้งหมด</div>
+                    <div class="font-semibold">{{ syncPreview?.totalAllowed ?? '-' }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-muted-color">มีใน PaperLess แล้ว</div>
+                    <div class="font-semibold">{{ syncPreview?.existing ?? '-' }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-muted-color">จะเพิ่ม</div>
+                    <div class="font-semibold text-primary">{{ syncPreview?.toCreate ?? '-' }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-muted-color">SML inactive</div>
+                    <div class="font-semibold">{{ syncPreview?.skippedInactive ?? '-' }}</div>
+                </div>
+            </div>
+
+            <DataTable :value="syncUsers" dataKey="username" responsiveLayout="scroll" :rows="8" paginator size="small">
+                <template #empty>
+                    <div class="py-5 text-center text-muted-color">ไม่มีผู้ใช้ใหม่จาก SML ที่ต้องเพิ่ม</div>
+                </template>
+                <Column field="displayName" header="ชื่อ">
+                    <template #body="{ data }">
+                        <div class="font-medium">{{ data.displayName }}</div>
+                        <div class="text-sm text-muted-color">@{{ data.username }}</div>
+                    </template>
+                </Column>
+                <Column field="username" header="Username" />
+                <Column header="ระดับ">
+                    <template #body>
+                        <Tag value="admin" severity="success" />
+                    </template>
+                </Column>
+                <Column header="รหัสผ่าน">
+                    <template #body="{ data }">
+                        <Tag :value="data.passwordSynced ? 'ตรงกับ SML' : 'ใช้ผ่าน SML เท่านั้น'" :severity="data.passwordSynced ? 'success' : 'warn'" />
+                    </template>
+                </Column>
+            </DataTable>
+        </div>
+        <template #footer>
+            <Button label="ปิด" icon="pi pi-times" text severity="secondary" :disabled="syncSaving" @click="syncDialogVisible = false" />
+            <Button label="ยืนยัน Sync" icon="pi pi-check" :loading="syncSaving" :disabled="!canConfirmSync" @click="confirmSyncSMLUsers" />
+        </template>
     </Dialog>
 </template>

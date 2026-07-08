@@ -34,6 +34,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.me)))
 	mux.Handle("POST /api/auth/logout", s.requireAuth(http.HandlerFunc(s.logout)))
 	mux.Handle("GET /api/users", s.requireSuperAdmin(http.HandlerFunc(s.listUsers)))
+	mux.Handle("POST /api/users/sync-sml", s.requireSuperAdmin(http.HandlerFunc(s.syncSMLUsers)))
 	mux.Handle("POST /api/users", s.requireSuperAdmin(http.HandlerFunc(s.createUser)))
 	mux.Handle("PUT /api/users/{id}", s.requireSuperAdmin(http.HandlerFunc(s.updateUser)))
 	mux.Handle("DELETE /api/users/{id}", s.requireSuperAdmin(http.HandlerFunc(s.deactivateUser)))

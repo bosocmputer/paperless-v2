@@ -114,6 +114,12 @@ export const api = {
     listUsers() {
         return request('/api/users');
     },
+    syncSMLUsers(payload = {}) {
+        return request('/api/users/sync-sml', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
     createUser(payload) {
         return request('/api/users', {
             method: 'POST',

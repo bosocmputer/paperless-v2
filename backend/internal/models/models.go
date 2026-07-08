@@ -28,6 +28,47 @@ type UpdateUserRequest struct {
 	Status      string `json:"status"`
 }
 
+type SyncSMLUsersRequest struct {
+	DryRun bool `json:"dryRun"`
+}
+
+type SMLUserSyncCandidate struct {
+	Username       string `json:"username"`
+	DisplayName    string `json:"displayName"`
+	PasswordHash   string `json:"-"`
+	PasswordSynced bool   `json:"passwordSynced"`
+}
+
+type SMLUserSyncInput struct {
+	Tenant     string
+	DryRun     bool
+	Candidates []SMLUserSyncCandidate
+}
+
+type SMLUserSyncResult struct {
+	Total             int                    `json:"total"`
+	Existing          int                    `json:"existing"`
+	ToCreate          int                    `json:"toCreate"`
+	Created           int                    `json:"created"`
+	PasswordNotSynced int                    `json:"passwordNotSynced"`
+	Users             []SMLUserSyncCandidate `json:"users,omitempty"`
+}
+
+type SMLUserSyncResponse struct {
+	DryRun            bool                   `json:"dryRun"`
+	Tenant            string                 `json:"tenant"`
+	DataCode          string                 `json:"dataCode"`
+	DataName          string                 `json:"dataName"`
+	TotalAllowed      int                    `json:"totalAllowed"`
+	Active            int                    `json:"active"`
+	Existing          int                    `json:"existing"`
+	ToCreate          int                    `json:"toCreate"`
+	Created           int                    `json:"created"`
+	SkippedInactive   int                    `json:"skippedInactive"`
+	PasswordNotSynced int                    `json:"passwordNotSynced"`
+	Users             []SMLUserSyncCandidate `json:"users,omitempty"`
+}
+
 type SeedUser struct {
 	DisplayName string
 	Username    string

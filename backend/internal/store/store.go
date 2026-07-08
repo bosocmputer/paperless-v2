@@ -73,6 +73,8 @@ var (
 	ErrExternalTokenNotFound          = errors.New("external signing token not found")
 	ErrExternalTokenInvalid           = errors.New("external signing token invalid")
 	ErrIdempotencyInProgress          = errors.New("idempotency key is already in progress")
+	ErrSMLUserSyncBatchTooLarge       = errors.New("SML user sync batch is too large")
+	ErrSMLUserPasswordHashMissing     = errors.New("SML user password hash is missing")
 )
 
 type IdempotencyClaim struct {
@@ -716,6 +718,137 @@ RETURNING id::text, display_name, username, password_hash, role, status, created
 		return models.User{}, err
 	}
 	return user, nil
+}
+
+func (s *Store) SyncSMLUsers(ctx context.Context, input models.SMLUserSyncInput) (models.SMLUserSyncResult, error) {
+	candidates := normalizeSMLUserSyncCandidates(input.Candidates)
+	if len(candidates) > 500 {
+		return models.SMLUserSyncResult{}, ErrSMLUserSyncBatchTooLarge
+	}
+
+	if input.DryRun {
+		existing, err := s.loadExistingUsernames(ctx, s.pool)
+		if err != nil {
+			return models.SMLUserSyncResult{}, err
+		}
+		return summarizeSMLUserSync(candidates, existing, false)
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return models.SMLUserSyncResult{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	lockKey := "paperless:sml-user-sync:" + NormalizeSMLTenant(input.Tenant)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, lockKey); err != nil {
+		return models.SMLUserSyncResult{}, err
+	}
+
+	existing, err := s.loadExistingUsernames(ctx, tx)
+	if err != nil {
+		return models.SMLUserSyncResult{}, err
+	}
+	result, err := summarizeSMLUserSync(candidates, existing, true)
+	if err != nil {
+		return models.SMLUserSyncResult{}, err
+	}
+
+	for _, candidate := range result.Users {
+		if strings.TrimSpace(candidate.PasswordHash) == "" {
+			return models.SMLUserSyncResult{}, ErrSMLUserPasswordHashMissing
+		}
+		displayName := strings.TrimSpace(candidate.DisplayName)
+		if displayName == "" {
+			displayName = candidate.Username
+		}
+		_, err := tx.Exec(ctx, `
+INSERT INTO users (display_name, username, password_hash, role, status)
+VALUES ($1, $2, $3, 'admin', 'active')
+`, displayName, candidate.Username, candidate.PasswordHash)
+		if err != nil {
+			if strings.Contains(err.Error(), "users_username_lower_idx") {
+				return models.SMLUserSyncResult{}, ErrUsernameTaken
+			}
+			return models.SMLUserSyncResult{}, err
+		}
+		result.Created++
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return models.SMLUserSyncResult{}, err
+	}
+	return result, nil
+}
+
+type usernameQuerier interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+func (s *Store) loadExistingUsernames(ctx context.Context, q usernameQuerier) (map[string]struct{}, error) {
+	rows, err := q.Query(ctx, `SELECT lower(trim(username)) FROM users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	existing := map[string]struct{}{}
+	for rows.Next() {
+		var username string
+		if err := rows.Scan(&username); err != nil {
+			return nil, err
+		}
+		username = strings.ToLower(strings.TrimSpace(username))
+		if username != "" {
+			existing[username] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return existing, nil
+}
+
+func normalizeSMLUserSyncCandidates(candidates []models.SMLUserSyncCandidate) []models.SMLUserSyncCandidate {
+	out := make([]models.SMLUserSyncCandidate, 0, len(candidates))
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		candidate.Username = strings.TrimSpace(candidate.Username)
+		candidate.DisplayName = strings.TrimSpace(candidate.DisplayName)
+		candidate.PasswordHash = strings.TrimSpace(candidate.PasswordHash)
+		if candidate.Username == "" {
+			continue
+		}
+		key := strings.ToLower(candidate.Username)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if candidate.DisplayName == "" {
+			candidate.DisplayName = candidate.Username
+		}
+		out = append(out, candidate)
+	}
+	return out
+}
+
+func summarizeSMLUserSync(candidates []models.SMLUserSyncCandidate, existing map[string]struct{}, requirePasswordHash bool) (models.SMLUserSyncResult, error) {
+	result := models.SMLUserSyncResult{Total: len(candidates)}
+	for _, candidate := range candidates {
+		if !candidate.PasswordSynced {
+			result.PasswordNotSynced++
+		}
+		if _, ok := existing[strings.ToLower(strings.TrimSpace(candidate.Username))]; ok {
+			result.Existing++
+			continue
+		}
+		if requirePasswordHash && strings.TrimSpace(candidate.PasswordHash) == "" {
+			return models.SMLUserSyncResult{}, ErrSMLUserPasswordHashMissing
+		}
+		result.ToCreate++
+		result.Users = append(result.Users, candidate)
+	}
+	return result, nil
 }
 
 func (s *Store) CountActiveAdmins(ctx context.Context) (int, error) {

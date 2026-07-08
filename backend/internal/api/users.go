@@ -1,16 +1,55 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
+	"github.com/bosocmputer/paperless-v2/backend/internal/auth"
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 	"github.com/bosocmputer/paperless-v2/backend/internal/store"
 )
+
+type smlUserSyncCandidatesRequest struct {
+	Provider     string `json:"provider"`
+	DataGroup    string `json:"dataGroup"`
+	DatabaseName string `json:"databaseName"`
+}
+
+type smlUserSyncCandidatesResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Provider  string `json:"provider"`
+		DataGroup string `json:"dataGroup"`
+		Database  struct {
+			DataCode     string `json:"dataCode"`
+			DataName     string `json:"dataName"`
+			DatabaseName string `json:"databaseName"`
+			Tenant       string `json:"tenant"`
+		} `json:"database"`
+		Users []struct {
+			UserCode       string `json:"userCode"`
+			UserName       string `json:"userName"`
+			PasswordHash   string `json:"passwordHash"`
+			PasswordSynced bool   `json:"passwordSynced"`
+		} `json:"users"`
+		Summary struct {
+			TotalAllowed      int `json:"totalAllowed"`
+			Active            int `json:"active"`
+			SkippedInactive   int `json:"skippedInactive"`
+			PasswordNotSynced int `json:"passwordNotSynced"`
+		} `json:"summary"`
+	} `json:"data"`
+	Error   *smlAPIError `json:"error"`
+	Message string       `json:"message"`
+}
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := s.store.ListUsers(r.Context())
@@ -20,6 +59,102 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": users})
+}
+
+func (s *Server) syncSMLUsers(w http.ResponseWriter, r *http.Request) {
+	var req models.SyncSMLUsersRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
+			return
+		}
+	}
+
+	actor, _ := currentUser(r)
+	session, ok := currentSession(r)
+	if !ok || strings.TrimSpace(session.SMLTenant) == "" {
+		writeError(w, http.StatusBadRequest, "missing_sml_session", "Please login with an SML database before syncing users.")
+		return
+	}
+
+	start := time.Now()
+	candidates, summary, syncDatabase, err := s.fetchSMLUserSyncCandidates(r.Context(), session)
+	if errors.Is(err, errSMLConfigMissing) {
+		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML PaperLess API is not configured.")
+		return
+	}
+	if err != nil {
+		s.logger.Warn("SML user sync candidates failed", "error", err, "tenant", session.SMLTenant, "actor", actor.Username)
+		writeError(w, http.StatusBadGateway, "sml_user_sync_failed", "Cannot load users from SML right now.")
+		return
+	}
+
+	if !req.DryRun {
+		for i := range candidates {
+			if strings.TrimSpace(candidates[i].PasswordHash) != "" {
+				continue
+			}
+			hash, err := auth.HashPassword(randomLocalPassword())
+			if err != nil {
+				s.logger.Error("hash fallback SML sync password failed", "error", err, "tenant", session.SMLTenant)
+				writeError(w, http.StatusInternalServerError, "sml_user_sync_failed", "Cannot prepare synced user passwords right now.")
+				return
+			}
+			candidates[i].PasswordHash = hash
+		}
+	}
+
+	result, err := s.store.SyncSMLUsers(r.Context(), models.SMLUserSyncInput{
+		Tenant:     session.SMLTenant,
+		DryRun:     req.DryRun,
+		Candidates: candidates,
+	})
+	if errors.Is(err, store.ErrSMLUserSyncBatchTooLarge) {
+		writeError(w, http.StatusBadRequest, "sml_user_sync_too_large", "Too many SML users to sync at once.")
+		return
+	}
+	if errors.Is(err, store.ErrSMLUserPasswordHashMissing) {
+		writeError(w, http.StatusBadGateway, "sml_user_password_not_ready", "Cannot prepare SML user passwords for sync.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("sync SML users failed", "error", err, "tenant", session.SMLTenant)
+		writeError(w, http.StatusInternalServerError, "sml_user_sync_failed", "Cannot sync SML users right now.")
+		return
+	}
+
+	response := models.SMLUserSyncResponse{
+		DryRun:            req.DryRun,
+		Tenant:            syncDatabase.Tenant,
+		DataCode:          syncDatabase.DataCode,
+		DataName:          syncDatabase.DataName,
+		TotalAllowed:      summary.TotalAllowed,
+		Active:            summary.Active,
+		Existing:          result.Existing,
+		ToCreate:          result.ToCreate,
+		Created:           result.Created,
+		SkippedInactive:   summary.SkippedInactive,
+		PasswordNotSynced: result.PasswordNotSynced,
+		Users:             result.Users,
+	}
+
+	if !req.DryRun {
+		if err := s.store.WriteAuditWithMetadata(r.Context(), actor.ID, "user.sml_sync", "tenant", syncDatabase.Tenant, clientIP(r), r.UserAgent(), map[string]any{
+			"tenant":            syncDatabase.Tenant,
+			"dataCode":          syncDatabase.DataCode,
+			"totalAllowed":      response.TotalAllowed,
+			"active":            response.Active,
+			"existing":          response.Existing,
+			"created":           response.Created,
+			"skippedInactive":   response.SkippedInactive,
+			"passwordNotSynced": response.PasswordNotSynced,
+			"elapsedMs":         time.Since(start).Milliseconds(),
+		}); err != nil {
+			s.logger.Warn("write SML user sync audit failed", "error", err, "tenant", syncDatabase.Tenant)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +186,111 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{"user": user})
+}
+
+func (s *Server) fetchSMLUserSyncCandidates(ctx context.Context, session models.AuthSession) ([]models.SMLUserSyncCandidate, struct {
+	TotalAllowed      int
+	Active            int
+	SkippedInactive   int
+	PasswordNotSynced int
+}, struct {
+	DataCode string
+	DataName string
+	Tenant   string
+}, error) {
+	var emptySummary struct {
+		TotalAllowed      int
+		Active            int
+		SkippedInactive   int
+		PasswordNotSynced int
+	}
+	var emptyDatabase struct {
+		DataCode string
+		DataName string
+		Tenant   string
+	}
+	if strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) == "" || strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) == "" {
+		return nil, emptySummary, emptyDatabase, errSMLConfigMissing
+	}
+	endpoint, err := url.Parse(s.cfg.SMLPaperlessBaseURL + "/api/v1/auth/sml/users/sync-candidates")
+	if err != nil {
+		return nil, emptySummary, emptyDatabase, fmt.Errorf("invalid SML base URL")
+	}
+	databaseName := strings.TrimSpace(session.SMLDataCode)
+	if databaseName == "" {
+		databaseName = session.SMLTenant
+	}
+	body, err := json.Marshal(smlUserSyncCandidatesRequest{
+		Provider:     firstNonEmpty(session.SMLProvider, s.cfg.SMLAuthProvider),
+		DataGroup:    firstNonEmpty(session.SMLDataGroup, s.cfg.SMLAuthDataGroup),
+		DatabaseName: databaseName,
+	})
+	if err != nil {
+		return nil, emptySummary, emptyDatabase, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, emptySummary, emptyDatabase, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, emptySummary, emptyDatabase, err
+	}
+	defer resp.Body.Close()
+
+	var payload smlUserSyncCandidatesResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload); err != nil {
+		return nil, emptySummary, emptyDatabase, fmt.Errorf("cannot parse SML user sync response")
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, emptySummary, emptyDatabase, newSMLRequestError(payload.Error, payload.Message, resp.Status)
+	}
+	if !payload.Success {
+		return nil, emptySummary, emptyDatabase, newSMLRequestError(payload.Error, payload.Message, "SML user sync failed")
+	}
+
+	candidates := make([]models.SMLUserSyncCandidate, 0, len(payload.Data.Users))
+	for _, item := range payload.Data.Users {
+		username := strings.TrimSpace(item.UserCode)
+		if username == "" {
+			continue
+		}
+		displayName := strings.TrimSpace(item.UserName)
+		if displayName == "" {
+			displayName = username
+		}
+		candidates = append(candidates, models.SMLUserSyncCandidate{
+			Username:       username,
+			DisplayName:    displayName,
+			PasswordHash:   strings.TrimSpace(item.PasswordHash),
+			PasswordSynced: item.PasswordSynced,
+		})
+	}
+	summary := struct {
+		TotalAllowed      int
+		Active            int
+		SkippedInactive   int
+		PasswordNotSynced int
+	}{
+		TotalAllowed:      payload.Data.Summary.TotalAllowed,
+		Active:            payload.Data.Summary.Active,
+		SkippedInactive:   payload.Data.Summary.SkippedInactive,
+		PasswordNotSynced: payload.Data.Summary.PasswordNotSynced,
+	}
+	database := struct {
+		DataCode string
+		DataName string
+		Tenant   string
+	}{
+		DataCode: strings.TrimSpace(payload.Data.Database.DataCode),
+		DataName: strings.TrimSpace(payload.Data.Database.DataName),
+		Tenant:   store.NormalizeSMLTenant(firstNonEmpty(payload.Data.Database.Tenant, payload.Data.Database.DatabaseName, session.SMLTenant)),
+	}
+	return candidates, summary, database, nil
 }
 
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
