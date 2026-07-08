@@ -54,6 +54,7 @@ const hasSignature = ref(false);
 const legalAccepted = ref(false);
 const signNoteBoxes = ref([]);
 const selectedSignNoteBoxKey = ref('');
+const editingSignNoteBoxKey = ref('');
 const rejectVisible = ref(false);
 const rejectReason = ref('');
 const localSaving = ref(false);
@@ -112,7 +113,6 @@ const attachmentCount = computed(() => props.attachments?.length || 0);
 const showReadonlyAttachments = computed(() => !props.externalSignOnly && !canInteract.value && (attachmentCount.value > 0 || props.attachmentsLoading || props.attachmentsError));
 const signatureTitle = computed(() => ['ลายเซ็น', props.task?.positionName].filter(Boolean).join(' · '));
 const signerLine = computed(() => props.identityLabel || props.task?.signerName || props.task?.signerUser || '-');
-const selectedSignNoteBox = computed(() => signNoteBoxes.value.find((box) => box.clientKey === selectedSignNoteBoxKey.value) || null);
 const historySummary = computed(() => {
     const label = props.task?.positionName ? `ตำแหน่ง ${props.task.positionName}` : 'รายการเซ็นของคุณ';
     if (taskStatus.value === 'rejected') return `${label} · คุณปฏิเสธเอกสารนี้แล้ว`;
@@ -204,6 +204,7 @@ watch(
                 pdfDialogVisible.value = false;
                 signNoteBoxes.value = [];
                 selectedSignNoteBoxKey.value = '';
+                editingSignNoteBoxKey.value = '';
             }
         }
     },
@@ -329,11 +330,27 @@ function addSignNoteBox() {
     };
     signNoteBoxes.value = [...signNoteBoxes.value, box];
     selectedSignNoteBoxKey.value = box.clientKey;
+    editingSignNoteBoxKey.value = box.clientKey;
     recordEvent('sign_note_box_add', { signNoteBoxCount: signNoteBoxes.value.length });
 }
 
 function selectSignNoteBox(key) {
     selectedSignNoteBoxKey.value = key || '';
+    if (!key || !signNoteBoxes.value.some((box) => box.clientKey === key)) editingSignNoteBoxKey.value = '';
+}
+
+async function editSignNoteBox(key) {
+    if (!key) {
+        editingSignNoteBoxKey.value = '';
+        return;
+    }
+    selectedSignNoteBoxKey.value = key;
+    if (!canInteract.value) return;
+    if (editingSignNoteBoxKey.value === key) {
+        editingSignNoteBoxKey.value = '';
+        await nextTick();
+    }
+    editingSignNoteBoxKey.value = key;
 }
 
 function updateSignNoteBoxes(next) {
@@ -344,17 +361,15 @@ function updateSignNoteBoxes(next) {
     if (selectedSignNoteBoxKey.value && !signNoteBoxes.value.some((box) => box.clientKey === selectedSignNoteBoxKey.value)) {
         selectedSignNoteBoxKey.value = signNoteBoxes.value[0]?.clientKey || '';
     }
-}
-
-function updateSelectedSignNoteText(value) {
-    const key = selectedSignNoteBoxKey.value;
-    if (!key) return;
-    updateSignNoteBoxes(signNoteBoxes.value.map((box) => (box.clientKey === key ? { ...box, text: String(value || '').slice(0, 500) } : box)));
+    if (editingSignNoteBoxKey.value && !signNoteBoxes.value.some((box) => box.clientKey === editingSignNoteBoxKey.value)) {
+        editingSignNoteBoxKey.value = '';
+    }
 }
 
 function deleteSelectedSignNoteBox(key = selectedSignNoteBoxKey.value) {
     if (!key) return;
     updateSignNoteBoxes(signNoteBoxes.value.filter((box) => box.clientKey !== key));
+    if (editingSignNoteBoxKey.value === key) editingSignNoteBoxKey.value = '';
     recordEvent('sign_note_box_delete', { signNoteBoxCount: signNoteBoxes.value.length });
 }
 
@@ -564,6 +579,7 @@ function newRequestKey() {
                     :allow-open-full="allowFullPDF"
                     v-model:noteBoxes="signNoteBoxes"
                     :selected-note-box-key="selectedSignNoteBoxKey"
+                    :editing-note-box-key="editingSignNoteBoxKey"
                     :editable-note-boxes="canInteract"
                     toolbar-label="PDF"
                     @open-full="openFullPDF"
@@ -571,6 +587,7 @@ function newRequestKey() {
                     @load-error="onPdfLoadError"
                     @page-change="onPdfPageChange"
                     @note-box-select="selectSignNoteBox"
+                    @note-box-edit="editSignNoteBox"
                 />
             </section>
 
@@ -643,30 +660,33 @@ function newRequestKey() {
                     <div class="section-heading">
                         <div class="signature-heading-text">
                             <strong>หมายเหตุบน PDF</strong>
-                            <small>{{ signNoteBoxes.length ? `${signNoteBoxes.length} กล่อง` : 'เพิ่มเมื่อผู้เซ็นต้องการใส่หมายเหตุ' }}</small>
+                            <small>{{ signNoteBoxes.length ? `${signNoteBoxes.length} กล่อง` : 'เพิ่มแล้วพิมพ์ในกรอบบน PDF' }}</small>
                         </div>
                         <Button label="เพิ่มกล่อง" icon="pi pi-comment" severity="secondary" outlined size="small" :disabled="!canInteract || !pdfReady" @click="addSignNoteBox" />
                     </div>
                     <Message v-if="incompleteSignNoteBoxes.length" severity="warn" class="compact-status">มีกล่องหมายเหตุที่ยังไม่ได้กรอกข้อความ</Message>
+                    <small v-else class="runtime-note-help">พิมพ์ข้อความในกล่องบน PDF โดยตรง ลากกล่องจากไอคอนลูกศร และปรับขนาดจากมุมกล่อง</small>
                     <div v-if="signNoteBoxes.length" class="runtime-note-list">
-                        <button
+                        <div
                             v-for="(box, index) in signNoteBoxes"
                             :key="box.clientKey"
-                            type="button"
                             class="runtime-note-item"
                             :class="{ selected: box.clientKey === selectedSignNoteBoxKey, empty: !String(box.text || '').trim() }"
-                            @click="selectSignNoteBox(box.clientKey)"
                         >
-                            <span>หน้า {{ box.pageNo }} · กล่อง {{ index + 1 }}</span>
-                            <strong>{{ box.text || 'ยังไม่ได้กรอกข้อความ' }}</strong>
-                        </button>
-                    </div>
-                    <div v-if="selectedSignNoteBox" class="runtime-note-editor">
-                        <label for="runtimeSignNote">ข้อความในกล่องที่เลือก</label>
-                        <Textarea id="runtimeSignNote" :modelValue="selectedSignNoteBox.text" rows="3" autoResize :maxlength="500" :disabled="!canInteract" placeholder="พิมพ์หมายเหตุที่จะลงบน PDF" @update:modelValue="updateSelectedSignNoteText" />
-                        <div class="runtime-note-editor-actions">
-                            <small>{{ String(selectedSignNoteBox.text || '').length }}/500 ตัวอักษร</small>
-                            <Button label="ลบกล่อง" icon="pi pi-trash" severity="danger" text size="small" :disabled="!canInteract" @click="deleteSelectedSignNoteBox()" />
+                            <button type="button" class="runtime-note-item-main" @click="editSignNoteBox(box.clientKey)">
+                                <span>หน้า {{ box.pageNo }} · กล่อง {{ index + 1 }}</span>
+                                <strong>{{ box.text || 'คลิกเพื่อพิมพ์ในกล่องบน PDF' }}</strong>
+                            </button>
+                            <Button
+                                v-if="canInteract"
+                                icon="pi pi-trash"
+                                severity="danger"
+                                text
+                                rounded
+                                size="small"
+                                aria-label="ลบกล่องหมายเหตุ"
+                                @click.stop="deleteSelectedSignNoteBox(box.clientKey)"
+                            />
                         </div>
                     </div>
                 </div>
@@ -1188,35 +1208,53 @@ function newRequestKey() {
     padding-right: 0.1rem;
 }
 
+.runtime-note-help {
+    color: var(--text-color-secondary);
+    line-height: 1.35;
+}
+
 .runtime-note-item {
     width: 100%;
     min-width: 0;
     display: grid;
-    gap: 0.1rem;
-    padding: 0.45rem 0.55rem;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.3rem 0.35rem 0.3rem 0.55rem;
     border: 1px solid color-mix(in srgb, #f59e0b 34%, var(--surface-border));
     border-radius: 7px;
     background: var(--surface-card);
     color: var(--text-color);
     text-align: left;
+}
+
+.runtime-note-item-main {
+    min-width: 0;
+    display: grid;
+    gap: 0.1rem;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
     cursor: pointer;
 }
 
-.runtime-note-item span,
-.runtime-note-item strong {
+.runtime-note-item-main span,
+.runtime-note-item-main strong {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.runtime-note-item span {
+.runtime-note-item-main span {
     color: #b45309;
     font-size: 0.78rem;
     font-weight: 700;
 }
 
-.runtime-note-item strong {
+.runtime-note-item-main strong {
     font-size: 0.88rem;
 }
 
@@ -1228,26 +1266,6 @@ function newRequestKey() {
     border-color: #0284c7;
     background: color-mix(in srgb, #38bdf8 9%, var(--surface-card));
     box-shadow: 0 0 0 2px color-mix(in srgb, #38bdf8 20%, transparent);
-}
-
-.runtime-note-editor {
-    display: grid;
-    gap: 0.4rem;
-}
-
-.runtime-note-editor label {
-    font-weight: 700;
-}
-
-.runtime-note-editor-actions {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-}
-
-.runtime-note-editor-actions small {
-    color: var(--text-color-secondary);
 }
 
 .legal-check {

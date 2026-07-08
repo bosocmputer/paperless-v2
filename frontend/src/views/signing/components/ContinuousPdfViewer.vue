@@ -18,10 +18,11 @@ const props = defineProps({
     },
     noteBoxes: { type: Array, default: () => [] },
     selectedNoteBoxKey: { type: String, default: '' },
+    editingNoteBoxKey: { type: String, default: '' },
     editableNoteBoxes: { type: Boolean, default: false }
 });
 
-const emit = defineEmits(['load-success', 'load-error', 'page-change', 'open-full', 'update:noteBoxes', 'note-box-select']);
+const emit = defineEmits(['load-success', 'load-error', 'page-change', 'open-full', 'update:noteBoxes', 'note-box-select', 'note-box-edit']);
 
 const viewerRef = ref(null);
 const pdfDoc = shallowRef(null);
@@ -53,6 +54,9 @@ const queuedPages = new Set();
 const visiblePages = new Set();
 const activePageRenders = new Map();
 let noteDragState = null;
+let noteDragFrame = 0;
+let pendingNotePatch = null;
+const noteEditorRefs = new Map();
 
 watch(
     () => props.url,
@@ -81,8 +85,16 @@ watch(currentPage, (value) => {
     emit('page-change', value);
 });
 
+watch(
+    () => props.editingNoteBoxKey,
+    () => {
+        void focusEditingNoteBox();
+    }
+);
+
 onBeforeUnmount(() => {
     removeNotePointerListeners();
+    if (noteDragFrame) window.cancelAnimationFrame(noteDragFrame);
     cleanupPDF();
 });
 
@@ -386,6 +398,38 @@ function selectNoteBox(box) {
     emit('note-box-select', box?.clientKey || '');
 }
 
+function editNoteBox(box) {
+    const key = box?.clientKey || '';
+    emit('note-box-select', key);
+    if (props.editableNoteBoxes && key) emit('note-box-edit', key);
+}
+
+function stopEditingNoteBox(key = '') {
+    if (!key || props.editingNoteBoxKey === key) emit('note-box-edit', '');
+}
+
+function setNoteEditor(key, element) {
+    if (!key) return;
+    if (element) noteEditorRefs.set(key, element);
+    else noteEditorRefs.delete(key);
+}
+
+async function focusEditingNoteBox() {
+    const key = props.editingNoteBoxKey;
+    if (!key) return;
+    await nextTick();
+    const editor = noteEditorRefs.get(key);
+    if (!editor) return;
+    editor.focus({ preventScroll: true });
+    const length = editor.value?.length || 0;
+    try {
+        editor.setSelectionRange(length, length);
+    } catch {
+        // Some mobile browsers can reject selection changes during focus.
+    }
+    editor.closest('.pdf-page-shell')?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+}
+
 function deleteNoteBox(box) {
     if (!props.editableNoteBoxes) return;
     const key = box?.clientKey || '';
@@ -394,10 +438,11 @@ function deleteNoteBox(box) {
         (props.noteBoxes || []).filter((item) => item.clientKey !== key)
     );
     if (props.selectedNoteBoxKey === key) emit('note-box-select', '');
+    if (props.editingNoteBoxKey === key) emit('note-box-edit', '');
 }
 
 function startNotePointer(event, box, mode = 'move') {
-    if (!props.editableNoteBoxes || !box?.clientKey) return;
+    if (!props.editableNoteBoxes || !box?.clientKey || props.editingNoteBoxKey === box.clientKey) return;
     event.preventDefault();
     event.stopPropagation();
     selectNoteBox(box);
@@ -440,10 +485,11 @@ function moveNotePointer(event) {
         patch.xRatio = clamp(start.xRatio + dx, 0, 1 - start.widthRatio);
         patch.yRatio = clamp(start.yRatio + dy, 0, 1 - start.heightRatio);
     }
-    updateNoteBox(noteDragState.key, patch);
+    queueNoteBoxUpdate(noteDragState.key, patch);
 }
 
 function endNotePointer() {
+    flushNoteBoxUpdate();
     removeNotePointerListeners();
     noteDragState = null;
 }
@@ -459,6 +505,40 @@ function updateNoteBox(key, patch) {
         'update:noteBoxes',
         (props.noteBoxes || []).map((box) => (box.clientKey === key ? { ...box, ...patch } : box))
     );
+}
+
+function queueNoteBoxUpdate(key, patch) {
+    pendingNotePatch = { key, patch };
+    if (noteDragFrame) return;
+    noteDragFrame = window.requestAnimationFrame(() => {
+        noteDragFrame = 0;
+        flushNoteBoxUpdate();
+    });
+}
+
+function flushNoteBoxUpdate() {
+    if (noteDragFrame) {
+        window.cancelAnimationFrame(noteDragFrame);
+        noteDragFrame = 0;
+    }
+    if (!pendingNotePatch) return;
+    const next = pendingNotePatch;
+    pendingNotePatch = null;
+    updateNoteBox(next.key, next.patch);
+}
+
+function updateNoteBoxText(key, value) {
+    if (!props.editableNoteBoxes || !key) return;
+    updateNoteBox(key, { text: String(value || '').slice(0, 500) });
+}
+
+function handleNoteKeydown(event, box) {
+    if (event.isComposing) return;
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        event.currentTarget?.blur?.();
+        stopEditingNoteBox(box?.clientKey || '');
+    }
 }
 
 function retryLoad() {
@@ -560,20 +640,39 @@ function clampRatio(value) {
                 >
                     <div class="page-number">หน้า {{ index + 1 }}</div>
                     <canvas :ref="(element) => setPageCanvas(index + 1, element)" class="pdf-canvas" aria-label="PDF preview"></canvas>
-                    <button
+                    <div
                         v-for="box in noteBoxesForPage(index + 1)"
                         :key="box.clientKey"
-                        type="button"
+                        role="group"
                         class="runtime-note-box"
-                        :class="{ selected: box.clientKey === selectedNoteBoxKey, editable: editableNoteBoxes, empty: !String(box.text || '').trim() }"
+                        :class="{ selected: box.clientKey === selectedNoteBoxKey, editing: box.clientKey === editingNoteBoxKey, editable: editableNoteBoxes, empty: !String(box.text || '').trim() }"
                         :style="noteBoxStyle(box)"
-                        @click.stop="selectNoteBox(box)"
-                        @pointerdown.stop="startNotePointer($event, box, 'move')"
                     >
-                        <span>{{ box.text || 'พิมพ์หมายเหตุ' }}</span>
-                        <i v-if="editableNoteBoxes" class="pi pi-trash" aria-label="ลบกล่องหมายเหตุ" @pointerdown.stop @click.stop="deleteNoteBox(box)"></i>
-                        <b v-if="editableNoteBoxes" @pointerdown.stop="startNotePointer($event, box, 'resize')"></b>
-                    </button>
+                        <button v-if="editableNoteBoxes && box.clientKey !== editingNoteBoxKey" type="button" class="runtime-note-move" aria-label="ลากกล่องหมายเหตุ" @pointerdown.stop="startNotePointer($event, box, 'move')">
+                            <i class="pi pi-arrows-alt" aria-hidden="true"></i>
+                        </button>
+                        <textarea
+                            v-if="editableNoteBoxes && box.clientKey === editingNoteBoxKey"
+                            :ref="(element) => setNoteEditor(box.clientKey, element)"
+                            :value="box.text || ''"
+                            class="runtime-note-editor"
+                            maxlength="500"
+                            placeholder="พิมพ์หมายเหตุ"
+                            aria-label="ข้อความหมายเหตุบน PDF"
+                            @input="updateNoteBoxText(box.clientKey, $event.target.value)"
+                            @keydown="handleNoteKeydown($event, box)"
+                            @blur="stopEditingNoteBox(box.clientKey)"
+                            @pointerdown.stop
+                            @click.stop
+                        ></textarea>
+                        <button v-else type="button" class="runtime-note-text" @click.stop="editNoteBox(box)" @pointerdown.stop>
+                            <span>{{ box.text || 'พิมพ์หมายเหตุ' }}</span>
+                        </button>
+                        <button v-if="editableNoteBoxes" type="button" class="runtime-note-delete" aria-label="ลบกล่องหมายเหตุ" @pointerdown.stop @click.stop="deleteNoteBox(box)">
+                            <i class="pi pi-trash" aria-hidden="true"></i>
+                        </button>
+                        <button v-if="editableNoteBoxes && box.clientKey !== editingNoteBoxKey" type="button" class="runtime-note-resize" aria-label="ปรับขนาดกล่องหมายเหตุ" @pointerdown.stop="startNotePointer($event, box, 'resize')"></button>
+                    </div>
                     <div v-if="!renderedPages.has(index + 1)" class="page-placeholder">
                         <i v-if="renderingPages.has(index + 1)" class="pi pi-spin pi-spinner"></i>
                     </div>
@@ -697,36 +796,63 @@ function clampRatio(value) {
 .runtime-note-box {
     position: absolute;
     z-index: 3;
-    display: flex;
-    align-items: flex-start;
-    justify-content: flex-start;
     min-width: 0;
     min-height: 0;
-    padding: 0.18rem 0.28rem;
     border: 1.5px solid color-mix(in srgb, #f59e0b 72%, var(--surface-border));
     border-radius: 4px;
     background: color-mix(in srgb, #f59e0b 12%, transparent);
     color: #78350f;
     line-height: 1.2;
     text-align: left;
-    overflow: hidden;
-    cursor: pointer;
+    overflow: visible;
     user-select: none;
 }
 
-.runtime-note-box span {
+.runtime-note-text,
+.runtime-note-editor {
+    width: 100%;
+    height: 100%;
     min-width: 0;
-    flex: 1;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: inherit;
+    line-height: 1.2;
+    text-align: left;
+    font: inherit;
+    font-size: clamp(0.58rem, 1.45vw, 0.82rem);
+    font-weight: 700;
+}
+
+.runtime-note-text {
+    display: block;
+    padding: 0.18rem 1.35rem 0.18rem 0.28rem;
     overflow: hidden;
+    cursor: text;
+}
+
+.runtime-note-text span {
+    overflow: hidden;
+    overflow-wrap: anywhere;
     display: -webkit-box;
     -webkit-line-clamp: 4;
     -webkit-box-orient: vertical;
-    font-size: clamp(0.58rem, 1.45vw, 0.82rem);
-    font-weight: 700;
-    overflow-wrap: anywhere;
 }
 
 .runtime-note-box.empty span {
+    color: color-mix(in srgb, #92400e 64%, white);
+}
+
+.runtime-note-editor {
+    display: block;
+    padding: 0.2rem 1.35rem 0.2rem 0.35rem;
+    outline: 0;
+    resize: none;
+    overflow: auto;
+    user-select: text;
+}
+
+.runtime-note-editor::placeholder {
     color: color-mix(in srgb, #92400e 64%, white);
 }
 
@@ -736,19 +862,49 @@ function clampRatio(value) {
     box-shadow: 0 0 0 2px color-mix(in srgb, #38bdf8 38%, transparent);
 }
 
-.runtime-note-box.editable {
-    cursor: move;
+.runtime-note-box.editing {
+    border-color: #0369a1;
+    background: color-mix(in srgb, #38bdf8 12%, white);
 }
 
-.runtime-note-box i {
-    flex: 0 0 auto;
-    margin-left: 0.25rem;
-    line-height: 1;
-    color: #b45309;
-}
-
-.runtime-note-box b {
+.runtime-note-move,
+.runtime-note-delete,
+.runtime-note-resize {
     position: absolute;
+    display: grid;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--surface-border) 70%, white);
+    background: color-mix(in srgb, var(--surface-card) 94%, transparent);
+    color: #b45309;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14);
+    touch-action: none;
+}
+
+.runtime-note-move,
+.runtime-note-delete {
+    top: -0.55rem;
+    width: 1.35rem;
+    height: 1.35rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+}
+
+.runtime-note-move {
+    left: -0.55rem;
+    cursor: grab;
+}
+
+.runtime-note-move:active {
+    cursor: grabbing;
+}
+
+.runtime-note-delete {
+    right: -0.55rem;
+    color: #b91c1c;
+    cursor: pointer;
+}
+
+.runtime-note-resize {
     right: -5px;
     bottom: -5px;
     width: 12px;
@@ -757,6 +913,26 @@ function clampRatio(value) {
     border: 2px solid white;
     background: #0284c7;
     cursor: nwse-resize;
+}
+
+@media (max-width: 640px) {
+    .runtime-note-text,
+    .runtime-note-editor {
+        font-size: 1rem;
+    }
+
+    .runtime-note-move,
+    .runtime-note-delete {
+        width: 1.6rem;
+        height: 1.6rem;
+    }
+
+    .runtime-note-resize {
+        right: -7px;
+        bottom: -7px;
+        width: 16px;
+        height: 16px;
+    }
 }
 
 .empty-pdf {
