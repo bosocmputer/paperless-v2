@@ -690,8 +690,8 @@ function newRequestKey() {
             :document="document"
             :loader="relatedLoader"
             :record-event="recordEvent"
-            :admin="false"
-            :open-pdf-on-select="false"
+            :admin="adminWorkspace"
+            :open-pdf-on-select="adminWorkspace"
         />
 
         <Dialog
@@ -704,7 +704,7 @@ function newRequestKey() {
             :header="referenceDialogTitle"
         >
             <div class="reference-dialog-layout">
-                <DocumentReferenceCheck v-if="referenceDialogVisible" compact dialog-mode display-mode="flow" :document="document" :loader="referenceCheckLoader" :allow-preview="false" />
+                <DocumentReferenceCheck v-if="referenceDialogVisible" compact dialog-mode display-mode="flow" :document="document" :loader="referenceCheckLoader" :allow-preview="adminWorkspace" />
             </div>
         </Dialog>
     </section>

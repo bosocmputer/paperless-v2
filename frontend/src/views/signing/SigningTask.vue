@@ -130,10 +130,16 @@ function recordEvent(payload) {
 }
 
 function loadRelatedDocuments() {
+    if (isAdminSignerWorkspace.value && document.value?.id) {
+        return api.getSigningDocumentRelatedDocuments(document.value.id);
+    }
     return api.getMySigningTaskRelatedDocuments(route.params.taskId);
 }
 
 function loadReferenceCheck() {
+    if (isAdminSignerWorkspace.value && document.value?.id) {
+        return api.getSigningDocumentReferenceCheck(document.value.id);
+    }
     return api.getMySigningTaskReferenceCheck(route.params.taskId);
 }
 
