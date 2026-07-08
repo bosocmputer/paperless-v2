@@ -71,7 +71,6 @@ function fileName(attachment) {
 function fileMeta(attachment) {
     const file = attachment?.file || {};
     const parts = [];
-    if (file.contentType) parts.push(file.contentType);
     if (file.sizeBytes) parts.push(formatBytes(file.sizeBytes));
     if (file.pageCount) parts.push(`${file.pageCount} หน้า`);
     return parts.join(' · ') || '-';
@@ -81,6 +80,14 @@ function signerMeta(attachment) {
     const parts = [];
     if (attachment?.positionName) parts.push(attachment.positionName);
     if (attachment?.signerName) parts.push(attachment.signerName);
+    return parts.join(' · ');
+}
+
+function attachmentContext(attachment) {
+    const parts = [];
+    if (attachment?.requirementLabel) parts.push(`บังคับ: ${attachment.requirementLabel}`);
+    if (signerMeta(attachment)) parts.push(signerMeta(attachment));
+    if (formatDate(attachment.createdAt)) parts.push(formatDate(attachment.createdAt));
     return parts.join(' · ');
 }
 
@@ -180,10 +187,9 @@ function revokeImageUrl() {
                     <i class="pi pi-paperclip"></i>
                     <span>{{ title }}</span>
                 </div>
-                <small v-if="attachmentCount" class="text-muted-color">ดูได้เฉพาะผู้เกี่ยวข้องภายในเอกสาร</small>
             </div>
             <div class="attachments-actions">
-                <Tag :value="`${attachmentCount} ไฟล์`" :severity="attachmentCount ? 'info' : 'secondary'" />
+                <Tag class="attachment-count-tag" :value="`${attachmentCount} ไฟล์`" :severity="attachmentCount ? 'info' : 'secondary'" />
                 <Button v-if="onReload" icon="pi pi-refresh" severity="secondary" text rounded aria-label="โหลดไฟล์แนบใหม่" :loading="loading" @click="onReload" />
             </div>
         </div>
@@ -216,13 +222,11 @@ function revokeImageUrl() {
                     <div class="attachment-copy">
                         <strong>{{ fileName(attachment) }}</strong>
                         <span>{{ fileMeta(attachment) }}</span>
-                        <small v-if="attachment.requirementLabel">เอกสารบังคับ: {{ attachment.requirementLabel }}</small>
-                        <small v-if="signerMeta(attachment)">แนบโดย {{ signerMeta(attachment) }}</small>
+                        <small v-if="attachmentContext(attachment)">{{ attachmentContext(attachment) }}</small>
                         <small v-if="attachment.note">หมายเหตุ: {{ attachment.note }}</small>
-                        <small v-if="formatDate(attachment.createdAt)">แนบเมื่อ {{ formatDate(attachment.createdAt) }}</small>
                     </div>
                 </div>
-                <Button label="ดูไฟล์" icon="pi pi-eye" severity="secondary" outlined size="small" @click="openAttachment(attachment)" />
+                <Button icon="pi pi-eye" severity="secondary" outlined rounded size="small" title="ดูไฟล์" aria-label="ดูไฟล์" @click="openAttachment(attachment)" />
             </article>
         </div>
         <Message v-else severity="info" class="m-0">ยังไม่มีไฟล์แนบอ้างอิง</Message>
@@ -251,10 +255,10 @@ function revokeImageUrl() {
 <style scoped>
 .attachments-panel {
     display: grid;
-    gap: 0.85rem;
-    padding: 1rem;
+    gap: 0.6rem;
+    padding: 0.75rem;
     border: 1px solid var(--surface-border);
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--surface-card);
 }
 
@@ -269,18 +273,30 @@ function revokeImageUrl() {
 
 .attachments-head {
     justify-content: space-between;
+    gap: 0.65rem;
 }
 
 .attachments-title {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.45rem;
     font-weight: 700;
+    line-height: 1.25;
+}
+
+.attachments-title i {
+    font-size: 0.95rem;
+}
+
+.attachment-count-tag {
+    min-width: auto;
+    font-size: 0.78rem;
+    line-height: 1.1;
 }
 
 .attachments-list {
     display: grid;
-    gap: 0.75rem;
+    gap: 0.45rem;
     max-height: min(24rem, 42vh);
     overflow-y: auto;
     padding-right: 0.15rem;
@@ -288,17 +304,17 @@ function revokeImageUrl() {
 
 .requirements-list {
     display: grid;
-    gap: 0.6rem;
+    gap: 0.45rem;
 }
 
 .requirement-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.75rem;
+    gap: 0.55rem;
+    padding: 0.55rem 0.6rem;
     border: 1px solid color-mix(in srgb, var(--orange-400) 55%, var(--surface-border));
-    border-radius: 10px;
+    border-radius: 8px;
     background: color-mix(in srgb, var(--orange-50) 65%, var(--surface-card));
 }
 
@@ -311,11 +327,12 @@ function revokeImageUrl() {
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 0.65rem;
+    gap: 0.5rem;
 }
 
 .requirement-copy i {
     color: var(--orange-500);
+    font-size: 0.9rem;
 }
 
 .requirement-row.complete .requirement-copy i {
@@ -333,8 +350,13 @@ function revokeImageUrl() {
     overflow-wrap: anywhere;
 }
 
+.requirement-copy strong {
+    font-size: 0.9rem;
+}
+
 .requirement-copy small {
     color: var(--text-color-secondary);
+    font-size: 0.78rem;
 }
 
 .slot-upload-button {
@@ -342,11 +364,12 @@ function revokeImageUrl() {
     align-items: center;
     justify-content: center;
     gap: 0.45rem;
-    min-height: 2.35rem;
-    padding: 0 0.75rem;
+    min-height: 2rem;
+    padding: 0 0.6rem;
     border: 1px solid var(--primary-color);
-    border-radius: 9px;
+    border-radius: 8px;
     color: var(--primary-color);
+    font-size: 0.84rem;
     font-weight: 700;
     white-space: nowrap;
     cursor: pointer;
@@ -363,22 +386,25 @@ function revokeImageUrl() {
 
 .attachment-row {
     display: flex;
+    align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.8rem;
+    gap: 0.6rem;
+    padding: 0.55rem 0.6rem;
     border: 1px solid var(--surface-border);
-    border-radius: 10px;
+    border-radius: 8px;
     background: var(--surface-ground);
 }
 
 .attachment-icon {
     color: var(--primary-color);
+    font-size: 0.95rem;
 }
 
 .attachment-copy {
     min-width: 0;
     display: grid;
-    gap: 0.2rem;
+    gap: 0.08rem;
+    line-height: 1.25;
 }
 
 .attachment-copy strong,
@@ -391,6 +417,12 @@ function revokeImageUrl() {
 .attachment-copy span,
 .attachment-copy small {
     color: var(--text-color-secondary);
+    font-size: 0.78rem;
+}
+
+.attachment-copy strong {
+    font-size: 0.9rem;
+    line-height: 1.2;
 }
 
 .attachments-loading {
@@ -404,15 +436,16 @@ function revokeImageUrl() {
 
 .attachment-upload {
     display: grid;
-    gap: 0.65rem;
+    gap: 0.45rem;
 }
 
 .upload-button {
     justify-content: center;
-    min-height: 2.75rem;
+    min-height: 2.35rem;
     border: 1px dashed var(--primary-color);
-    border-radius: 10px;
+    border-radius: 8px;
     color: var(--primary-color);
+    font-size: 0.92rem;
     font-weight: 700;
     cursor: pointer;
 }
