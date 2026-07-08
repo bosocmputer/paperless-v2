@@ -361,7 +361,11 @@ func stampPDFWithSignaturePlacementsLegalNoticesAndSignNotes(sourcePath string, 
 
 type signNoteStamp struct {
 	models.SignNotePlacementSnapshot
-	Text string
+	Text          string
+	FontSizePt    float64
+	TextAlign     string
+	VerticalAlign string
+	PaddingPt     float64
 }
 
 func signNotePlacementsForSigners(signers []models.SigningDocumentSigner, placements []models.SignNotePlacementSnapshot) []signNoteStamp {
@@ -394,7 +398,11 @@ func signNotePlacementsForSigners(signers []models.SigningDocumentSigner, placem
 						HeightRatio:   box.HeightRatio,
 						Label:         firstNonEmpty(box.Label, "หมายเหตุผู้เซ็น"),
 					},
-					Text: text,
+					Text:          text,
+					FontSizePt:    box.FontSizePt,
+					TextAlign:     box.TextAlign,
+					VerticalAlign: box.VerticalAlign,
+					PaddingPt:     box.PaddingPt,
 				}
 				key := fmt.Sprintf("%s:%s:%d:%.6f:%.6f:%.6f:%.6f", signer.ID, strings.TrimSpace(box.ClientKey), stamp.PageNo, stamp.XRatio, stamp.YRatio, stamp.WidthRatio, stamp.HeightRatio)
 				if seen[key] {
@@ -574,27 +582,34 @@ func drawSignerNoteBox(pdf *gofpdf.Fpdf, note signNoteStamp, size gofpdf.SizeTyp
 	if w <= 0 || h <= 0 {
 		return
 	}
-	padding := 2.0
+	padding := normalizeRuntimeSignNotePadding(note.PaddingPt)
 	textWidth := maxFloat(8, w-(padding*2))
 	textHeight := maxFloat(8, h-(padding*2))
-	fontSize, lineHeight, lines := fitSignerNoteText(pdf, text, textWidth, textHeight)
+	fontSize, lineHeight, lines := fitSignerNoteText(pdf, text, textWidth, textHeight, normalizeRuntimeSignNoteFontSize(note.FontSizePt))
 	if len(lines) == 0 {
 		return
 	}
 	contentHeight := float64(len(lines)) * lineHeight
-	textY := y + padding + maxFloat(0, (textHeight-contentHeight)/2)
+	textY := y + padding
+	switch normalizeRuntimeSignNoteVerticalAlign(note.VerticalAlign) {
+	case "bottom":
+		textY += maxFloat(0, textHeight-contentHeight)
+	case "middle":
+		textY += maxFloat(0, (textHeight-contentHeight)/2)
+	}
+	textAlign := signerNotePDFAlign(note.TextAlign)
 
 	pdf.SetTextColor(17, 24, 39)
 	pdf.SetFont(evidenceFontFamily, "", fontSize)
 	for _, line := range lines {
 		pdf.SetXY(x+padding, textY)
-		pdf.CellFormat(textWidth, lineHeight, line, "", 0, "L", false, 0, "")
+		pdf.CellFormat(textWidth, lineHeight, line, "", 0, textAlign, false, 0, "")
 		textY += lineHeight
 	}
 }
 
-func fitSignerNoteText(pdf *gofpdf.Fpdf, text string, width, height float64) (float64, float64, []string) {
-	for fontSize := 10.0; fontSize >= 7.0; fontSize -= 0.5 {
+func fitSignerNoteText(pdf *gofpdf.Fpdf, text string, width, height, preferredFontSize float64) (float64, float64, []string) {
+	for fontSize := preferredFontSize; fontSize >= 7.0; fontSize -= 0.5 {
 		lineHeight := fontSize * 1.28
 		pdf.SetFont(evidenceFontFamily, "", fontSize)
 		lines := wrapLegalNoticeText(pdf, text, width)
@@ -616,6 +631,17 @@ func fitSignerNoteText(pdf *gofpdf.Fpdf, text string, width, height float64) (fl
 	lines = append([]string(nil), lines[:maxLines]...)
 	lines[maxLines-1] = fitEllipsis(pdf, lines[maxLines-1], width)
 	return fontSize, lineHeight, lines
+}
+
+func signerNotePDFAlign(value string) string {
+	switch normalizeRuntimeSignNoteTextAlign(value) {
+	case "center":
+		return "C"
+	case "right":
+		return "R"
+	default:
+		return "L"
+	}
 }
 
 func fitEllipsis(pdf *gofpdf.Fpdf, value string, width float64) string {

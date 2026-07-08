@@ -257,14 +257,18 @@ type SignNotePlacementSnapshot struct {
 }
 
 type SignNoteBox struct {
-	ClientKey   string  `json:"clientKey"`
-	PageNo      int     `json:"pageNo"`
-	XRatio      float64 `json:"xRatio"`
-	YRatio      float64 `json:"yRatio"`
-	WidthRatio  float64 `json:"widthRatio"`
-	HeightRatio float64 `json:"heightRatio"`
-	Text        string  `json:"text"`
-	Label       string  `json:"label,omitempty"`
+	ClientKey     string  `json:"clientKey"`
+	PageNo        int     `json:"pageNo"`
+	XRatio        float64 `json:"xRatio"`
+	YRatio        float64 `json:"yRatio"`
+	WidthRatio    float64 `json:"widthRatio"`
+	HeightRatio   float64 `json:"heightRatio"`
+	Text          string  `json:"text"`
+	Label         string  `json:"label,omitempty"`
+	FontSizePt    float64 `json:"fontSizePt,omitempty"`
+	TextAlign     string  `json:"textAlign,omitempty"`
+	VerticalAlign string  `json:"verticalAlign,omitempty"`
+	PaddingPt     float64 `json:"paddingPt,omitempty"`
 }
 
 type SaveSignatureBoxesRequest struct {

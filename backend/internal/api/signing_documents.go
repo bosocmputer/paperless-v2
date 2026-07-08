@@ -33,6 +33,12 @@ const (
 	maxRuntimeSignNotePayloadBytes      = 64 * 1024
 	minRuntimeSignNoteBoxWidthRatio     = 0.04
 	minRuntimeSignNoteBoxHeightRatio    = 0.015
+	defaultRuntimeSignNoteFontSizePt    = 10.0
+	minRuntimeSignNoteFontSizePt        = 8.0
+	maxRuntimeSignNoteFontSizePt        = 18.0
+	defaultRuntimeSignNotePaddingPt     = 2.0
+	minRuntimeSignNotePaddingPt         = 1.0
+	maxRuntimeSignNotePaddingPt         = 6.0
 )
 
 var signingUXEventNames = map[string]bool{
@@ -2180,10 +2186,58 @@ func normalizeRuntimeSignNoteBoxes(boxes []models.SignNoteBox, pageCount int) ([
 		if box.WidthRatio < minRuntimeSignNoteBoxWidthRatio || box.HeightRatio < minRuntimeSignNoteBoxHeightRatio {
 			return nil, "", runtimeSignNoteValidationError{"sign_note_box_too_small", "กล่องหมายเหตุเล็กเกินไป กรุณาขยายกล่องก่อนเซ็น"}
 		}
+		box.FontSizePt = normalizeRuntimeSignNoteFontSize(box.FontSizePt)
+		box.TextAlign = normalizeRuntimeSignNoteTextAlign(box.TextAlign)
+		box.VerticalAlign = normalizeRuntimeSignNoteVerticalAlign(box.VerticalAlign)
+		box.PaddingPt = normalizeRuntimeSignNotePadding(box.PaddingPt)
 		normalized = append(normalized, box)
 		noteParts = append(noteParts, box.Text)
 	}
 	return normalized, truncateForMetadata(strings.Join(noteParts, " | "), 1000), nil
+}
+
+func normalizeRuntimeSignNoteFontSize(value float64) float64 {
+	if value <= 0 {
+		return defaultRuntimeSignNoteFontSizePt
+	}
+	return clampFloat(value, minRuntimeSignNoteFontSizePt, maxRuntimeSignNoteFontSizePt)
+}
+
+func normalizeRuntimeSignNotePadding(value float64) float64 {
+	if value <= 0 {
+		return defaultRuntimeSignNotePaddingPt
+	}
+	return clampFloat(value, minRuntimeSignNotePaddingPt, maxRuntimeSignNotePaddingPt)
+}
+
+func clampFloat(value, min, max float64) float64 {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
+func normalizeRuntimeSignNoteTextAlign(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "center", "right":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "left"
+	}
+}
+
+func normalizeRuntimeSignNoteVerticalAlign(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "top", "bottom":
+		return strings.ToLower(strings.TrimSpace(value))
+	case "middle", "center":
+		return "middle"
+	default:
+		return "middle"
+	}
 }
 
 func normalizeSignTaskRuntimeNotes(req models.SignTaskRequest, document models.SigningDocument) ([]models.SignNoteBox, string, error) {

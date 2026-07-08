@@ -949,6 +949,9 @@ func TestNormalizeRuntimeSignNoteBoxesValidation(t *testing.T) {
 	if len(boxes) != 1 || boxes[0].Text != "ตรวจแล้ว" || boxes[0].Label != "หมายเหตุผู้เซ็น" {
 		t.Fatalf("unexpected normalized boxes: %#v", boxes)
 	}
+	if boxes[0].FontSizePt != defaultRuntimeSignNoteFontSizePt || boxes[0].TextAlign != "left" || boxes[0].VerticalAlign != "middle" || boxes[0].PaddingPt != defaultRuntimeSignNotePaddingPt {
+		t.Fatalf("unexpected default note style: %#v", boxes[0])
+	}
 	if note != "ตรวจแล้ว" {
 		t.Fatalf("unexpected combined note: %q", note)
 	}
@@ -974,6 +977,46 @@ func TestNormalizeRuntimeSignNoteBoxesValidation(t *testing.T) {
 				t.Fatalf("expected code %q, got %q", tc.code, validationErr.code)
 			}
 		})
+	}
+}
+
+func TestNormalizeRuntimeSignNoteBoxesNormalizesStyle(t *testing.T) {
+	boxes, _, err := normalizeRuntimeSignNoteBoxes([]models.SignNoteBox{
+		{
+			ClientKey:     "box-1",
+			PageNo:        1,
+			XRatio:        0.1,
+			YRatio:        0.2,
+			WidthRatio:    0.2,
+			HeightRatio:   0.05,
+			Text:          "จัดขวา",
+			FontSizePt:    99,
+			TextAlign:     " RIGHT ",
+			VerticalAlign: "center",
+			PaddingPt:     -5,
+		},
+		{
+			ClientKey:     "box-2",
+			PageNo:        1,
+			XRatio:        0.4,
+			YRatio:        0.2,
+			WidthRatio:    0.2,
+			HeightRatio:   0.05,
+			Text:          "ล่าง",
+			FontSizePt:    6,
+			TextAlign:     "invalid",
+			VerticalAlign: "bottom",
+			PaddingPt:     99,
+		},
+	}, 1)
+	if err != nil {
+		t.Fatalf("expected valid styled runtime note boxes, got %v", err)
+	}
+	if boxes[0].FontSizePt != maxRuntimeSignNoteFontSizePt || boxes[0].TextAlign != "right" || boxes[0].VerticalAlign != "middle" || boxes[0].PaddingPt != defaultRuntimeSignNotePaddingPt {
+		t.Fatalf("unexpected normalized style for box 1: %#v", boxes[0])
+	}
+	if boxes[1].FontSizePt != minRuntimeSignNoteFontSizePt || boxes[1].TextAlign != "left" || boxes[1].VerticalAlign != "bottom" || boxes[1].PaddingPt != maxRuntimeSignNotePaddingPt {
+		t.Fatalf("unexpected normalized style for box 2: %#v", boxes[1])
 	}
 }
 

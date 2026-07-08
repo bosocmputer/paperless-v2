@@ -394,6 +394,30 @@ function noteBoxStyle(box) {
     };
 }
 
+function noteBoxContentStyle(box) {
+    const fontSize = clampNoteFontSize(box.fontSizePt) * zoom.value;
+    const padding = clampNotePadding(box.paddingPt) * zoom.value;
+    return {
+        fontSize: `${fontSize}px`,
+        padding: `${padding}px ${padding + 12}px ${padding}px ${padding}px`,
+        textAlign: noteTextAlign(box.textAlign),
+        justifyContent: noteJustifyContent(box.verticalAlign)
+    };
+}
+
+function noteTextAlign(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'center' || normalized === 'right') return normalized;
+    return 'left';
+}
+
+function noteJustifyContent(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'top') return 'flex-start';
+    if (normalized === 'bottom') return 'flex-end';
+    return 'center';
+}
+
 function selectNoteBox(box) {
     emit('note-box-select', box?.clientKey || '');
 }
@@ -597,6 +621,18 @@ function clamp(value, min, max) {
 function clampRatio(value) {
     return clamp(Number(value || 0), 0, 1);
 }
+
+function clampNoteFontSize(value) {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric) || numeric <= 0) return 10;
+    return clamp(numeric, 8, 18);
+}
+
+function clampNotePadding(value) {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric) || numeric <= 0) return 2;
+    return clamp(numeric, 1, 6);
+}
 </script>
 
 <template>
@@ -656,6 +692,7 @@ function clampRatio(value) {
                             :ref="(element) => setNoteEditor(box.clientKey, element)"
                             :value="box.text || ''"
                             class="runtime-note-editor"
+                            :style="noteBoxContentStyle(box)"
                             maxlength="500"
                             placeholder="พิมพ์หมายเหตุ"
                             aria-label="ข้อความหมายเหตุบน PDF"
@@ -665,7 +702,7 @@ function clampRatio(value) {
                             @pointerdown.stop
                             @click.stop
                         ></textarea>
-                        <button v-else type="button" class="runtime-note-text" @click.stop="editNoteBox(box)" @pointerdown.stop>
+                        <button v-else type="button" class="runtime-note-text" :style="noteBoxContentStyle(box)" @click.stop="editNoteBox(box)" @pointerdown.stop>
                             <span>{{ box.text || 'พิมพ์หมายเหตุ' }}</span>
                         </button>
                         <button v-if="editableNoteBoxes" type="button" class="runtime-note-delete" aria-label="ลบกล่องหมายเหตุ" @pointerdown.stop @click.stop="deleteNoteBox(box)">
@@ -825,8 +862,8 @@ function clampRatio(value) {
 }
 
 .runtime-note-text {
-    display: block;
-    padding: 0.18rem 1.35rem 0.18rem 0.28rem;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
     cursor: text;
 }

@@ -113,6 +113,11 @@ const attachmentCount = computed(() => props.attachments?.length || 0);
 const showReadonlyAttachments = computed(() => !props.externalSignOnly && !canInteract.value && (attachmentCount.value > 0 || props.attachmentsLoading || props.attachmentsError));
 const signatureTitle = computed(() => ['ลายเซ็น', props.task?.positionName].filter(Boolean).join(' · '));
 const signerLine = computed(() => props.identityLabel || props.task?.signerName || props.task?.signerUser || '-');
+const selectedSignNoteBox = computed(() => signNoteBoxes.value.find((box) => box.clientKey === selectedSignNoteBoxKey.value) || null);
+const selectedSignNoteFontSize = computed(() => clampNoteFontSize(selectedSignNoteBox.value?.fontSizePt));
+const selectedSignNotePadding = computed(() => clampNotePadding(selectedSignNoteBox.value?.paddingPt));
+const selectedSignNoteTextAlign = computed(() => normalizeNoteTextAlign(selectedSignNoteBox.value?.textAlign));
+const selectedSignNoteVerticalAlign = computed(() => normalizeNoteVerticalAlign(selectedSignNoteBox.value?.verticalAlign));
 const historySummary = computed(() => {
     const label = props.task?.positionName ? `ตำแหน่ง ${props.task.positionName}` : 'รายการเซ็นของคุณ';
     if (taskStatus.value === 'rejected') return `${label} · คุณปฏิเสธเอกสารนี้แล้ว`;
@@ -326,7 +331,11 @@ function addSignNoteBox() {
         widthRatio: 0.32,
         heightRatio: 0.065,
         text: '',
-        label: 'หมายเหตุผู้เซ็น'
+        label: 'หมายเหตุผู้เซ็น',
+        fontSizePt: 10,
+        textAlign: 'left',
+        verticalAlign: 'middle',
+        paddingPt: 2
     };
     signNoteBoxes.value = [...signNoteBoxes.value, box];
     selectedSignNoteBoxKey.value = box.clientKey;
@@ -354,10 +363,7 @@ async function editSignNoteBox(key) {
 }
 
 function updateSignNoteBoxes(next) {
-    signNoteBoxes.value = (next || []).map((box) => ({
-        ...box,
-        text: String(box.text || '').slice(0, 500)
-    }));
+    signNoteBoxes.value = (next || []).map(normalizeSignNoteBox);
     if (selectedSignNoteBoxKey.value && !signNoteBoxes.value.some((box) => box.clientKey === selectedSignNoteBoxKey.value)) {
         selectedSignNoteBoxKey.value = signNoteBoxes.value[0]?.clientKey || '';
     }
@@ -373,6 +379,55 @@ function deleteSelectedSignNoteBox(key = selectedSignNoteBoxKey.value) {
     recordEvent('sign_note_box_delete', { signNoteBoxCount: signNoteBoxes.value.length });
 }
 
+function updateSelectedSignNoteStyle(patch) {
+    const key = selectedSignNoteBoxKey.value;
+    if (!key || !canInteract.value) return;
+    updateSignNoteBoxes(signNoteBoxes.value.map((box) => (box.clientKey === key ? { ...box, ...patch } : box)));
+}
+
+function stepSelectedSignNoteFont(delta) {
+    updateSelectedSignNoteStyle({ fontSizePt: clampNoteFontSize(selectedSignNoteFontSize.value + delta) });
+}
+
+function stepSelectedSignNotePadding(delta) {
+    updateSelectedSignNoteStyle({ paddingPt: clampNotePadding(selectedSignNotePadding.value + delta) });
+}
+
+function normalizeSignNoteBox(box) {
+    return {
+        ...box,
+        text: String(box.text || '').slice(0, 500),
+        fontSizePt: clampNoteFontSize(box.fontSizePt),
+        textAlign: normalizeNoteTextAlign(box.textAlign),
+        verticalAlign: normalizeNoteVerticalAlign(box.verticalAlign),
+        paddingPt: clampNotePadding(box.paddingPt)
+    };
+}
+
+function clampNoteFontSize(value) {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric) || numeric <= 0) return 10;
+    return Math.min(Math.max(numeric, 8), 18);
+}
+
+function clampNotePadding(value) {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric) || numeric <= 0) return 2;
+    return Math.min(Math.max(numeric, 1), 6);
+}
+
+function normalizeNoteTextAlign(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'center' || normalized === 'right') return normalized;
+    return 'left';
+}
+
+function normalizeNoteVerticalAlign(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'top' || normalized === 'bottom') return normalized;
+    return 'middle';
+}
+
 function toSignNotePayload(box) {
     return {
         clientKey: String(box.clientKey || ''),
@@ -382,7 +437,11 @@ function toSignNotePayload(box) {
         widthRatio: Number(box.widthRatio || 0),
         heightRatio: Number(box.heightRatio || 0),
         text: String(box.text || '').trim(),
-        label: 'หมายเหตุผู้เซ็น'
+        label: 'หมายเหตุผู้เซ็น',
+        fontSizePt: clampNoteFontSize(box.fontSizePt),
+        textAlign: normalizeNoteTextAlign(box.textAlign),
+        verticalAlign: normalizeNoteVerticalAlign(box.verticalAlign),
+        paddingPt: clampNotePadding(box.paddingPt)
     };
 }
 
@@ -687,6 +746,40 @@ function newRequestKey() {
                                 aria-label="ลบกล่องหมายเหตุ"
                                 @click.stop="deleteSelectedSignNoteBox(box.clientKey)"
                             />
+                        </div>
+                    </div>
+                    <div v-if="selectedSignNoteBox" class="runtime-note-style-panel">
+                        <div class="runtime-note-style-row">
+                            <span>ขนาด</span>
+                            <div class="runtime-note-style-controls">
+                                <Button icon="pi pi-minus" severity="secondary" outlined rounded size="small" aria-label="ลดขนาดตัวอักษร" :disabled="!canInteract || selectedSignNoteFontSize <= 8" @click="stepSelectedSignNoteFont(-1)" />
+                                <strong>{{ selectedSignNoteFontSize }} pt</strong>
+                                <Button icon="pi pi-plus" severity="secondary" outlined rounded size="small" aria-label="เพิ่มขนาดตัวอักษร" :disabled="!canInteract || selectedSignNoteFontSize >= 18" @click="stepSelectedSignNoteFont(1)" />
+                            </div>
+                        </div>
+                        <div class="runtime-note-style-row">
+                            <span>จัดข้อความ</span>
+                            <div class="runtime-note-style-controls">
+                                <Button icon="pi pi-align-left" :severity="selectedSignNoteTextAlign === 'left' ? 'info' : 'secondary'" :outlined="selectedSignNoteTextAlign !== 'left'" rounded size="small" aria-label="จัดซ้าย" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ textAlign: 'left' })" />
+                                <Button icon="pi pi-align-center" :severity="selectedSignNoteTextAlign === 'center' ? 'info' : 'secondary'" :outlined="selectedSignNoteTextAlign !== 'center'" rounded size="small" aria-label="จัดกลาง" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ textAlign: 'center' })" />
+                                <Button icon="pi pi-align-right" :severity="selectedSignNoteTextAlign === 'right' ? 'info' : 'secondary'" :outlined="selectedSignNoteTextAlign !== 'right'" rounded size="small" aria-label="จัดขวา" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ textAlign: 'right' })" />
+                            </div>
+                        </div>
+                        <div class="runtime-note-style-row">
+                            <span>แนวตั้ง</span>
+                            <div class="runtime-note-style-controls text-controls">
+                                <Button label="บน" :severity="selectedSignNoteVerticalAlign === 'top' ? 'info' : 'secondary'" :outlined="selectedSignNoteVerticalAlign !== 'top'" size="small" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ verticalAlign: 'top' })" />
+                                <Button label="กลาง" :severity="selectedSignNoteVerticalAlign === 'middle' ? 'info' : 'secondary'" :outlined="selectedSignNoteVerticalAlign !== 'middle'" size="small" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ verticalAlign: 'middle' })" />
+                                <Button label="ล่าง" :severity="selectedSignNoteVerticalAlign === 'bottom' ? 'info' : 'secondary'" :outlined="selectedSignNoteVerticalAlign !== 'bottom'" size="small" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ verticalAlign: 'bottom' })" />
+                            </div>
+                        </div>
+                        <div class="runtime-note-style-row">
+                            <span>ระยะขอบ</span>
+                            <div class="runtime-note-style-controls">
+                                <Button icon="pi pi-minus" severity="secondary" outlined rounded size="small" aria-label="ลดระยะขอบข้อความ" :disabled="!canInteract || selectedSignNotePadding <= 1" @click="stepSelectedSignNotePadding(-1)" />
+                                <strong>{{ selectedSignNotePadding }} pt</strong>
+                                <Button icon="pi pi-plus" severity="secondary" outlined rounded size="small" aria-label="เพิ่มระยะขอบข้อความ" :disabled="!canInteract || selectedSignNotePadding >= 6" @click="stepSelectedSignNotePadding(1)" />
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1266,6 +1359,44 @@ function newRequestKey() {
     border-color: #0284c7;
     background: color-mix(in srgb, #38bdf8 9%, var(--surface-card));
     box-shadow: 0 0 0 2px color-mix(in srgb, #38bdf8 20%, transparent);
+}
+
+.runtime-note-style-panel {
+    display: grid;
+    gap: 0.35rem;
+    padding-top: 0.15rem;
+}
+
+.runtime-note-style-row {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.runtime-note-style-row > span {
+    color: var(--text-color-secondary);
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.runtime-note-style-controls {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+}
+
+.runtime-note-style-controls strong {
+    min-width: 3.4rem;
+    color: var(--text-color);
+    font-size: 0.84rem;
+    text-align: center;
+}
+
+.runtime-note-style-controls.text-controls :deep(.p-button) {
+    padding-inline: 0.55rem;
 }
 
 .legal-check {
