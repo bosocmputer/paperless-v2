@@ -1267,17 +1267,6 @@ function newRequestKey() {
         overscroll-behavior: contain;
     }
 
-    .admin-workspace .admin-actions {
-        position: sticky;
-        bottom: 0;
-        z-index: 2;
-        margin-inline: -0.85rem;
-        margin-bottom: -0.85rem;
-        padding: 0.75rem 0.85rem 0.85rem;
-        border-top: 1px solid var(--surface-border);
-        background: var(--surface-card);
-    }
-
     .admin-workspace.history-focus-workspace {
         gap: 0.65rem;
     }
