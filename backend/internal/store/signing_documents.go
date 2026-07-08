@@ -1429,12 +1429,12 @@ WHERE sg.id = $1
 	return signer, err
 }
 
-func (s *Store) SignInternalTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string) (SignTaskResult, error) {
-	return s.signTask(ctx, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote, false)
+func (s *Store) SignInternalTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string, signNoteBoxes []models.SignNoteBox) (SignTaskResult, error) {
+	return s.signTask(ctx, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote, signNoteBoxes, false)
 }
 
-func (s *Store) SignExternalTask(ctx context.Context, taskID, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string) (SignTaskResult, error) {
-	return s.signTask(ctx, taskID, "", signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote, true)
+func (s *Store) SignExternalTask(ctx context.Context, taskID, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string, signNoteBoxes []models.SignNoteBox) (SignTaskResult, error) {
+	return s.signTask(ctx, taskID, "", signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote, signNoteBoxes, true)
 }
 
 func (s *Store) RejectInternalTask(ctx context.Context, taskID, username, reason, deviceID, ipAddress, userAgent string) (string, error) {
@@ -1955,7 +1955,7 @@ RETURNING id::text
 	return s.FindSigningDocumentPrintEvent(ctx, input.DocumentID, id)
 }
 
-func (s *Store) signTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string, external bool) (SignTaskResult, error) {
+func (s *Store) signTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string, signNoteBoxes []models.SignNoteBox, external bool) (SignTaskResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return SignTaskResult{}, err
@@ -1998,6 +1998,10 @@ FOR UPDATE OF sg
 		return SignTaskResult{}, ErrRequiredAttachmentsMissing
 	}
 
+	signNoteBoxesJSON, err := json.Marshal(signNoteBoxes)
+	if err != nil {
+		return SignTaskResult{}, err
+	}
 	if _, err := tx.Exec(ctx, `
 UPDATE signing_document_signers
 SET status = 'signed',
@@ -2006,9 +2010,10 @@ SET status = 'signed',
     device_id = $3,
     ip_address = $4,
     user_agent = $5,
-    sign_note = $6
+    sign_note = $6,
+    sign_note_boxes = $7::jsonb
 WHERE id = $1
-`, taskID, signatureFileID, deviceID, ipAddress, userAgent, strings.TrimSpace(signNote)); err != nil {
+`, taskID, signatureFileID, deviceID, ipAddress, userAgent, strings.TrimSpace(signNote), string(signNoteBoxesJSON)); err != nil {
 		return SignTaskResult{}, err
 	}
 	if err := insertSigningEvent(ctx, tx, signer.DocumentID, "", signer.SignerName, "signed", signer.PositionName+" เซ็นเอกสารแล้ว", ipAddress, userAgent, map[string]any{
@@ -2017,6 +2022,8 @@ WHERE id = $1
 		"legalTextVersion": strings.TrimSpace(legalTextVersion),
 		"legalAccepted":    true,
 		"signNotePresent":  strings.TrimSpace(signNote) != "",
+		"signNoteBoxCount": len(signNoteBoxes),
+		"signNotePages":    signNoteBoxPages(signNoteBoxes),
 	}); err != nil {
 		return SignTaskResult{}, err
 	}
@@ -2028,6 +2035,23 @@ WHERE id = $1
 		return SignTaskResult{}, err
 	}
 	return SignTaskResult{DocumentID: signer.DocumentID, Completed: completed}, nil
+}
+
+func signNoteBoxPages(boxes []models.SignNoteBox) []int {
+	if len(boxes) == 0 {
+		return nil
+	}
+	seen := map[int]bool{}
+	pages := []int{}
+	for _, box := range boxes {
+		if box.PageNo <= 0 || seen[box.PageNo] {
+			continue
+		}
+		seen[box.PageNo] = true
+		pages = append(pages, box.PageNo)
+	}
+	sort.Ints(pages)
+	return pages
 }
 
 func (s *Store) rejectTask(ctx context.Context, taskID, username, reason, deviceID, ipAddress, userAgent string, external bool) (string, error) {
@@ -2315,7 +2339,7 @@ SELECT sg.id::text, sg.document_id::text, sg.step_id::text, sg.position_code, sg
        sg.condition_type, sg.signer_slot, sg.signer_type, sg.signer_user, sg.signer_name, sg.status,
        sg.page_no, sg.x_ratio, sg.y_ratio, sg.width_ratio, sg.height_ratio, sg.label,
        COALESCE(sg.signature_file_id::text,''), sg.signed_at, sg.rejected_at, sg.reject_reason,
-       sg.sign_note, COALESCE(sg.attachment_requirements_snapshot, '[]'::jsonb)::text,
+       sg.sign_note, COALESCE(sg.sign_note_boxes, '[]'::jsonb)::text, COALESCE(sg.attachment_requirements_snapshot, '[]'::jsonb)::text,
        sg.device_id, sg.ip_address, sg.user_agent, COALESCE(sg.external_token_id::text,'')
 FROM signing_document_signers sg
 `
@@ -2387,11 +2411,11 @@ func scanSigningDocumentStep(row rowScanner) (models.SigningDocumentStep, error)
 func scanSigningDocumentSigner(row rowScanner) (models.SigningDocumentSigner, error) {
 	var signer models.SigningDocumentSigner
 	var signedAt, rejectedAt sql.NullTime
-	var attachmentRequirementsRaw string
+	var signNoteBoxesRaw, attachmentRequirementsRaw string
 	err := row.Scan(&signer.ID, &signer.DocumentID, &signer.StepID, &signer.PositionCode, &signer.PositionName, &signer.SequenceNo,
 		&signer.ConditionType, &signer.SignerSlot, &signer.SignerType, &signer.SignerUser, &signer.SignerName, &signer.Status,
 		&signer.PageNo, &signer.XRatio, &signer.YRatio, &signer.WidthRatio, &signer.HeightRatio, &signer.Label,
-		&signer.SignatureFileID, &signedAt, &rejectedAt, &signer.RejectReason, &signer.SignNote, &attachmentRequirementsRaw, &signer.DeviceID, &signer.IPAddress,
+		&signer.SignatureFileID, &signedAt, &rejectedAt, &signer.RejectReason, &signer.SignNote, &signNoteBoxesRaw, &attachmentRequirementsRaw, &signer.DeviceID, &signer.IPAddress,
 		&signer.UserAgent, &signer.ExternalTokenID)
 	if signedAt.Valid {
 		signer.SignedAt = &signedAt.Time
@@ -2399,6 +2423,7 @@ func scanSigningDocumentSigner(row rowScanner) (models.SigningDocumentSigner, er
 	if rejectedAt.Valid {
 		signer.RejectedAt = &rejectedAt.Time
 	}
+	signer.SignNoteBoxes = parseSignNoteBoxes(signNoteBoxesRaw)
 	signer.AttachmentRequirementsSnapshot = parseAttachmentRequirements(attachmentRequirementsRaw)
 	return signer, err
 }

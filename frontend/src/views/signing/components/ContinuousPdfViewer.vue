@@ -15,10 +15,13 @@ const props = defineProps({
         type: String,
         default: 'fit-width',
         validator: (value) => ['fit-width', 'actual-size'].includes(value)
-    }
+    },
+    noteBoxes: { type: Array, default: () => [] },
+    selectedNoteBoxKey: { type: String, default: '' },
+    editableNoteBoxes: { type: Boolean, default: false }
 });
 
-const emit = defineEmits(['load-success', 'load-error', 'page-change', 'open-full']);
+const emit = defineEmits(['load-success', 'load-error', 'page-change', 'open-full', 'update:noteBoxes', 'note-box-select']);
 
 const viewerRef = ref(null);
 const pdfDoc = shallowRef(null);
@@ -49,6 +52,7 @@ const renderQueue = [];
 const queuedPages = new Set();
 const visiblePages = new Set();
 const activePageRenders = new Map();
+let noteDragState = null;
 
 watch(
     () => props.url,
@@ -78,6 +82,7 @@ watch(currentPage, (value) => {
 });
 
 onBeforeUnmount(() => {
+    removeNotePointerListeners();
     cleanupPDF();
 });
 
@@ -364,6 +369,98 @@ function pageShellStyle(size) {
     };
 }
 
+function noteBoxesForPage(pageNo) {
+    return (props.noteBoxes || []).filter((box) => Number(box.pageNo || 1) === Number(pageNo));
+}
+
+function noteBoxStyle(box) {
+    return {
+        left: `${clampRatio(box.xRatio) * 100}%`,
+        top: `${clampRatio(box.yRatio) * 100}%`,
+        width: `${clampRatio(box.widthRatio) * 100}%`,
+        height: `${clampRatio(box.heightRatio) * 100}%`
+    };
+}
+
+function selectNoteBox(box) {
+    emit('note-box-select', box?.clientKey || '');
+}
+
+function deleteNoteBox(box) {
+    if (!props.editableNoteBoxes) return;
+    const key = box?.clientKey || '';
+    emit(
+        'update:noteBoxes',
+        (props.noteBoxes || []).filter((item) => item.clientKey !== key)
+    );
+    if (props.selectedNoteBoxKey === key) emit('note-box-select', '');
+}
+
+function startNotePointer(event, box, mode = 'move') {
+    if (!props.editableNoteBoxes || !box?.clientKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectNoteBox(box);
+    const shell = pageShells.get(Number(box.pageNo || 1));
+    if (!shell) return;
+    noteDragState = {
+        key: box.clientKey,
+        mode,
+        pageNo: Number(box.pageNo || 1),
+        startX: event.clientX,
+        startY: event.clientY,
+        shell,
+        startBox: {
+            xRatio: Number(box.xRatio || 0),
+            yRatio: Number(box.yRatio || 0),
+            widthRatio: Number(box.widthRatio || 0),
+            heightRatio: Number(box.heightRatio || 0)
+        }
+    };
+    window.addEventListener('pointermove', moveNotePointer, { passive: false });
+    window.addEventListener('pointerup', endNotePointer, { once: true });
+    window.addEventListener('pointercancel', endNotePointer, { once: true });
+}
+
+function moveNotePointer(event) {
+    if (!noteDragState) return;
+    event.preventDefault();
+    const rect = noteDragState.shell.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const dx = (event.clientX - noteDragState.startX) / rect.width;
+    const dy = (event.clientY - noteDragState.startY) / rect.height;
+    const minW = 0.04;
+    const minH = 0.015;
+    const start = noteDragState.startBox;
+    const patch = {};
+    if (noteDragState.mode === 'resize') {
+        patch.widthRatio = clamp(start.widthRatio + dx, minW, 1 - start.xRatio);
+        patch.heightRatio = clamp(start.heightRatio + dy, minH, 1 - start.yRatio);
+    } else {
+        patch.xRatio = clamp(start.xRatio + dx, 0, 1 - start.widthRatio);
+        patch.yRatio = clamp(start.yRatio + dy, 0, 1 - start.heightRatio);
+    }
+    updateNoteBox(noteDragState.key, patch);
+}
+
+function endNotePointer() {
+    removeNotePointerListeners();
+    noteDragState = null;
+}
+
+function removeNotePointerListeners() {
+    window.removeEventListener('pointermove', moveNotePointer);
+    window.removeEventListener('pointerup', endNotePointer);
+    window.removeEventListener('pointercancel', endNotePointer);
+}
+
+function updateNoteBox(key, patch) {
+    emit(
+        'update:noteBoxes',
+        (props.noteBoxes || []).map((box) => (box.clientKey === key ? { ...box, ...patch } : box))
+    );
+}
+
 function retryLoad() {
     void loadPDF();
 }
@@ -416,6 +513,10 @@ function pdfLoadErrorMessage(err) {
 function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
 }
+
+function clampRatio(value) {
+    return clamp(Number(value || 0), 0, 1);
+}
 </script>
 
 <template>
@@ -459,6 +560,20 @@ function clamp(value, min, max) {
                 >
                     <div class="page-number">หน้า {{ index + 1 }}</div>
                     <canvas :ref="(element) => setPageCanvas(index + 1, element)" class="pdf-canvas" aria-label="PDF preview"></canvas>
+                    <button
+                        v-for="box in noteBoxesForPage(index + 1)"
+                        :key="box.clientKey"
+                        type="button"
+                        class="runtime-note-box"
+                        :class="{ selected: box.clientKey === selectedNoteBoxKey, editable: editableNoteBoxes, empty: !String(box.text || '').trim() }"
+                        :style="noteBoxStyle(box)"
+                        @click.stop="selectNoteBox(box)"
+                        @pointerdown.stop="startNotePointer($event, box, 'move')"
+                    >
+                        <span>{{ box.text || 'พิมพ์หมายเหตุ' }}</span>
+                        <i v-if="editableNoteBoxes" class="pi pi-trash" aria-label="ลบกล่องหมายเหตุ" @pointerdown.stop @click.stop="deleteNoteBox(box)"></i>
+                        <b v-if="editableNoteBoxes" @pointerdown.stop="startNotePointer($event, box, 'resize')"></b>
+                    </button>
                     <div v-if="!renderedPages.has(index + 1)" class="page-placeholder">
                         <i v-if="renderingPages.has(index + 1)" class="pi pi-spin pi-spinner"></i>
                     </div>
@@ -577,6 +692,71 @@ function clamp(value, min, max) {
     place-items: center;
     color: var(--text-color-secondary);
     pointer-events: none;
+}
+
+.runtime-note-box {
+    position: absolute;
+    z-index: 3;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    min-width: 0;
+    min-height: 0;
+    padding: 0.18rem 0.28rem;
+    border: 1.5px solid color-mix(in srgb, #f59e0b 72%, var(--surface-border));
+    border-radius: 4px;
+    background: color-mix(in srgb, #f59e0b 12%, transparent);
+    color: #78350f;
+    line-height: 1.2;
+    text-align: left;
+    overflow: hidden;
+    cursor: pointer;
+    user-select: none;
+}
+
+.runtime-note-box span {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    font-size: clamp(0.58rem, 1.45vw, 0.82rem);
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.runtime-note-box.empty span {
+    color: color-mix(in srgb, #92400e 64%, white);
+}
+
+.runtime-note-box.selected {
+    border-color: #0284c7;
+    background: color-mix(in srgb, #38bdf8 18%, white);
+    box-shadow: 0 0 0 2px color-mix(in srgb, #38bdf8 38%, transparent);
+}
+
+.runtime-note-box.editable {
+    cursor: move;
+}
+
+.runtime-note-box i {
+    flex: 0 0 auto;
+    margin-left: 0.25rem;
+    line-height: 1;
+    color: #b45309;
+}
+
+.runtime-note-box b {
+    position: absolute;
+    right: -5px;
+    bottom: -5px;
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    border: 2px solid white;
+    background: #0284c7;
+    cursor: nwse-resize;
 }
 
 .empty-pdf {

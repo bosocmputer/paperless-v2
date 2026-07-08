@@ -43,6 +43,7 @@ const zoom = ref(1.2);
 const fitWidthActive = ref(false);
 const pageSize = ref({ width: 0, height: 0 });
 const maxTemplatePages = ref(20);
+const allowTemplateSignNoteBoxes = false;
 
 const designerSessionId = makeDesignerSessionId();
 const openedAt = Date.now();
@@ -66,7 +67,7 @@ const legalNoticeText = LEGAL_NOTICE_TEXT;
 const legalNoticePreviewText = LEGAL_NOTICE_DISPLAY_TEXT;
 const legalNoticeOverflow = ref(false);
 const selectedLegalNotice = computed(() => (selectedBoxKey.value === legalNoticeKey && legalNoticeBox.value ? legalOverlayBox(legalNoticeBox.value) : null));
-const selectedSignNote = computed(() => signNoteBoxes.value.find((box) => box.clientKey === selectedBoxKey.value) || null);
+const selectedSignNote = computed(() => (allowTemplateSignNoteBoxes ? signNoteBoxes.value.find((box) => box.clientKey === selectedBoxKey.value) || null : null));
 const selectedItem = computed(() => selectedLegalNotice.value || selectedSignNote.value || selectedBox.value);
 const selectedIsLegalNotice = computed(() => !!selectedLegalNotice.value);
 const selectedIsSignNote = computed(() => !!selectedSignNote.value);
@@ -81,9 +82,9 @@ const selectedBoxSignerTypeLabel = computed(() => {
     return 'User ภายใน';
 });
 const boxesByPosition = computed(() => groupBoxesBy((box) => box.positionCode));
-const signNoteBoxesByPosition = computed(() => groupSignNoteBoxesBy((box) => box.positionCode));
+const signNoteBoxesByPosition = computed(() => (allowTemplateSignNoteBoxes ? groupSignNoteBoxesBy((box) => box.positionCode) : new Map()));
 const boxesByPage = computed(() => groupBoxesBy((box) => Number(box.pageNo)));
-const signNoteBoxesByPage = computed(() => groupSignNoteBoxesBy((box) => Number(box.pageNo)));
+const signNoteBoxesByPage = computed(() => (allowTemplateSignNoteBoxes ? groupSignNoteBoxesBy((box) => Number(box.pageNo)) : new Map()));
 const currentPageBoxes = computed(() => boxesByPage.value.get(Number(currentPage.value)) || []);
 const currentPageSignNoteBoxes = computed(() => signNoteBoxesByPage.value.get(Number(currentPage.value)) || []);
 const currentPageLegalNotice = computed(() => (legalNoticeBox.value && Number(legalNoticeBox.value.pageNo || 1) === Number(currentPage.value) ? legalOverlayBox(legalNoticeBox.value) : null));
@@ -119,7 +120,7 @@ const stepViews = computed(() =>
 const canSave = computed(() => canEdit.value && !saving.value && !!template.value);
 const storedPageCount = computed(() => Number(template.value?.sampleFile?.pageCount || pageCount.value || 0));
 const requiredBoxCount = computed(() => configs.value.reduce((total, step) => total + requiredBoxesForStep(step), 0));
-const boxProgressLabel = computed(() => `${boxes.value.length}/${requiredBoxCount.value || 0} · หมายเหตุ ${signNoteBoxes.value.length}`);
+const boxProgressLabel = computed(() => `${boxes.value.length}/${requiredBoxCount.value || 0}`);
 const validationStatusLabel = computed(() => (validationIssues.value.length === 0 ? 'พร้อมใช้เป็นค่าเริ่มต้น' : `${validationIssues.value.length} จุดต้องแก้`));
 const validationStatusSeverity = computed(() => (validationIssues.value.length === 0 ? 'success' : 'warn'));
 const canAddBoxes = computed(() => canEdit.value && !!template.value?.sampleFileId);
@@ -196,7 +197,7 @@ async function loadState() {
         active.value = result.active;
         maxTemplatePages.value = result.maxTemplatePages || 20;
         boxes.value = withClientKeys((active.value || draft.value)?.boxes || []);
-        signNoteBoxes.value = withSignNoteClientKeys((active.value || draft.value)?.signNoteBoxes || []);
+        signNoteBoxes.value = [];
         legalNoticeBox.value = withLegalNoticeClientKey((active.value || draft.value)?.legalNoticeBox || null);
         selectedPositionCode.value = configs.value[0]?.positionCode || '';
         selectedBoxKey.value = '';
@@ -306,7 +307,7 @@ async function handleFileChange(event) {
     if (!file) return;
     if (boxes.value.length > 0 || signNoteBoxes.value.length > 0 || legalNoticeBox.value) {
         confirm.require({
-            message: 'อัปโหลด PDF ใหม่จะล้างกรอบลายเซ็น กรอบหมายเหตุ และกรอบข้อความกฎหมายเดิมทั้งหมด และใช้ไฟล์ใหม่นี้แทนของเก่า',
+            message: 'อัปโหลด PDF ใหม่จะล้างกรอบลายเซ็นและกรอบข้อความกฎหมายเดิมทั้งหมด และใช้ไฟล์ใหม่นี้แทนของเก่า',
             header: 'แทนที่ PDF ตัวอย่าง',
             icon: 'pi pi-exclamation-triangle',
             rejectProps: {
@@ -338,7 +339,7 @@ async function uploadSamplePDF(file) {
         active.value = result.template;
         draft.value = null;
         boxes.value = withClientKeys(result.template?.boxes || []);
-        signNoteBoxes.value = withSignNoteClientKeys(result.template?.signNoteBoxes || []);
+        signNoteBoxes.value = [];
         legalNoticeBox.value = withLegalNoticeClientKey(result.template?.legalNoticeBox || null);
         dirty.value = false;
         currentPage.value = 1;
@@ -732,14 +733,14 @@ async function saveTemplate(showToast = true) {
                 heightRatio: Number(box.heightRatio),
                 label: box.label || ''
             })),
-            signNoteBoxes: signNoteBoxes.value.map(toSignerBoxPayload),
+            signNoteBoxes: [],
             legalNoticeBox: toLegalNoticePayload(legalNoticeBox.value)
         };
         const result = await api.saveSignatureTemplateBoxes(template.value.id, payload);
         active.value = result.template;
         draft.value = null;
         boxes.value = withClientKeys(result.template?.boxes || []);
-        signNoteBoxes.value = withSignNoteClientKeys(result.template?.signNoteBoxes || []);
+        signNoteBoxes.value = [];
         legalNoticeBox.value = withLegalNoticeClientKey(result.template?.legalNoticeBox || null);
         restoreSelectedBox(selectedSnapshot);
         if (!selectedSnapshot && selectedBoxKey.value === legalNoticeKey && legalNoticeBox.value) selectLegalNoticeBox();
@@ -1210,20 +1211,22 @@ function recordDesignerEvent(event, extra = {}) {
                                 </button>
                                 <span v-if="canEdit" class="signature-box-handle" @pointerdown="startBoxPointer($event, currentPageLegalNotice, 'resize')"></span>
                             </div>
-                            <div
-                                v-for="box in currentPageSignNoteBoxes"
-                                :key="box.clientKey"
-                                class="signature-box sign-note-box"
-                                :class="{ selected: selectedBoxKey === box.clientKey, readonly: !canEdit }"
-                                :style="boxStyle(box)"
-                                @pointerdown="startBoxPointer($event, box, 'move')"
-                            >
-                                <div class="signature-box-label">{{ box.label || 'หมายเหตุผู้เซ็น' }}</div>
-                                <button v-if="canEdit" class="signature-box-delete" type="button" aria-label="ลบกรอบหมายเหตุ" @pointerdown.stop @click.stop="deleteSignNoteBox(box)">
-                                    <i class="pi pi-times"></i>
-                                </button>
-                                <span v-if="canEdit" class="signature-box-handle" @pointerdown="startBoxPointer($event, box, 'resize')"></span>
-                            </div>
+                            <template v-if="allowTemplateSignNoteBoxes">
+                                <div
+                                    v-for="box in currentPageSignNoteBoxes"
+                                    :key="box.clientKey"
+                                    class="signature-box sign-note-box"
+                                    :class="{ selected: selectedBoxKey === box.clientKey, readonly: !canEdit }"
+                                    :style="boxStyle(box)"
+                                    @pointerdown="startBoxPointer($event, box, 'move')"
+                                >
+                                    <div class="signature-box-label">{{ box.label || 'หมายเหตุผู้เซ็น' }}</div>
+                                    <button v-if="canEdit" class="signature-box-delete" type="button" aria-label="ลบกรอบหมายเหตุ" @pointerdown.stop @click.stop="deleteSignNoteBox(box)">
+                                        <i class="pi pi-times"></i>
+                                    </button>
+                                    <span v-if="canEdit" class="signature-box-handle" @pointerdown="startBoxPointer($event, box, 'resize')"></span>
+                                </div>
+                            </template>
                             <div
                                 v-for="box in currentPageBoxes"
                                 :key="box.clientKey"
@@ -1249,7 +1252,7 @@ function recordDesignerEvent(event, extra = {}) {
                         <div>
                             <div class="font-semibold">กรอบที่เลือก</div>
                             <div v-if="selectedIsLegalNotice" class="text-sm text-muted-color">ข้อความกฎหมายบน PDF จริง</div>
-                            <div v-else-if="selectedIsSignNote" class="text-sm text-muted-color">{{ selectedBoxStep?.positionCode }} - หมายเหตุผู้เซ็น</div>
+                            <div v-else-if="allowTemplateSignNoteBoxes && selectedIsSignNote" class="text-sm text-muted-color">{{ selectedBoxStep?.positionCode }} - หมายเหตุผู้เซ็น</div>
                             <div v-else-if="selectedBoxStep" class="text-sm text-muted-color">{{ selectedBoxStep.positionCode }} - {{ selectedBoxStep.positionName }}</div>
                         </div>
                     </div>
@@ -1270,7 +1273,7 @@ function recordDesignerEvent(event, extra = {}) {
                                 @update:modelValue="updateBoxLabel(selectedItem, $event)"
                             />
                             <small v-if="selectedIsLegalNotice" class="text-muted-color">{{ legalNoticeText }}</small>
-                            <small v-else-if="selectedIsSignNote" class="text-muted-color">ข้อความจริงมาจากช่องหมายเหตุที่ผู้เซ็นกรอกตอนยืนยันเอกสาร</small>
+                            <small v-else-if="allowTemplateSignNoteBoxes && selectedIsSignNote" class="text-muted-color">ข้อความจริงมาจากช่องหมายเหตุที่ผู้เซ็นกรอกตอนยืนยันเอกสาร</small>
                         </div>
 
                         <div class="field-grid">
@@ -1329,7 +1332,7 @@ function recordDesignerEvent(event, extra = {}) {
                     <div class="panel-title">
                         <div>
                             <div class="font-semibold">ขั้นตอนและกรอบ</div>
-                            <div class="text-sm text-muted-color">{{ boxes.length }} กรอบลายเซ็น · {{ signNoteBoxes.length }} กรอบหมายเหตุ</div>
+                            <div class="text-sm text-muted-color">{{ boxes.length }} กรอบลายเซ็น</div>
                         </div>
                         <Tag :value="validationStatusLabel" :severity="validationStatusSeverity" />
                     </div>
@@ -1356,7 +1359,7 @@ function recordDesignerEvent(event, extra = {}) {
                                 <span :class="['box-count', { ok: step.isComplete, warn: step.issues.length > 0 }]">{{ step.boxes.length }}/{{ step.required }}</span>
                                 <div class="step-actions">
                                     <Button label="ลายเซ็น" :icon="step.canAdd ? 'pi pi-plus' : 'pi pi-check'" size="small" :disabled="!step.canAdd" @click.stop="addBox(step)" />
-                                    <Button label="หมายเหตุ" icon="pi pi-comment" severity="secondary" outlined size="small" :disabled="!canAddBoxes" @click.stop="addSignNoteBox(step)" />
+                                    <Button v-if="allowTemplateSignNoteBoxes" label="หมายเหตุ" icon="pi pi-comment" severity="secondary" outlined size="small" :disabled="!canAddBoxes" @click.stop="addSignNoteBox(step)" />
                                 </div>
                             </div>
 
@@ -1375,7 +1378,7 @@ function recordDesignerEvent(event, extra = {}) {
                                     <small>หน้า {{ box.pageNo }} / {{ signerTypeShortLabel(box.signerType) }}</small>
                                 </button>
                             </div>
-                            <div v-if="step.noteBoxes.length" class="step-box-list sign-note-list">
+                            <div v-if="allowTemplateSignNoteBoxes && step.noteBoxes.length" class="step-box-list sign-note-list">
                                 <button
                                     v-for="box in step.noteBoxes"
                                     :key="box.clientKey"

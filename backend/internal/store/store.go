@@ -463,6 +463,7 @@ CREATE TABLE IF NOT EXISTS signing_document_signers (
     rejected_at TIMESTAMPTZ,
     reject_reason TEXT NOT NULL DEFAULT '',
     sign_note TEXT NOT NULL DEFAULT '',
+    sign_note_boxes JSONB NOT NULL DEFAULT '[]'::jsonb,
     attachment_requirements_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
     device_id TEXT NOT NULL DEFAULT '',
     ip_address TEXT NOT NULL DEFAULT '',
@@ -473,6 +474,9 @@ CREATE TABLE IF NOT EXISTS signing_document_signers (
 
 ALTER TABLE signing_document_signers
 ADD COLUMN IF NOT EXISTS sign_note TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE signing_document_signers
+ADD COLUMN IF NOT EXISTS sign_note_boxes JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 ALTER TABLE signing_document_signers
 ADD COLUMN IF NOT EXISTS attachment_requirements_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb;
@@ -1788,6 +1792,28 @@ func parseSignNotePlacementSnapshots(raw string) []models.SignNotePlacementSnaps
 			continue
 		}
 		out = append(out, snapshot)
+	}
+	return out
+}
+
+func parseSignNoteBoxes(raw string) []models.SignNoteBox {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" || raw == "null" {
+		return nil
+	}
+	var boxes []models.SignNoteBox
+	if err := json.Unmarshal([]byte(raw), &boxes); err != nil {
+		return nil
+	}
+	out := make([]models.SignNoteBox, 0, len(boxes))
+	for _, box := range boxes {
+		box.ClientKey = strings.TrimSpace(box.ClientKey)
+		box.Text = strings.TrimSpace(box.Text)
+		box.Label = strings.TrimSpace(box.Label)
+		if box.PageNo <= 0 || box.WidthRatio <= 0 || box.HeightRatio <= 0 || box.Text == "" {
+			continue
+		}
+		out = append(out, box)
 	}
 	return out
 }

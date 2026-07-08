@@ -127,6 +127,7 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		"legalNoticeDisplayVersion":    legalNoticesDisplayVersion(legalNotices),
 		"signNotePlacementVersion":     signNotePlacementVersion(signNotePlacements),
 		"signNotePlacementCount":       len(signNotePlacements),
+		"signNoteRuntimeBoxCount":      countSignerRuntimeNoteBoxes(signers),
 	})
 }
 
@@ -192,6 +193,14 @@ func signNotePlacementVersion(placements []models.SignNotePlacementSnapshot) str
 		return ""
 	}
 	return "sign-note-v1"
+}
+
+func countSignerRuntimeNoteBoxes(signers []models.SigningDocumentSigner) int {
+	count := 0
+	for _, signer := range signers {
+		count += len(signer.SignNoteBoxes)
+	}
+	return count
 }
 
 func signingPlacementsForSigners(signers []models.SigningDocumentSigner, placements []models.SignaturePlacementSnapshot) []models.SigningDocumentSigner {
@@ -356,12 +365,49 @@ type signNoteStamp struct {
 }
 
 func signNotePlacementsForSigners(signers []models.SigningDocumentSigner, placements []models.SignNotePlacementSnapshot) []signNoteStamp {
-	if len(signers) == 0 || len(placements) == 0 {
+	if len(signers) == 0 {
 		return nil
 	}
 	out := []signNoteStamp{}
 	seen := map[string]bool{}
 	for _, signer := range signers {
+		if len(signer.SignNoteBoxes) > 0 {
+			for _, box := range signer.SignNoteBoxes {
+				text := strings.TrimSpace(box.Text)
+				if text == "" {
+					continue
+				}
+				stamp := signNoteStamp{
+					SignNotePlacementSnapshot: models.SignNotePlacementSnapshot{
+						PositionCode:  signer.PositionCode,
+						PositionName:  signer.PositionName,
+						SequenceNo:    signer.SequenceNo,
+						ConditionType: signer.ConditionType,
+						SignerSlot:    signer.SignerSlot,
+						SignerType:    signer.SignerType,
+						SignerUser:    signer.SignerUser,
+						SignerName:    signer.SignerName,
+						PageNo:        box.PageNo,
+						XRatio:        box.XRatio,
+						YRatio:        box.YRatio,
+						WidthRatio:    box.WidthRatio,
+						HeightRatio:   box.HeightRatio,
+						Label:         firstNonEmpty(box.Label, "หมายเหตุผู้เซ็น"),
+					},
+					Text: text,
+				}
+				key := fmt.Sprintf("%s:%s:%d:%.6f:%.6f:%.6f:%.6f", signer.ID, strings.TrimSpace(box.ClientKey), stamp.PageNo, stamp.XRatio, stamp.YRatio, stamp.WidthRatio, stamp.HeightRatio)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				out = append(out, stamp)
+			}
+			continue
+		}
+		if len(placements) == 0 {
+			continue
+		}
 		note := strings.TrimSpace(signer.SignNote)
 		if note == "" {
 			continue

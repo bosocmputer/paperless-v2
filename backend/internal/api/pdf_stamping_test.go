@@ -471,6 +471,73 @@ func TestStampPDFWithSignerNotePlacement(t *testing.T) {
 	}
 }
 
+func TestStampPDFWithRuntimeSignerNoteBoxesOverridesLegacyPlacement(t *testing.T) {
+	pdftotext, err := exec.LookPath("pdftotext")
+	if err != nil {
+		t.Skip("pdftotext is required for signer note text extraction check")
+	}
+
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.pdf")
+	pdf := gofpdf.New("P", "pt", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Helvetica", "", 12)
+	pdf.Text(72, 72, "source")
+	if err := pdf.OutputFileAndClose(source); err != nil {
+		t.Fatalf("create source pdf: %v", err)
+	}
+
+	now := time.Now()
+	out, err := stampPDFWithSignaturePlacementsLegalNoticesAndSignNotes(source, 1, []models.SigningDocumentSigner{{
+		ID:            "signer-1",
+		Status:        "signed",
+		PositionCode:  "AP",
+		PositionName:  "ผู้อนุมัติ",
+		SignerSlot:    1,
+		SignerType:    "any",
+		ConditionType: 1,
+		SignNote:      "LEGACY-NOTE-SHOULD-NOT-STAMP",
+		SignNoteBoxes: []models.SignNoteBox{{
+			ClientKey:   "runtime-1",
+			PageNo:      1,
+			XRatio:      0.12,
+			YRatio:      0.22,
+			WidthRatio:  0.38,
+			HeightRatio: 0.07,
+			Text:        "RUNTIME-NOTE-OK-456",
+		}},
+		SignedAt: &now,
+	}}, nil, nil, nil, []models.SignNotePlacementSnapshot{{
+		PositionCode: "AP",
+		SignerSlot:   1,
+		SignerType:   "any",
+		PageNo:       1,
+		XRatio:       0.12,
+		YRatio:       0.4,
+		WidthRatio:   0.38,
+		HeightRatio:  0.07,
+		Label:        "หมายเหตุผู้เซ็น",
+	}}, nil)
+	if err != nil {
+		t.Fatalf("stamp runtime signer note pdf: %v", err)
+	}
+	outPDF := filepath.Join(dir, "runtime-signer-note.pdf")
+	if err := os.WriteFile(outPDF, out, 0o600); err != nil {
+		t.Fatalf("write runtime signer note pdf: %v", err)
+	}
+	textBytes, err := exec.Command(pdftotext, "-layout", outPDF, "-").Output()
+	if err != nil {
+		t.Fatalf("extract runtime signer note text: %v", err)
+	}
+	text := string(textBytes)
+	if !strings.Contains(text, "RUNTIME-NOTE-OK-456") {
+		t.Fatalf("expected runtime signer note text in PDF, got %q", text)
+	}
+	if strings.Contains(text, "LEGACY-NOTE-SHOULD-NOT-STAMP") {
+		t.Fatalf("runtime signer note boxes should override legacy placement, got %q", text)
+	}
+}
+
 func TestLegalNoticeDisplayTextUsesThaiSafeLegalCopy(t *testing.T) {
 	text := legalNoticeDisplayText(signingLegalText)
 	if strings.Contains(text, ".") || strings.Contains(text, "2544") {

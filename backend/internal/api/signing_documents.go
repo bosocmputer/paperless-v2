@@ -28,6 +28,11 @@ const (
 	signatureTransparencyVersion        = "transparent-v1"
 	signingLegalText                    = "เอกสารนี้จัดทำและลงนามในรูปแบบอิเล็กทรอนิกส์ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ พ.ศ. 2544 ผู้ลงนามยืนยันความถูกต้องของเนื้อหาและยอมรับผลผูกพันทางกฎหมายทุกประการ"
 	maxSigningEventBytes                = 8 * 1024
+	maxRuntimeSignNoteBoxes             = 30
+	maxRuntimeSignNoteChars             = 500
+	maxRuntimeSignNotePayloadBytes      = 64 * 1024
+	minRuntimeSignNoteBoxWidthRatio     = 0.04
+	minRuntimeSignNoteBoxHeightRatio    = 0.015
 )
 
 var signingUXEventNames = map[string]bool{
@@ -36,6 +41,8 @@ var signingUXEventNames = map[string]bool{
 	"pdf_load_error":                 true,
 	"signature_started":              true,
 	"signature_cleared":              true,
+	"sign_note_box_add":              true,
+	"sign_note_box_delete":           true,
 	"sign_attempt":                   true,
 	"sign_success":                   true,
 	"sign_error":                     true,
@@ -302,8 +309,9 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	layoutSource := "per_document_upload"
+	req.SignNoteBoxes = nil
 	if actor.Role == "admin" {
-		templateID, layout, noteBoxes, legalBoxes, issues, err := s.lockedAdminCreateLayout(r.Context(), screenCode, format.Code, uploaded.PageCount)
+		templateID, layout, _, legalBoxes, issues, err := s.lockedAdminCreateLayout(r.Context(), screenCode, format.Code, uploaded.PageCount)
 		if err != nil {
 			s.logger.Error("load admin create template failed", "error", err, "docFormatCode", format.Code)
 			writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load active signature template right now.")
@@ -315,7 +323,6 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		}
 		req.SignatureTemplateID = templateID
 		req.LayoutBoxes = layout
-		req.SignNoteBoxes = noteBoxes
 		req.LegalNoticeBoxes = legalBoxes
 		req.LegalNoticeBox = &legalBoxes[0]
 		layoutSource = "active_template_locked"
@@ -324,8 +331,8 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 	if len(issues) == 0 {
 		issues = append(issues, s.inactiveSigningLayoutUserIssues(r.Context(), selectedConfigs, layoutBoxes)...)
 	}
-	signNoteBoxes, signNotePlacements, signNoteIssues := validateSigningDocumentSignNoteLayout(req.SignNoteBoxes, configs, uploaded.PageCount)
-	issues = append(issues, signNoteIssues...)
+	signNoteBoxes := []models.SignatureTemplateBoxRequest{}
+	signNotePlacements := []models.SignNotePlacementSnapshot{}
 	legalNoticeBoxes, legalNoticeIssues := normalizeAndValidateLegalNoticeBoxes(req.LegalNoticeBoxes, req.LegalNoticeBox, uploaded.PageCount, true)
 	issues = append(issues, legalNoticeIssues...)
 	if len(issues) > 0 {
@@ -789,9 +796,8 @@ func (s *Server) lockedAdminCreateLayout(ctx context.Context, screenCode, docFor
 		samplePageCount = active.SampleFile.PageCount
 	}
 	layout := expandTemplateBoxesForDocument(boxRequestsFromTemplate(active.Boxes), samplePageCount, pageCount)
-	noteBoxes := expandTemplateBoxesForDocument(boxRequestsFromTemplate(active.SignNoteBoxes), samplePageCount, pageCount)
 	legalBoxes := expandLegalNoticeBoxesForDocument([]models.LegalNoticeBoxRequest{*legalBox}, samplePageCount, pageCount)
-	return active.ID, layout, noteBoxes, legalBoxes, nil, nil
+	return active.ID, layout, nil, legalBoxes, nil, nil
 }
 
 func expandTemplateBoxesForDocument(source []models.SignatureTemplateBoxRequest, samplePageCount, targetPageCount int) []models.SignatureTemplateBoxRequest {
@@ -1878,6 +1884,7 @@ func sanitizeSigningTaskForUser(signer models.SigningDocumentSigner) models.Sign
 	signer.DeviceID = ""
 	signer.IPAddress = ""
 	signer.UserAgent = ""
+	signer.SignNoteBoxes = nil
 	signer.ExternalTokenID = ""
 	signer.ExternalURL = ""
 	return signer
@@ -2117,6 +2124,83 @@ func (s *Server) writeRequiredAttachmentsMissing(w http.ResponseWriter, missing 
 	})
 }
 
+type runtimeSignNoteValidationError struct {
+	code    string
+	message string
+}
+
+func (err runtimeSignNoteValidationError) Error() string {
+	return err.message
+}
+
+func normalizeRuntimeSignNoteBoxes(boxes []models.SignNoteBox, pageCount int) ([]models.SignNoteBox, string, error) {
+	if len(boxes) == 0 {
+		return nil, "", nil
+	}
+	if len(boxes) > maxRuntimeSignNoteBoxes {
+		return nil, "", runtimeSignNoteValidationError{"sign_note_box_count_invalid", fmt.Sprintf("เพิ่มกล่องหมายเหตุได้ไม่เกิน %d กล่อง", maxRuntimeSignNoteBoxes)}
+	}
+	if pageCount <= 0 {
+		return nil, "", runtimeSignNoteValidationError{"sign_note_pdf_page_count_missing", "ไม่สามารถตรวจสอบจำนวนหน้า PDF สำหรับกล่องหมายเหตุได้"}
+	}
+	if payload, err := json.Marshal(boxes); err != nil {
+		return nil, "", err
+	} else if len(payload) > maxRuntimeSignNotePayloadBytes {
+		return nil, "", runtimeSignNoteValidationError{"sign_note_payload_too_large", "ข้อมูลกล่องหมายเหตุมีขนาดใหญ่เกินไป"}
+	}
+	seen := map[string]bool{}
+	normalized := make([]models.SignNoteBox, 0, len(boxes))
+	noteParts := []string{}
+	for index, box := range boxes {
+		box.ClientKey = strings.TrimSpace(box.ClientKey)
+		if box.ClientKey == "" {
+			box.ClientKey = fmt.Sprintf("note_box_%d", index+1)
+		}
+		if seen[box.ClientKey] {
+			return nil, "", runtimeSignNoteValidationError{"sign_note_box_duplicate", "พบกล่องหมายเหตุซ้ำ กรุณาลองใหม่อีกครั้ง"}
+		}
+		seen[box.ClientKey] = true
+		box.Text = strings.TrimSpace(box.Text)
+		box.Label = strings.TrimSpace(box.Label)
+		if box.Label == "" {
+			box.Label = "หมายเหตุผู้เซ็น"
+		}
+		if box.Text == "" {
+			return nil, "", runtimeSignNoteValidationError{"sign_note_text_required", "กรุณาระบุข้อความในกล่องหมายเหตุให้ครบก่อนเซ็น"}
+		}
+		if len([]rune(box.Text)) > maxRuntimeSignNoteChars {
+			return nil, "", runtimeSignNoteValidationError{"sign_note_text_too_long", fmt.Sprintf("ข้อความหมายเหตุแต่ละกล่องต้องไม่เกิน %d ตัวอักษร", maxRuntimeSignNoteChars)}
+		}
+		if box.PageNo <= 0 || box.PageNo > pageCount {
+			return nil, "", runtimeSignNoteValidationError{"sign_note_page_invalid", "กล่องหมายเหตุอยู่บนหน้า PDF ที่ไม่ถูกต้อง"}
+		}
+		if box.XRatio < 0 || box.YRatio < 0 || box.WidthRatio <= 0 || box.HeightRatio <= 0 || box.XRatio+box.WidthRatio > 1 || box.YRatio+box.HeightRatio > 1 {
+			return nil, "", runtimeSignNoteValidationError{"sign_note_bounds_invalid", "กล่องหมายเหตุต้องอยู่ในขอบเขตหน้า PDF"}
+		}
+		if box.WidthRatio < minRuntimeSignNoteBoxWidthRatio || box.HeightRatio < minRuntimeSignNoteBoxHeightRatio {
+			return nil, "", runtimeSignNoteValidationError{"sign_note_box_too_small", "กล่องหมายเหตุเล็กเกินไป กรุณาขยายกล่องก่อนเซ็น"}
+		}
+		normalized = append(normalized, box)
+		noteParts = append(noteParts, box.Text)
+	}
+	return normalized, truncateForMetadata(strings.Join(noteParts, " | "), 1000), nil
+}
+
+func normalizeSignTaskRuntimeNotes(req models.SignTaskRequest, document models.SigningDocument) ([]models.SignNoteBox, string, error) {
+	pageCount := 0
+	if document.OriginalFile != nil {
+		pageCount = document.OriginalFile.PageCount
+	}
+	boxes, note, err := normalizeRuntimeSignNoteBoxes(req.SignNoteBoxes, pageCount)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(boxes) > 0 {
+		return boxes, note, nil
+	}
+	return nil, truncateForMetadata(req.SignNote, 1000), nil
+}
+
 func (s *Server) recordMySigningTaskEvent(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r)
 	taskID := strings.TrimSpace(r.PathValue("taskId"))
@@ -2234,6 +2318,21 @@ func (s *Server) signMySigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
 		return
 	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	signNoteBoxes, signNote, err := normalizeSignTaskRuntimeNotes(req, document)
+	if err != nil {
+		var validationErr runtimeSignNoteValidationError
+		if errors.As(err, &validationErr) {
+			writeError(w, http.StatusBadRequest, validationErr.code, validationErr.message)
+			return
+		}
+		writeError(w, http.StatusBadRequest, "sign_note_invalid", "Sign note boxes are invalid.")
+		return
+	}
 	if missing, err := s.store.MissingRequiredAttachments(r.Context(), signer.ID); err != nil {
 		s.logger.Error("check required attachments before sign failed", "error", err, "signerID", signer.ID)
 		writeError(w, http.StatusInternalServerError, "required_attachments_check_failed", "Cannot verify required attachments right now.")
@@ -2255,7 +2354,7 @@ func (s *Server) signMySigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_signature", err.Error())
 		return
 	}
-	result, err := s.store.SignInternalTask(r.Context(), taskID, user.Username, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion, truncateForMetadata(req.SignNote, 1000))
+	result, err := s.store.SignInternalTask(r.Context(), taskID, user.Username, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion, signNote, signNoteBoxes)
 	s.writeTaskMutationResult(w, r, scope, user.ID, result, err)
 }
 
@@ -2504,6 +2603,21 @@ func (s *Server) signPublicSigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
 		return
 	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	signNoteBoxes, signNote, err := normalizeSignTaskRuntimeNotes(req, document)
+	if err != nil {
+		var validationErr runtimeSignNoteValidationError
+		if errors.As(err, &validationErr) {
+			writeError(w, http.StatusBadRequest, validationErr.code, validationErr.message)
+			return
+		}
+		writeError(w, http.StatusBadRequest, "sign_note_invalid", "Sign note boxes are invalid.")
+		return
+	}
 	if missing, err := s.store.MissingRequiredAttachments(r.Context(), signer.ID); err != nil {
 		s.logger.Error("check public required attachments before sign failed", "error", err, "signerID", signer.ID)
 		writeError(w, http.StatusInternalServerError, "required_attachments_check_failed", "Cannot verify required attachments right now.")
@@ -2521,7 +2635,7 @@ func (s *Server) signPublicSigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_signature", err.Error())
 		return
 	}
-	result, err := s.store.SignExternalTask(r.Context(), signer.ID, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion, truncateForMetadata(req.SignNote, 1000))
+	result, err := s.store.SignExternalTask(r.Context(), signer.ID, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion, signNote, signNoteBoxes)
 	s.writePublicTaskMutationResult(w, r, scope, signer.ID, result, err)
 }
 

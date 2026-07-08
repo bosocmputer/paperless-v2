@@ -19,7 +19,8 @@ const props = defineProps({
     legalNoticeBoxes: { type: Array, default: () => [] },
     presetTemplate: { type: Object, default: null },
     fullHeight: { type: Boolean, default: false },
-    readOnly: { type: Boolean, default: false }
+    readOnly: { type: Boolean, default: false },
+    allowSignNoteBoxes: { type: Boolean, default: false }
 });
 
 const emit = defineEmits(['update:modelValue', 'update:signNoteBoxes', 'update:legalNoticeBox', 'update:legalNoticeBoxes', 'apply-preset', 'event', 'validation-change']);
@@ -47,7 +48,7 @@ const legalNoticePreviewRefs = new Map();
 
 const boxes = computed(() => props.modelValue || []);
 const currentPageBoxes = computed(() => boxes.value.filter((box) => Number(box.pageNo || 1) === currentPage.value));
-const signNoteBoxes = computed(() => (props.signNoteBoxes || []).map((box) => withSignNoteKey(box)));
+const signNoteBoxes = computed(() => (props.allowSignNoteBoxes ? props.signNoteBoxes || [] : []).map((box) => withSignNoteKey(box)));
 const currentPageSignNoteBoxes = computed(() => signNoteBoxes.value.filter((box) => Number(box.pageNo || 1) === currentPage.value).map(signNoteOverlayBox));
 const legalNotices = computed(() => {
     const boxes = Array.isArray(props.legalNoticeBoxes) && props.legalNoticeBoxes.length ? props.legalNoticeBoxes : props.legalNoticeBox ? [props.legalNoticeBox] : [];
@@ -121,7 +122,7 @@ const validationIssues = computed(() => {
     return [...new Set(issues)];
 });
 
-const canApplyPreset = computed(() => !props.readOnly && (!!props.presetTemplate?.boxes?.length || !!props.presetTemplate?.signNoteBoxes?.length || !!props.presetTemplate?.legalNoticeBox) && !!props.pdfUrl);
+const canApplyPreset = computed(() => !props.readOnly && (!!props.presetTemplate?.boxes?.length || !!props.presetTemplate?.legalNoticeBox) && !!props.pdfUrl);
 
 const stepRows = computed(() =>
     [...props.configs]
@@ -140,10 +141,10 @@ const stepRows = computed(() =>
             return {
                 ...step,
                 boxes: stepBoxes,
-                noteBoxes: signNoteBoxes.value.filter((box) => box.positionCode === step.positionCode),
+                noteBoxes: props.allowSignNoteBoxes ? signNoteBoxes.value.filter((box) => box.positionCode === step.positionCode) : [],
                 users,
                 canAdd,
-                canAddNote: !!props.pdfUrl && !props.readOnly && !(step.conditionType === 2 && users.length === 0),
+                canAddNote: props.allowSignNoteBoxes && !!props.pdfUrl && !props.readOnly && !(step.conditionType === 2 && users.length === 0),
                 addReason,
                 statusLabel: stepBoxes.length > 0 ? `ใช้ ${stepBoxes.length} กรอบ / ${countPagesWithBoxes(stepBoxes)} หน้า` : 'ไม่อยู่ในงานเซ็น'
             };
@@ -252,7 +253,7 @@ function setZoom(value) {
 
 function applyPreset() {
     if (props.readOnly || !canApplyPreset.value) return;
-    const hasExisting = boxes.value.length > 0 || legalNotices.value.length > 0;
+    const hasExisting = boxes.value.length > 0 || legalNotices.value.length > 0 || (props.allowSignNoteBoxes && signNoteBoxes.value.length > 0);
     if (hasExisting) {
         confirm.require({
             message: 'การใช้กรอบเริ่มต้นจะล้างกรอบที่วางอยู่ทั้งหมดและสร้างใหม่ตาม PDF ทุกหน้า ต้องการดำเนินการต่อหรือไม่?',
@@ -278,16 +279,18 @@ function applyPresetNow() {
         heightRatio: Number(box.heightRatio || 0.08)
     }));
     emitBoxes(next);
-    const signNoteNext = expandPresetBoxes(props.presetTemplate?.signNoteBoxes || [], props.presetTemplate?.sampleFile?.pageCount, props.pageCount).map((box) => ({
-        ...box,
-        clientKey: makeSignNoteKey(),
-        pageNo: Number(box.pageNo || 1),
-        xRatio: Number(box.xRatio || 0.55),
-        yRatio: Number(box.yRatio || 0.72),
-        widthRatio: Number(box.widthRatio || 0.25),
-        heightRatio: Number(box.heightRatio || 0.06),
-        label: box.label || 'หมายเหตุผู้เซ็น'
-    }));
+    const signNoteNext = props.allowSignNoteBoxes
+        ? expandPresetBoxes(props.presetTemplate?.signNoteBoxes || [], props.presetTemplate?.sampleFile?.pageCount, props.pageCount).map((box) => ({
+              ...box,
+              clientKey: makeSignNoteKey(),
+              pageNo: Number(box.pageNo || 1),
+              xRatio: Number(box.xRatio || 0.55),
+              yRatio: Number(box.yRatio || 0.72),
+              widthRatio: Number(box.widthRatio || 0.25),
+              heightRatio: Number(box.heightRatio || 0.06),
+              label: box.label || 'หมายเหตุผู้เซ็น'
+          }))
+        : [];
     emitSignNoteBoxes(signNoteNext);
     const noticePattern = props.presetTemplate?.legalNoticeBox ? [props.presetTemplate.legalNoticeBox] : [];
     const legalNext = expandPresetBoxes(noticePattern, props.presetTemplate?.sampleFile?.pageCount, props.pageCount).map((box) => ({
@@ -726,20 +729,22 @@ defineExpose({ validationIssues, totalBoxes });
                         <i v-if="!props.readOnly" class="pi pi-trash" @pointerdown.stop @click.stop="deleteLegalNoticeBox(legalBox)"></i>
                         <b v-if="!props.readOnly" @pointerdown.stop="startPointer($event, legalBox, 'resize')"></b>
                     </button>
-                    <button
-                        v-for="noteBox in currentPageSignNoteBoxes"
-                        :key="noteBox.clientKey"
-                        type="button"
-                        class="signature-layout-box sign-note-layout-box"
-                        :class="{ selected: noteBox.clientKey === selectedBoxKey }"
-                        :style="boxStyle(noteBox)"
-                        @click.stop="selectSignNoteBox(noteBox)"
-                        @pointerdown.stop="startPointer($event, noteBox, 'move')"
-                    >
-                        <span class="signature-layout-label">{{ noteBox.label || 'หมายเหตุผู้เซ็น' }}</span>
-                        <i v-if="!props.readOnly" class="pi pi-trash" @pointerdown.stop @click.stop="deleteSignNoteBox(noteBox)"></i>
-                        <b v-if="!props.readOnly" @pointerdown.stop="startPointer($event, noteBox, 'resize')"></b>
-                    </button>
+                    <template v-if="props.allowSignNoteBoxes">
+                        <button
+                            v-for="noteBox in currentPageSignNoteBoxes"
+                            :key="noteBox.clientKey"
+                            type="button"
+                            class="signature-layout-box sign-note-layout-box"
+                            :class="{ selected: noteBox.clientKey === selectedBoxKey }"
+                            :style="boxStyle(noteBox)"
+                            @click.stop="selectSignNoteBox(noteBox)"
+                            @pointerdown.stop="startPointer($event, noteBox, 'move')"
+                        >
+                            <span class="signature-layout-label">{{ noteBox.label || 'หมายเหตุผู้เซ็น' }}</span>
+                            <i v-if="!props.readOnly" class="pi pi-trash" @pointerdown.stop @click.stop="deleteSignNoteBox(noteBox)"></i>
+                            <b v-if="!props.readOnly" @pointerdown.stop="startPointer($event, noteBox, 'resize')"></b>
+                        </button>
+                    </template>
                     <button
                         v-for="box in currentPageBoxes"
                         :key="box.clientKey"
@@ -766,7 +771,7 @@ defineExpose({ validationIssues, totalBoxes });
                     <label>ข้อความบนกรอบ</label>
                     <InputText :modelValue="selectedItem.label" :disabled="selectedIsLegalNotice || selectedIsSignNote || props.readOnly" @update:modelValue="updateSelected('label', $event)" />
                     <small v-if="selectedIsLegalNotice" class="text-muted-color">{{ legalNoticeText }}</small>
-                    <small v-else-if="selectedIsSignNote" class="text-muted-color">ข้อความหมายเหตุจริงจะมาจากผู้เซ็นตอนยืนยันเอกสาร</small>
+                    <small v-else-if="props.allowSignNoteBoxes && selectedIsSignNote" class="text-muted-color">ข้อความหมายเหตุจริงจะมาจากผู้เซ็นตอนยืนยันเอกสาร</small>
                     <label>หน้า</label>
                     <InputNumber :modelValue="selectedItem.pageNo" :min="1" :max="props.pageCount || 1" showButtons :disabled="props.readOnly" @update:modelValue="updateSelected('pageNo', $event || 1)" />
                     <label v-if="!selectedIsLegalNotice && selectedStep?.conditionType === 2">User ผู้เซ็น</label>
@@ -804,7 +809,7 @@ defineExpose({ validationIssues, totalBoxes });
                 <div class="section-heading">
                     <div>
                         <div class="section-title">ขั้นตอนและกรอบ</div>
-                    <small>{{ totalBoxes }} กรอบลายเซ็น / {{ signNoteBoxes.length }} กรอบหมายเหตุ / {{ legalNotices.length }} กรอบข้อความกฎหมาย</small>
+                    <small>{{ totalBoxes }} กรอบลายเซ็น / {{ legalNotices.length }} กรอบข้อความกฎหมาย</small>
                     </div>
                     <Button label="ใช้กรอบเริ่มต้น" icon="pi pi-clone" severity="secondary" outlined size="small" :disabled="!canApplyPreset" @click="applyPreset" />
                 </div>
@@ -821,14 +826,14 @@ defineExpose({ validationIssues, totalBoxes });
                         </div>
                         <div class="step-actions">
                             <Button label="ลายเซ็น" icon="pi pi-plus" size="small" :disabled="!step.canAdd" :title="step.addReason" @click="addBox(step)" />
-                            <Button label="หมายเหตุ" icon="pi pi-comment" severity="secondary" outlined size="small" :disabled="!step.canAddNote" :title="step.addReason" @click="addSignNoteBox(step)" />
+                            <Button v-if="props.allowSignNoteBoxes" label="หมายเหตุ" icon="pi pi-comment" severity="secondary" outlined size="small" :disabled="!step.canAddNote" :title="step.addReason" @click="addSignNoteBox(step)" />
                         </div>
                         <div v-if="step.boxes.length" class="step-boxes">
                             <button v-for="box in step.boxes" :key="box.clientKey" type="button" :class="{ selected: box.clientKey === selectedBoxKey }" @click="selectBox(box)">
                                 หน้า {{ box.pageNo }} · {{ box.label || signerLabel(box.signerUser) || step.positionName }}
                             </button>
                         </div>
-                        <div v-if="step.noteBoxes.length" class="step-boxes sign-note-list">
+                        <div v-if="props.allowSignNoteBoxes && step.noteBoxes.length" class="step-boxes sign-note-list">
                             <button v-for="box in step.noteBoxes" :key="box.clientKey" type="button" :class="{ selected: box.clientKey === selectedBoxKey }" @click="selectSignNoteBox(box)">
                                 หน้า {{ box.pageNo }} · หมายเหตุ {{ signerLabel(box.signerUser) || step.positionName }}
                             </button>

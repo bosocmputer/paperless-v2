@@ -932,6 +932,71 @@ func TestCurrentPDFNeedsLegalNoticeRefresh(t *testing.T) {
 	}
 }
 
+func TestNormalizeRuntimeSignNoteBoxesValidation(t *testing.T) {
+	valid := models.SignNoteBox{
+		ClientKey:   "box-1",
+		PageNo:      1,
+		XRatio:      0.1,
+		YRatio:      0.2,
+		WidthRatio:  0.2,
+		HeightRatio: 0.05,
+		Text:        " ตรวจแล้ว ",
+	}
+	boxes, note, err := normalizeRuntimeSignNoteBoxes([]models.SignNoteBox{valid}, 1)
+	if err != nil {
+		t.Fatalf("expected valid runtime note box, got %v", err)
+	}
+	if len(boxes) != 1 || boxes[0].Text != "ตรวจแล้ว" || boxes[0].Label != "หมายเหตุผู้เซ็น" {
+		t.Fatalf("unexpected normalized boxes: %#v", boxes)
+	}
+	if note != "ตรวจแล้ว" {
+		t.Fatalf("unexpected combined note: %q", note)
+	}
+
+	cases := []struct {
+		name string
+		box  models.SignNoteBox
+		code string
+	}{
+		{name: "empty text", box: func() models.SignNoteBox { box := valid; box.Text = " "; return box }(), code: "sign_note_text_required"},
+		{name: "invalid page", box: func() models.SignNoteBox { box := valid; box.PageNo = 2; return box }(), code: "sign_note_page_invalid"},
+		{name: "out of bounds", box: func() models.SignNoteBox { box := valid; box.XRatio = 0.9; box.WidthRatio = 0.2; return box }(), code: "sign_note_bounds_invalid"},
+		{name: "too small", box: func() models.SignNoteBox { box := valid; box.WidthRatio = 0.01; return box }(), code: "sign_note_box_too_small"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := normalizeRuntimeSignNoteBoxes([]models.SignNoteBox{tc.box}, 1)
+			var validationErr runtimeSignNoteValidationError
+			if !errors.As(err, &validationErr) {
+				t.Fatalf("expected validation error, got %v", err)
+			}
+			if validationErr.code != tc.code {
+				t.Fatalf("expected code %q, got %q", tc.code, validationErr.code)
+			}
+		})
+	}
+}
+
+func TestNormalizeRuntimeSignNoteBoxesRejectsTooManyBoxes(t *testing.T) {
+	boxes := make([]models.SignNoteBox, maxRuntimeSignNoteBoxes+1)
+	for i := range boxes {
+		boxes[i] = models.SignNoteBox{
+			ClientKey:   "box-" + string(rune('a'+i)),
+			PageNo:      1,
+			XRatio:      0.1,
+			YRatio:      0.2,
+			WidthRatio:  0.2,
+			HeightRatio: 0.05,
+			Text:        "note",
+		}
+	}
+	_, _, err := normalizeRuntimeSignNoteBoxes(boxes, 1)
+	var validationErr runtimeSignNoteValidationError
+	if !errors.As(err, &validationErr) || validationErr.code != "sign_note_box_count_invalid" {
+		t.Fatalf("expected too many boxes validation error, got %v", err)
+	}
+}
+
 func TestValidateSigningDocumentLayoutRejectsMissingConditionTwoUser(t *testing.T) {
 	configs := []models.DocumentConfigStep{
 		{PositionCode: "3", PositionName: "ผู้อนุมัติ", User01: "901:นาย A", User02: "902:นาย B", ConditionType: 2},

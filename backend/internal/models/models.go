@@ -256,6 +256,17 @@ type SignNotePlacementSnapshot struct {
 	Label         string  `json:"label"`
 }
 
+type SignNoteBox struct {
+	ClientKey   string  `json:"clientKey"`
+	PageNo      int     `json:"pageNo"`
+	XRatio      float64 `json:"xRatio"`
+	YRatio      float64 `json:"yRatio"`
+	WidthRatio  float64 `json:"widthRatio"`
+	HeightRatio float64 `json:"heightRatio"`
+	Text        string  `json:"text"`
+	Label       string  `json:"label,omitempty"`
+}
+
 type SaveSignatureBoxesRequest struct {
 	Revision       int                           `json:"revision"`
 	Boxes          []SignatureTemplateBoxRequest `json:"boxes"`
@@ -551,6 +562,7 @@ type SigningDocumentSigner struct {
 	RejectedAt                     *time.Time              `json:"rejectedAt,omitempty"`
 	RejectReason                   string                  `json:"rejectReason"`
 	SignNote                       string                  `json:"signNote"`
+	SignNoteBoxes                  []SignNoteBox           `json:"signNoteBoxes,omitempty"`
 	AttachmentRequirementsSnapshot []AttachmentRequirement `json:"attachmentRequirements,omitempty"`
 	DeviceID                       string                  `json:"deviceId"`
 	IPAddress                      string                  `json:"ipAddress"`
@@ -712,11 +724,12 @@ type CreatePrintCopyRequest struct {
 }
 
 type SignTaskRequest struct {
-	SignatureDataURL string `json:"signatureDataUrl"`
-	DeviceID         string `json:"deviceId"`
-	LegalText        string `json:"legalText"`
-	LegalAccepted    bool   `json:"legalAccepted"`
-	SignNote         string `json:"signNote"`
+	SignatureDataURL string        `json:"signatureDataUrl"`
+	DeviceID         string        `json:"deviceId"`
+	LegalText        string        `json:"legalText"`
+	LegalAccepted    bool          `json:"legalAccepted"`
+	SignNote         string        `json:"signNote"`
+	SignNoteBoxes    []SignNoteBox `json:"signNoteBoxes,omitempty"`
 }
 
 type RejectTaskRequest struct {
