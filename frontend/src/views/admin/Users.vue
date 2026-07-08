@@ -34,7 +34,10 @@ const statusOptions = [
 const dialogTitle = computed(() => (editingUser.value ? 'แก้ไขผู้ใช้' : 'เพิ่มผู้ใช้'));
 const passwordHint = computed(() => (editingUser.value ? 'เว้นว่างไว้ถ้าไม่ต้องการเปลี่ยนรหัสผ่าน' : 'รหัสผ่านอย่างน้อย 6 ตัวอักษร'));
 const syncUsers = computed(() => syncPreview.value?.users || []);
-const canConfirmSync = computed(() => !!syncPreview.value && syncPreview.value.dryRun !== false && Number(syncPreview.value.toCreate || 0) > 0 && !syncSaving.value);
+const canConfirmSync = computed(() => {
+    if (!syncPreview.value || syncPreview.value.dryRun === false || syncSaving.value) return false;
+    return Number(syncPreview.value.toCreate || 0) > 0 || Number(syncPreview.value.toActivate || 0) > 0;
+});
 const filteredUsers = computed(() => {
     const query = normalizeSearch(searchQuery.value);
     if (!query) return users.value;
@@ -90,8 +93,13 @@ async function confirmSyncSMLUsers() {
     try {
         const result = await api.syncSMLUsers({ dryRun: false });
         syncPreview.value = result;
-        if (Number(result.created || 0) > 0) {
-            toast.add({ severity: 'success', summary: 'Sync user จาก SML สำเร็จ', detail: `เพิ่มผู้ใช้ใหม่ ${result.created} คน`, life: 3500 });
+        const created = Number(result.created || 0);
+        const activated = Number(result.activated || 0);
+        if (created > 0 || activated > 0) {
+            const details = [];
+            if (created > 0) details.push(`เพิ่มผู้ใช้ใหม่ ${created} คน`);
+            if (activated > 0) details.push(`เปิดใช้งาน ${activated} คน`);
+            toast.add({ severity: 'success', summary: 'Sync user จาก SML สำเร็จ', detail: details.join(' · '), life: 3500 });
         } else {
             toast.add({ severity: 'info', summary: 'ไม่มีผู้ใช้ใหม่จาก SML', life: 3000 });
         }
@@ -299,12 +307,14 @@ function normalizeSearch(value) {
     <Dialog v-model:visible="syncDialogVisible" modal header="Sync user จาก SML" :style="{ width: 'min(52rem, 94vw)' }">
         <div class="flex flex-col gap-4">
             <Message v-if="syncError" severity="error">{{ syncError }}</Message>
-            <Message v-if="syncPreview && !syncPreview.dryRun" severity="success" :closable="false"> Sync สำเร็จ เพิ่มผู้ใช้ใหม่ {{ syncPreview.created || 0 }} คน </Message>
+            <Message v-if="syncPreview && !syncPreview.dryRun" severity="success" :closable="false">
+                Sync สำเร็จ เพิ่มผู้ใช้ใหม่ {{ syncPreview.created || 0 }} คน และเปิดใช้งาน {{ syncPreview.activated || 0 }} คน
+            </Message>
             <Message v-else-if="syncPreview && syncPreview.passwordNotSynced > 0" severity="warn" :closable="false">
                 มี {{ syncPreview.passwordNotSynced }} user ที่ไม่สามารถ sync รหัส local ได้ ระบบยังให้ login ผ่าน SML ได้ตามปกติ
             </Message>
 
-            <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
                 <div>
                     <div class="text-sm text-muted-color">Database</div>
                     <div class="font-semibold">{{ syncTenantLabel(syncPreview) }}</div>
@@ -320,6 +330,10 @@ function normalizeSearch(value) {
                 <div>
                     <div class="text-sm text-muted-color">จะเพิ่ม</div>
                     <div class="font-semibold text-primary">{{ syncPreview?.toCreate ?? '-' }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-muted-color">จะเปิดใช้งาน</div>
+                    <div class="font-semibold text-green-600">{{ syncPreview?.toActivate ?? '-' }}</div>
                 </div>
                 <div>
                     <div class="text-sm text-muted-color">SML inactive</div>

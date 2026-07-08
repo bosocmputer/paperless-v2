@@ -49,9 +49,12 @@ type SMLUserSyncResult struct {
 	Total             int                    `json:"total"`
 	Existing          int                    `json:"existing"`
 	ToCreate          int                    `json:"toCreate"`
+	ToActivate        int                    `json:"toActivate"`
 	Created           int                    `json:"created"`
+	Activated         int                    `json:"activated"`
 	PasswordNotSynced int                    `json:"passwordNotSynced"`
 	Users             []SMLUserSyncCandidate `json:"users,omitempty"`
+	ActivateUsernames []string               `json:"-"`
 }
 
 type SMLUserSyncResponse struct {
@@ -63,7 +66,9 @@ type SMLUserSyncResponse struct {
 	Active            int                    `json:"active"`
 	Existing          int                    `json:"existing"`
 	ToCreate          int                    `json:"toCreate"`
+	ToActivate        int                    `json:"toActivate"`
 	Created           int                    `json:"created"`
+	Activated         int                    `json:"activated"`
 	SkippedInactive   int                    `json:"skippedInactive"`
 	PasswordNotSynced int                    `json:"passwordNotSynced"`
 	Users             []SMLUserSyncCandidate `json:"users,omitempty"`

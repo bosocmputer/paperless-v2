@@ -774,6 +774,18 @@ VALUES ($1, $2, $3, 'admin', 'active')
 		}
 		result.Created++
 	}
+	for _, username := range result.ActivateUsernames {
+		tag, err := tx.Exec(ctx, `
+UPDATE users
+SET status = 'active', updated_at = now()
+WHERE lower(trim(username)) = lower(trim($1))
+  AND status <> 'active'
+`, username)
+		if err != nil {
+			return models.SMLUserSyncResult{}, err
+		}
+		result.Activated += int(tag.RowsAffected())
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return models.SMLUserSyncResult{}, err
@@ -781,26 +793,30 @@ VALUES ($1, $2, $3, 'admin', 'active')
 	return result, nil
 }
 
+type existingUserSyncState struct {
+	Status string
+}
+
 type usernameQuerier interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 }
 
-func (s *Store) loadExistingUsernames(ctx context.Context, q usernameQuerier) (map[string]struct{}, error) {
-	rows, err := q.Query(ctx, `SELECT lower(trim(username)) FROM users`)
+func (s *Store) loadExistingUsernames(ctx context.Context, q usernameQuerier) (map[string]existingUserSyncState, error) {
+	rows, err := q.Query(ctx, `SELECT lower(trim(username)), status FROM users`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	existing := map[string]struct{}{}
+	existing := map[string]existingUserSyncState{}
 	for rows.Next() {
-		var username string
-		if err := rows.Scan(&username); err != nil {
+		var username, status string
+		if err := rows.Scan(&username, &status); err != nil {
 			return nil, err
 		}
 		username = strings.ToLower(strings.TrimSpace(username))
 		if username != "" {
-			existing[username] = struct{}{}
+			existing[username] = existingUserSyncState{Status: strings.ToLower(strings.TrimSpace(status))}
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -832,14 +848,21 @@ func normalizeSMLUserSyncCandidates(candidates []models.SMLUserSyncCandidate) []
 	return out
 }
 
-func summarizeSMLUserSync(candidates []models.SMLUserSyncCandidate, existing map[string]struct{}, requirePasswordHash bool) (models.SMLUserSyncResult, error) {
+func summarizeSMLUserSync(candidates []models.SMLUserSyncCandidate, existing map[string]existingUserSyncState, requirePasswordHash bool) (models.SMLUserSyncResult, error) {
 	result := models.SMLUserSyncResult{Total: len(candidates)}
 	for _, candidate := range candidates {
 		if !candidate.PasswordSynced {
 			result.PasswordNotSynced++
 		}
-		if _, ok := existing[strings.ToLower(strings.TrimSpace(candidate.Username))]; ok {
+		key := strings.ToLower(strings.TrimSpace(candidate.Username))
+		if state, ok := existing[key]; ok {
 			result.Existing++
+			if state.Status != "active" {
+				result.ToActivate++
+				if requirePasswordHash {
+					result.ActivateUsernames = append(result.ActivateUsernames, candidate.Username)
+				}
+			}
 			continue
 		}
 		if requirePasswordHash && strings.TrimSpace(candidate.PasswordHash) == "" {
