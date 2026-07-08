@@ -291,7 +291,7 @@ function openReferencePDF(item = {}) {
     height: 100%;
     flex: 1 1 auto;
     gap: 0.55rem;
-    background: var(--surface-card);
+    background: color-mix(in srgb, var(--orange-50) 16%, var(--surface-card));
 }
 
 .reference-head {
@@ -429,9 +429,9 @@ function openReferencePDF(item = {}) {
 
 .reference-check.dialog-mode .reference-flow-scroll {
     height: 100%;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--orange-200) 48%, var(--surface-border));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--orange-50) 38%, var(--surface-ground));
 }
 
 .reference-flow-row {
@@ -464,9 +464,64 @@ function openReferencePDF(item = {}) {
 
 .reference-card.can-preview:hover,
 .reference-card.can-preview:focus-visible {
-    border-color: var(--primary-color);
+    border-color: var(--orange-500);
     outline: none;
     transform: translateY(-1px);
+}
+
+:global(.reference-check-dialog.reference-audit-dialog .p-dialog-header) {
+    border-bottom: 1px solid color-mix(in srgb, var(--orange-200) 58%, var(--surface-border));
+    background: color-mix(in srgb, var(--orange-50) 42%, var(--surface-card));
+}
+
+:global(.reference-check-dialog.reference-audit-dialog .p-dialog-content) {
+    background: color-mix(in srgb, var(--orange-50) 18%, var(--surface-card));
+}
+
+:global(.reference-check-dialog.reference-audit-dialog .reference-dialog-layout) {
+    background: color-mix(in srgb, var(--orange-50) 16%, var(--surface-card));
+}
+
+:global(.reference-audit-dialog .reference-dialog-title) {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+:global(.reference-audit-dialog .reference-dialog-title-icon) {
+    width: 2.35rem;
+    height: 2.35rem;
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    border: 1px solid color-mix(in srgb, var(--orange-500) 35%, var(--surface-border));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--orange-50) 78%, var(--surface-card));
+    color: var(--orange-600);
+}
+
+:global(.reference-audit-dialog .reference-dialog-title-copy) {
+    min-width: 0;
+    display: grid;
+    gap: 0.1rem;
+}
+
+:global(.reference-audit-dialog .reference-dialog-title-copy strong),
+:global(.reference-audit-dialog .reference-dialog-title-copy small) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+:global(.reference-audit-dialog .reference-dialog-title-copy strong) {
+    font-size: 1rem;
+    color: var(--text-color);
+}
+
+:global(.reference-audit-dialog .reference-dialog-title-copy small) {
+    font-size: 0.86rem;
+    color: var(--text-color-secondary);
 }
 
 .reference-card.status-completed {

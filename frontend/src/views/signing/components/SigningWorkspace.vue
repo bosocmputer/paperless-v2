@@ -698,11 +698,23 @@ function newRequestKey() {
             v-if="allowReferenceCheck"
             v-model:visible="referenceDialogVisible"
             modal
-            class="reference-check-dialog"
+            class="reference-check-dialog reference-audit-dialog"
             :style="{ width: 'min(1280px, 96vw)', height: 'min(820px, 90vh)' }"
             :breakpoints="{ '640px': '100vw' }"
             :header="referenceDialogTitle"
         >
+            <template #header>
+                <div class="reference-dialog-title">
+                    <span class="reference-dialog-title-icon">
+                        <i class="pi pi-list-check"></i>
+                    </span>
+                    <span class="reference-dialog-title-copy">
+                        <strong>ตรวจสอบเอกสารอ้างอิง</strong>
+                        <small>{{ referenceDialogTitle || 'เช็คลิสต์เอกสารก่อนเซ็น' }}</small>
+                    </span>
+                </div>
+            </template>
+
             <div class="reference-dialog-layout">
                 <DocumentReferenceCheck v-if="referenceDialogVisible" compact dialog-mode display-mode="flow" :document="document" :loader="referenceCheckLoader" :allow-preview="adminWorkspace" />
             </div>
