@@ -29,6 +29,8 @@ var (
 		"designer_open":           true,
 		"box_add":                 true,
 		"box_delete":              true,
+		"sign_note_box_add":       true,
+		"sign_note_box_delete":    true,
 		"legal_notice_box_add":    true,
 		"legal_notice_box_delete": true,
 		"save_attempt":            true,
@@ -221,6 +223,8 @@ func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	boxes, issues := normalizeAndValidateBoxRequests(req.Boxes, s.cfg.MaxTemplatePages)
+	signNoteBoxes, noteIssues := normalizeAndValidateSignNoteBoxRequests(req.SignNoteBoxes, s.cfg.MaxTemplatePages)
+	issues = append(issues, noteIssues...)
 	legalNoticeBox, legalNoticeIssues := normalizeAndValidateLegalNoticeBox(req.LegalNoticeBox, s.cfg.MaxTemplatePages, false)
 	issues = append(issues, legalNoticeIssues...)
 	if len(issues) > 0 {
@@ -248,8 +252,12 @@ func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Reque
 		writeValidationIssues(w, http.StatusBadRequest, "invalid_signature_boxes", limitIssues)
 		return
 	}
+	if noteLimitIssues := validateSignNoteBoxSaveLimits(signNoteBoxes, configs); len(noteLimitIssues) > 0 {
+		writeValidationIssues(w, http.StatusBadRequest, "invalid_signature_boxes", noteLimitIssues)
+		return
+	}
 
-	template, err := s.store.ReplaceSignatureTemplateBoxes(r.Context(), id, req.Revision, boxes, legalNoticeBox)
+	template, err := s.store.ReplaceSignatureTemplateBoxes(r.Context(), id, req.Revision, boxes, signNoteBoxes, legalNoticeBox)
 	if errors.Is(err, store.ErrSignatureTemplateNotFound) {
 		writeError(w, http.StatusNotFound, "signature_template_not_found", "Signature template was not found.")
 		return
@@ -519,6 +527,51 @@ func normalizeAndValidateBoxRequests(boxes []models.SignatureTemplateBoxRequest,
 	return normalized, issues
 }
 
+const maxSignNoteBoxes = 500
+
+func normalizeAndValidateSignNoteBoxRequests(boxes []models.SignatureTemplateBoxRequest, maxPages int) ([]models.SignatureTemplateBoxRequest, []models.SignatureValidationIssue) {
+	if len(boxes) > maxSignNoteBoxes {
+		return nil, []models.SignatureValidationIssue{signatureIssue("sign_note_box_count_invalid", "", fmt.Sprintf("Signer note boxes must be %d or fewer.", maxSignNoteBoxes))}
+	}
+	normalized := make([]models.SignatureTemplateBoxRequest, 0, len(boxes))
+	issues := []models.SignatureValidationIssue{}
+	for index, box := range boxes {
+		box.PositionCode = strings.TrimSpace(box.PositionCode)
+		box.SignerType = strings.ToLower(strings.TrimSpace(box.SignerType))
+		box.SignerUser = strings.TrimSpace(box.SignerUser)
+		box.Label = strings.TrimSpace(box.Label)
+		if box.SignerType == "" {
+			box.SignerType = "any"
+		}
+		if box.SignerSlot == 0 {
+			box.SignerSlot = index + 1
+		}
+		if box.Label == "" {
+			box.Label = "หมายเหตุผู้เซ็น"
+		}
+		if box.PositionCode == "" {
+			issues = append(issues, signatureIssue("sign_note_box_position_required", "", "Every signer note box must choose a position."))
+		}
+		if box.SignerType != "any" && box.SignerType != "internal" && box.SignerType != "external" {
+			issues = append(issues, signatureIssue("sign_note_box_signer_type_invalid", box.PositionCode, "Signer note type must be any, internal, or external."))
+		}
+		if box.SignerSlot <= 0 {
+			issues = append(issues, signatureIssue("sign_note_box_signer_slot_invalid", box.PositionCode, "Signer note slot must be greater than 0."))
+		}
+		if box.PageNo <= 0 || box.PageNo > maxPages {
+			issues = append(issues, signatureIssue("sign_note_box_page_invalid", box.PositionCode, fmt.Sprintf("Signer note page must be between 1 and %d.", maxPages)))
+		}
+		if box.XRatio < 0 || box.YRatio < 0 || box.WidthRatio <= 0 || box.HeightRatio <= 0 || box.XRatio+box.WidthRatio > 1 || box.YRatio+box.HeightRatio > 1 {
+			issues = append(issues, signatureIssue("sign_note_box_bounds_invalid", box.PositionCode, "Signer note box must stay inside the PDF page."))
+		}
+		if box.WidthRatio < minSignatureBoxWidthRatio || box.HeightRatio < minSignatureBoxHeightRatio {
+			issues = append(issues, signatureIssue("sign_note_box_too_small", box.PositionCode, "Signer note box is too small to read clearly."))
+		}
+		normalized = append(normalized, box)
+	}
+	return normalized, issues
+}
+
 const (
 	minLegalNoticeWidthRatio  = 0.20
 	minLegalNoticeHeightRatio = 0.035
@@ -607,10 +660,13 @@ func validateSignaturePreset(template models.SignatureTemplate, configs []models
 	}
 	normalizedBoxes, boxIssues := normalizeAndValidateBoxRequests(boxRequestsFromTemplate(template.Boxes), maxPages)
 	issues = append(issues, boxIssues...)
+	normalizedNoteBoxes, noteIssues := normalizeAndValidateSignNoteBoxRequests(boxRequestsFromTemplate(template.SignNoteBoxes), maxPages)
+	issues = append(issues, noteIssues...)
 	legalBoxRequest := legalNoticeBoxRequestFromTemplate(template.LegalNoticeBox)
 	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, false)
 	issues = append(issues, legalIssues...)
 	issues = append(issues, validateSignatureBoxSaveLimits(normalizedBoxes, configs)...)
+	issues = append(issues, validateSignNoteBoxSaveLimits(normalizedNoteBoxes, configs)...)
 	sort.SliceStable(issues, func(i, j int) bool {
 		return issues[i].PositionCode < issues[j].PositionCode
 	})
@@ -645,6 +701,42 @@ func validateSignatureBoxSaveLimits(boxes []models.SignatureTemplateBoxRequest, 
 	return issues
 }
 
+func validateSignNoteBoxSaveLimits(boxes []models.SignatureTemplateBoxRequest, configs []models.DocumentConfigStep) []models.SignatureValidationIssue {
+	issues := []models.SignatureValidationIssue{}
+	stepsByPosition := map[string]models.DocumentConfigStep{}
+	for _, step := range configs {
+		stepsByPosition[strings.ToLower(step.PositionCode)] = step
+	}
+	for _, box := range boxes {
+		key := strings.ToLower(box.PositionCode)
+		step, ok := stepsByPosition[key]
+		if !ok && box.PositionCode != "" {
+			issues = append(issues, signatureIssue("sign_note_box_position_unknown", box.PositionCode, "Signer note box uses a position that is not in document config."))
+			continue
+		}
+		switch step.ConditionType {
+		case 1:
+			if box.SignerType != "any" || box.SignerUser != "" {
+				issues = append(issues, signatureIssue("sign_note_condition_any_type_invalid", box.PositionCode, fmt.Sprintf("%s note box must use any-signer without fixed user.", step.PositionName)))
+			}
+		case 2:
+			required := stepUsers(step)
+			if box.SignerType != "internal" || strings.TrimSpace(box.SignerUser) == "" {
+				issues = append(issues, signatureIssue("sign_note_condition_all_type_invalid", box.PositionCode, fmt.Sprintf("%s note box must choose an internal user.", step.PositionName)))
+				continue
+			}
+			if !containsString(required, box.SignerUser) {
+				issues = append(issues, signatureIssue("sign_note_condition_all_unknown_user", box.PositionCode, fmt.Sprintf("%s note box has a user outside this position: %s.", step.PositionName, box.SignerUser)))
+			}
+		case 3:
+			if box.SignerType != "external" || box.SignerUser != "" {
+				issues = append(issues, signatureIssue("sign_note_condition_external_type_invalid", box.PositionCode, fmt.Sprintf("%s note box must use external signer without internal user.", step.PositionName)))
+			}
+		}
+	}
+	return issues
+}
+
 func validateSignatureTemplate(template models.SignatureTemplate, configs []models.DocumentConfigStep, maxPages int) []models.SignatureValidationIssue {
 	issues := []models.SignatureValidationIssue{}
 	if template.SampleFileID == "" {
@@ -659,9 +751,12 @@ func validateSignatureTemplate(template models.SignatureTemplate, configs []mode
 
 	normalizedBoxes, boxIssues := normalizeAndValidateBoxRequests(boxRequestsFromTemplate(template.Boxes), maxPages)
 	issues = append(issues, boxIssues...)
+	normalizedNoteBoxes, noteIssues := normalizeAndValidateSignNoteBoxRequests(boxRequestsFromTemplate(template.SignNoteBoxes), maxPages)
+	issues = append(issues, noteIssues...)
 	legalBoxRequest := legalNoticeBoxRequestFromTemplate(template.LegalNoticeBox)
 	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, false)
 	issues = append(issues, legalIssues...)
+	issues = append(issues, validateSignNoteBoxSaveLimits(normalizedNoteBoxes, configs)...)
 
 	stepsByPosition := map[string]models.DocumentConfigStep{}
 	for _, step := range configs {

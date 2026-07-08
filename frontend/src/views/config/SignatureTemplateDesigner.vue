@@ -26,6 +26,7 @@ const configs = ref([]);
 const draft = ref(null);
 const active = ref(null);
 const boxes = ref([]);
+const signNoteBoxes = ref([]);
 const legalNoticeBox = ref(null);
 const dirty = ref(false);
 const selectedPositionCode = ref('');
@@ -60,23 +61,31 @@ const currentPageLabel = computed(() => (pageCount.value ? `หน้า ${curre
 const selectedStep = computed(() => configs.value.find((item) => item.positionCode === selectedPositionCode.value));
 const selectedBox = computed(() => boxes.value.find((box) => box.clientKey === selectedBoxKey.value) || null);
 const legalNoticeKey = 'legal_notice_box';
+const signNoteKeyPrefix = 'sign_note_box_';
 const legalNoticeText = LEGAL_NOTICE_TEXT;
 const legalNoticePreviewText = LEGAL_NOTICE_DISPLAY_TEXT;
 const legalNoticeOverflow = ref(false);
 const selectedLegalNotice = computed(() => (selectedBoxKey.value === legalNoticeKey && legalNoticeBox.value ? legalOverlayBox(legalNoticeBox.value) : null));
-const selectedItem = computed(() => selectedLegalNotice.value || selectedBox.value);
+const selectedSignNote = computed(() => signNoteBoxes.value.find((box) => box.clientKey === selectedBoxKey.value) || null);
+const selectedItem = computed(() => selectedLegalNotice.value || selectedSignNote.value || selectedBox.value);
 const selectedIsLegalNotice = computed(() => !!selectedLegalNotice.value);
-const selectedBoxStep = computed(() => (selectedBox.value ? configs.value.find((item) => item.positionCode === selectedBox.value.positionCode) : null));
+const selectedIsSignNote = computed(() => !!selectedSignNote.value);
+const selectedSignerBox = computed(() => selectedSignNote.value || selectedBox.value);
+const selectedBoxStep = computed(() => (selectedSignerBox.value ? configs.value.find((item) => item.positionCode === selectedSignerBox.value.positionCode) : null));
 const selectedBoxSignerOptions = computed(() => stepUsers(selectedBoxStep.value || {}).map((user, index) => ({ label: user, value: user, slot: index + 1 })));
 const selectedBoxSignerTypeLabel = computed(() => {
+    if (selectedIsSignNote.value) return 'หมายเหตุผู้เซ็น';
     if (!selectedBox.value) return '-';
     if (selectedBox.value.signerType === 'any') return 'คนใดคนหนึ่ง';
     if (selectedBox.value.signerType === 'external') return 'บุคคลภายนอก';
     return 'User ภายใน';
 });
 const boxesByPosition = computed(() => groupBoxesBy((box) => box.positionCode));
+const signNoteBoxesByPosition = computed(() => groupSignNoteBoxesBy((box) => box.positionCode));
 const boxesByPage = computed(() => groupBoxesBy((box) => Number(box.pageNo)));
+const signNoteBoxesByPage = computed(() => groupSignNoteBoxesBy((box) => Number(box.pageNo)));
 const currentPageBoxes = computed(() => boxesByPage.value.get(Number(currentPage.value)) || []);
+const currentPageSignNoteBoxes = computed(() => signNoteBoxesByPage.value.get(Number(currentPage.value)) || []);
 const currentPageLegalNotice = computed(() => (legalNoticeBox.value && Number(legalNoticeBox.value.pageNo || 1) === Number(currentPage.value) ? legalOverlayBox(legalNoticeBox.value) : null));
 const validationIssues = computed(() => validateBoxes());
 const validationByPosition = computed(() => {
@@ -91,11 +100,13 @@ const validationByPosition = computed(() => {
 const stepViews = computed(() =>
     configs.value.map((step) => {
         const stepBoxes = boxesByPosition.value.get(step.positionCode) || [];
+        const stepNoteBoxes = signNoteBoxesByPosition.value.get(step.positionCode) || [];
         const required = requiredBoxesForStep(step);
         return {
             ...step,
             users: stepUsers(step),
             boxes: stepBoxes,
+            noteBoxes: stepNoteBoxes,
             required,
             issues: validationByPosition.value.get(step.positionCode) || [],
             isActive: selectedPositionCode.value === step.positionCode,
@@ -108,7 +119,7 @@ const stepViews = computed(() =>
 const canSave = computed(() => canEdit.value && !saving.value && !!template.value);
 const storedPageCount = computed(() => Number(template.value?.sampleFile?.pageCount || pageCount.value || 0));
 const requiredBoxCount = computed(() => configs.value.reduce((total, step) => total + requiredBoxesForStep(step), 0));
-const boxProgressLabel = computed(() => `${boxes.value.length}/${requiredBoxCount.value || 0}`);
+const boxProgressLabel = computed(() => `${boxes.value.length}/${requiredBoxCount.value || 0} · หมายเหตุ ${signNoteBoxes.value.length}`);
 const validationStatusLabel = computed(() => (validationIssues.value.length === 0 ? 'พร้อมใช้เป็นค่าเริ่มต้น' : `${validationIssues.value.length} จุดต้องแก้`));
 const validationStatusSeverity = computed(() => (validationIssues.value.length === 0 ? 'success' : 'warn'));
 const canAddBoxes = computed(() => canEdit.value && !!template.value?.sampleFileId);
@@ -185,6 +196,7 @@ async function loadState() {
         active.value = result.active;
         maxTemplatePages.value = result.maxTemplatePages || 20;
         boxes.value = withClientKeys((active.value || draft.value)?.boxes || []);
+        signNoteBoxes.value = withSignNoteClientKeys((active.value || draft.value)?.signNoteBoxes || []);
         legalNoticeBox.value = withLegalNoticeClientKey((active.value || draft.value)?.legalNoticeBox || null);
         selectedPositionCode.value = configs.value[0]?.positionCode || '';
         selectedBoxKey.value = '';
@@ -292,9 +304,9 @@ async function handleFileChange(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if (boxes.value.length > 0 || legalNoticeBox.value) {
+    if (boxes.value.length > 0 || signNoteBoxes.value.length > 0 || legalNoticeBox.value) {
         confirm.require({
-            message: 'อัปโหลด PDF ใหม่จะล้างกรอบลายเซ็นและกรอบข้อความกฎหมายเดิมทั้งหมด และใช้ไฟล์ใหม่นี้แทนของเก่า',
+            message: 'อัปโหลด PDF ใหม่จะล้างกรอบลายเซ็น กรอบหมายเหตุ และกรอบข้อความกฎหมายเดิมทั้งหมด และใช้ไฟล์ใหม่นี้แทนของเก่า',
             header: 'แทนที่ PDF ตัวอย่าง',
             icon: 'pi pi-exclamation-triangle',
             rejectProps: {
@@ -326,6 +338,7 @@ async function uploadSamplePDF(file) {
         active.value = result.template;
         draft.value = null;
         boxes.value = withClientKeys(result.template?.boxes || []);
+        signNoteBoxes.value = withSignNoteClientKeys(result.template?.signNoteBoxes || []);
         legalNoticeBox.value = withLegalNoticeClientKey(result.template?.legalNoticeBox || null);
         dirty.value = false;
         currentPage.value = 1;
@@ -389,6 +402,51 @@ function addBox(step) {
     recordDesignerEvent('box_add', { positionCode: step.positionCode, conditionType: Number(step.conditionType) });
 }
 
+function addSignNoteBox(step) {
+    selectedPositionCode.value = step.positionCode;
+    if (!canEdit.value || !template.value?.sampleFileId) {
+        toast.add({ severity: 'warn', summary: 'ต้องอัปโหลด PDF ตัวอย่างก่อน', life: 3500 });
+        return;
+    }
+    const users = stepUsers(step);
+    const existing = signNoteBoxesByPosition.value.get(step.positionCode) || [];
+    const box = {
+        clientKey: makeSignNoteClientKey(),
+        positionCode: step.positionCode,
+        signerSlot: existing.length + 1,
+        signerType: 'any',
+        signerUser: '',
+        pageNo: currentPage.value,
+        xRatio: 0.55,
+        yRatio: 0.72,
+        widthRatio: 0.25,
+        heightRatio: 0.06,
+        label: 'หมายเหตุผู้เซ็น'
+    };
+
+    if (Number(step.conditionType) === 2) {
+        const usedOnPage = new Set(existing.filter((item) => Number(item.pageNo || 1) === Number(currentPage.value)).map((item) => item.signerUser).filter(Boolean));
+        const user = users.find((item) => !usedOnPage.has(item)) || users[0] || '';
+        if (!user) {
+            toast.add({ severity: 'warn', summary: 'ยังไม่มี user ในตำแหน่งนี้', detail: 'กรอบหมายเหตุของเงื่อนไขทุกคนต้องผูกกับ user', life: 3500 });
+            return;
+        }
+        box.signerType = 'internal';
+        box.signerUser = user;
+        box.signerSlot = Math.max(1, users.indexOf(user) + 1);
+    } else if (Number(step.conditionType) === 3) {
+        box.signerType = 'external';
+        box.signerSlot = 1;
+    } else {
+        box.signerSlot = 1;
+    }
+
+    signNoteBoxes.value.push(box);
+    selectSignNoteBox(box, { scrollIntoView: true });
+    dirty.value = true;
+    recordDesignerEvent('sign_note_box_add', { positionCode: step.positionCode, conditionType: Number(step.conditionType) });
+}
+
 function deleteBox(box) {
     const label = box.signerUser || box.label || `Position ${box.positionCode}`;
     confirm.require({
@@ -405,6 +463,24 @@ function deleteBox(box) {
             severity: 'danger'
         },
         accept: () => removeBox(box)
+    });
+}
+
+function deleteSignNoteBox(box) {
+    confirm.require({
+        message: `ลบกรอบหมายเหตุของ "${box.signerUser || box.label || box.positionCode}" ออกจาก template นี้ใช่ไหม?`,
+        header: 'ลบกรอบหมายเหตุผู้เซ็น',
+        icon: 'pi pi-exclamation-triangle',
+        rejectProps: {
+            label: 'ยกเลิก',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ลบกรอบ',
+            severity: 'danger'
+        },
+        accept: () => removeSignNoteBox(box)
     });
 }
 
@@ -465,7 +541,23 @@ function removeBox(box) {
     recordDesignerEvent('box_delete', { positionCode: box.positionCode, conditionType: Number(step?.conditionType || 0) });
 }
 
+function removeSignNoteBox(box) {
+    const step = configs.value.find((item) => item.positionCode === box.positionCode);
+    signNoteBoxes.value = signNoteBoxes.value.filter((item) => item.clientKey !== box.clientKey);
+    if (selectedBoxKey.value === box.clientKey) selectedBoxKey.value = '';
+    dirty.value = true;
+    recordDesignerEvent('sign_note_box_delete', { positionCode: box.positionCode, conditionType: Number(step?.conditionType || 0) });
+}
+
 function selectBox(box, options = {}) {
+    if (!box) return;
+    selectedBoxKey.value = box.clientKey;
+    selectedPositionCode.value = box.positionCode;
+    if (Number(box.pageNo) !== Number(currentPage.value)) currentPage.value = Number(box.pageNo);
+    if (options.scrollIntoView) nextTick(() => scrollBoxIntoView(box));
+}
+
+function selectSignNoteBox(box, options = {}) {
     if (!box) return;
     selectedBoxKey.value = box.clientKey;
     selectedPositionCode.value = box.positionCode;
@@ -496,6 +588,11 @@ function updateBoxLabel(box, value) {
         dirty.value = true;
         return;
     }
+    if (isSignNoteKey(box.clientKey)) {
+        box.label = 'หมายเหตุผู้เซ็น';
+        dirty.value = true;
+        return;
+    }
     box.label = String(value || '').slice(0, 80);
     dirty.value = true;
 }
@@ -522,7 +619,7 @@ function updateBoxSignerUser(box, value) {
     box.signerType = 'internal';
     box.signerUser = user;
     box.signerSlot = option?.slot || Math.max(1, Number(box.signerSlot || 1));
-    box.label = user || selectedBoxStep.value.positionName;
+    box.label = isSignNoteKey(box.clientKey) ? 'หมายเหตุผู้เซ็น' : user || selectedBoxStep.value.positionName;
     dirty.value = true;
 }
 
@@ -554,6 +651,7 @@ async function checkLegalNoticeOverflow() {
 
 function startBoxPointer(event, box, mode) {
     if (box.clientKey === legalNoticeKey) selectLegalNoticeBox();
+    else if (isSignNoteKey(box.clientKey)) selectSignNoteBox(box);
     else selectBox(box);
     if (!canEdit.value || !overlayRef.value) return;
     cleanupPointerListeners();
@@ -572,14 +670,16 @@ function startBoxPointer(event, box, mode) {
         frame = null;
         const dx = (latestEvent.clientX - start.x) / rect.width;
         const dy = (latestEvent.clientY - start.y) / rect.height;
-        const target = box.clientKey === legalNoticeKey ? legalNoticeBox.value : boxes.value.find((item) => item.clientKey === box.clientKey);
+        const target = box.clientKey === legalNoticeKey ? legalNoticeBox.value : isSignNoteKey(box.clientKey) ? signNoteBoxes.value.find((item) => item.clientKey === box.clientKey) : boxes.value.find((item) => item.clientKey === box.clientKey);
         if (!target) return;
         if (mode === 'move') {
             target.xRatio = clamp(start.box.xRatio + dx, 0, 1 - target.widthRatio);
             target.yRatio = clamp(start.box.yRatio + dy, 0, 1 - target.heightRatio);
         } else {
-            target.widthRatio = clamp(start.box.widthRatio + dx, box.clientKey === legalNoticeKey ? 0.2 : 0.03, 1 - target.xRatio);
-            target.heightRatio = clamp(start.box.heightRatio + dy, box.clientKey === legalNoticeKey ? 0.035 : 0.03, 1 - target.yRatio);
+            const minWidth = box.clientKey === legalNoticeKey ? 0.2 : isSignNoteKey(box.clientKey) ? 0.05 : 0.03;
+            const minHeight = box.clientKey === legalNoticeKey ? 0.035 : isSignNoteKey(box.clientKey) ? 0.035 : 0.03;
+            target.widthRatio = clamp(start.box.widthRatio + dx, minWidth, 1 - target.xRatio);
+            target.heightRatio = clamp(start.box.heightRatio + dy, minHeight, 1 - target.yRatio);
         }
         if (box.clientKey === legalNoticeKey) legalNoticeBox.value = { ...target };
         dirty.value = true;
@@ -613,7 +713,7 @@ async function saveTemplate(showToast = true) {
         return null;
     }
 
-    const selectedSnapshot = selectedBox.value ? boxSnapshot(selectedBox.value) : null;
+    const selectedSnapshot = selectedSignerBox.value ? boxSnapshot(selectedSignerBox.value) : null;
     recordDesignerEvent('save_attempt');
     saving.value = true;
     error.value = '';
@@ -632,12 +732,14 @@ async function saveTemplate(showToast = true) {
                 heightRatio: Number(box.heightRatio),
                 label: box.label || ''
             })),
+            signNoteBoxes: signNoteBoxes.value.map(toSignerBoxPayload),
             legalNoticeBox: toLegalNoticePayload(legalNoticeBox.value)
         };
         const result = await api.saveSignatureTemplateBoxes(template.value.id, payload);
         active.value = result.template;
         draft.value = null;
         boxes.value = withClientKeys(result.template?.boxes || []);
+        signNoteBoxes.value = withSignNoteClientKeys(result.template?.signNoteBoxes || []);
         legalNoticeBox.value = withLegalNoticeClientKey(result.template?.legalNoticeBox || null);
         restoreSelectedBox(selectedSnapshot);
         if (!selectedSnapshot && selectedBoxKey.value === legalNoticeKey && legalNoticeBox.value) selectLegalNoticeBox();
@@ -676,6 +778,17 @@ function validateBoxes() {
         usedSlots.add(slotKey);
         if (box.xRatio < 0 || box.yRatio < 0 || box.widthRatio <= 0 || box.heightRatio <= 0 || box.xRatio + box.widthRatio > 1 || box.yRatio + box.heightRatio > 1) {
             issues.push({ code: 'box_bounds_invalid', positionCode: box.positionCode, message: `กรอบของ Position ${box.positionCode} อยู่นอกหน้า PDF` });
+        }
+    });
+    signNoteBoxes.value.forEach((box) => {
+        if (box.xRatio < 0 || box.yRatio < 0 || box.widthRatio <= 0 || box.heightRatio <= 0 || box.xRatio + box.widthRatio > 1 || box.yRatio + box.heightRatio > 1) {
+            issues.push({ code: 'sign_note_box_bounds_invalid', positionCode: box.positionCode, message: `กรอบหมายเหตุของ Position ${box.positionCode} อยู่นอกหน้า PDF` });
+        }
+        if (box.pageNo < 1 || box.pageNo > Math.max(storedPageCount.value || pageCount.value || 1, 1)) {
+            issues.push({ code: 'sign_note_box_page_invalid', positionCode: box.positionCode, message: `กรอบหมายเหตุของ Position ${box.positionCode} อยู่หน้าที่ไม่ถูกต้อง` });
+        }
+        if (box.widthRatio < 0.05 || box.heightRatio < 0.035) {
+            issues.push({ code: 'sign_note_box_too_small', positionCode: box.positionCode, message: `กรอบหมายเหตุของ Position ${box.positionCode} เล็กเกินไป` });
         }
     });
     if (legalNoticeBox.value) {
@@ -718,6 +831,14 @@ function validateBoxes() {
             stepBoxes
                 .filter((box) => box.signerUser && !required.includes(box.signerUser))
                 .forEach((box) => issues.push({ code: 'condition_all_unknown_user_box', positionCode: step.positionCode, message: `${step.positionName} มี user นอก config: ${box.signerUser}` }));
+            (signNoteBoxesByPosition.value.get(step.positionCode) || []).forEach((box) => {
+                if (box.signerType !== 'internal' || !box.signerUser) {
+                    issues.push({ code: 'sign_note_condition_all_type_invalid', positionCode: step.positionCode, message: `กรอบหมายเหตุ ${step.positionName} ต้องผูก user ภายใน` });
+                }
+                if (box.signerUser && !required.includes(box.signerUser)) {
+                    issues.push({ code: 'sign_note_condition_all_unknown_user', positionCode: step.positionCode, message: `กรอบหมายเหตุ ${step.positionName} มี user นอก config: ${box.signerUser}` });
+                }
+            });
         }
         if (step.conditionType === 3 && !stepBoxes.some((box) => box.signerType === 'external')) {
             issues.push({ code: 'condition_external_box_required', positionCode: step.positionCode, message: `${step.positionName} ต้องมีกรอบบุคคลภายนอก` });
@@ -728,6 +849,14 @@ function validateBoxes() {
         if (step.conditionType === 3 && stepBoxes.some((box) => box.signerType !== 'external' || box.signerUser)) {
             issues.push({ code: 'condition_external_type_invalid', positionCode: step.positionCode, message: `${step.positionName} ต้องเป็นกรอบบุคคลภายนอกเท่านั้น` });
         }
+        (signNoteBoxesByPosition.value.get(step.positionCode) || []).forEach((box) => {
+            if (Number(step.conditionType) === 1 && (box.signerType !== 'any' || box.signerUser)) {
+                issues.push({ code: 'sign_note_condition_any_type_invalid', positionCode: step.positionCode, message: `กรอบหมายเหตุ ${step.positionName} ต้องเป็นแบบคนใดคนหนึ่ง` });
+            }
+            if (Number(step.conditionType) === 3 && (box.signerType !== 'external' || box.signerUser)) {
+                issues.push({ code: 'sign_note_condition_external_type_invalid', positionCode: step.positionCode, message: `กรอบหมายเหตุ ${step.positionName} ต้องเป็นบุคคลภายนอก` });
+            }
+        });
     });
     return issues;
 }
@@ -811,8 +940,29 @@ function groupBoxesBy(getKey) {
     return grouped;
 }
 
+function groupSignNoteBoxesBy(getKey) {
+    const grouped = new Map();
+    signNoteBoxes.value.forEach((box) => {
+        const key = getKey(box);
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(box);
+    });
+    return grouped;
+}
+
 function withClientKeys(items) {
     return items.map((item) => ({ ...item, clientKey: item.id || makeClientKey() }));
+}
+
+function withSignNoteClientKeys(items) {
+    return items.map((item) => {
+        const currentKey = String(item.clientKey || '');
+        return { ...item, clientKey: isSignNoteKey(currentKey) ? currentKey : makeSignNoteClientKey(), label: item.label || 'หมายเหตุผู้เซ็น' };
+    });
+}
+
+function isSignNoteKey(key) {
+    return String(key || '').startsWith(signNoteKeyPrefix);
 }
 
 function withLegalNoticeClientKey(item) {
@@ -838,8 +988,27 @@ function toLegalNoticePayload(box) {
     };
 }
 
+function toSignerBoxPayload(box) {
+    return {
+        positionCode: box.positionCode,
+        signerSlot: Number(box.signerSlot),
+        signerType: box.signerType,
+        signerUser: box.signerUser || '',
+        pageNo: Number(box.pageNo),
+        xRatio: Number(box.xRatio),
+        yRatio: Number(box.yRatio),
+        widthRatio: Number(box.widthRatio),
+        heightRatio: Number(box.heightRatio),
+        label: box.label || ''
+    };
+}
+
 function makeClientKey() {
     return `box_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function makeSignNoteClientKey() {
+    return `${signNoteKeyPrefix}${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
 function makeDesignerSessionId() {
@@ -858,6 +1027,7 @@ function formatDate(value) {
 
 function boxSnapshot(box) {
     return {
+        boxKind: isSignNoteKey(box.clientKey) ? 'sign_note' : 'signature',
         positionCode: box.positionCode,
         signerSlot: Number(box.signerSlot),
         signerUser: box.signerUser || '',
@@ -867,7 +1037,7 @@ function boxSnapshot(box) {
 
 function restoreSelectedBox(snapshot) {
     if (!snapshot) return;
-    const match =
+    const signatureMatch =
         boxes.value.find(
             (box) =>
                 box.positionCode === snapshot.positionCode &&
@@ -875,7 +1045,18 @@ function restoreSelectedBox(snapshot) {
                 (box.signerUser || '') === snapshot.signerUser &&
                 box.signerType === snapshot.signerType
         ) || boxes.value.find((box) => box.positionCode === snapshot.positionCode);
-    if (match) selectBox(match);
+    const signNoteMatch =
+        signNoteBoxes.value.find(
+            (box) =>
+                box.positionCode === snapshot.positionCode &&
+                Number(box.signerSlot) === snapshot.signerSlot &&
+                (box.signerUser || '') === snapshot.signerUser &&
+                box.signerType === snapshot.signerType
+        ) || signNoteBoxes.value.find((box) => box.positionCode === snapshot.positionCode);
+    const match = snapshot.boxKind === 'sign_note' ? signNoteMatch || signatureMatch : signatureMatch || signNoteMatch;
+    if (!match) return;
+    if (isSignNoteKey(match.clientKey)) selectSignNoteBox(match);
+    else selectBox(match);
 }
 
 function scrollBoxIntoView(box) {
@@ -1030,6 +1211,20 @@ function recordDesignerEvent(event, extra = {}) {
                                 <span v-if="canEdit" class="signature-box-handle" @pointerdown="startBoxPointer($event, currentPageLegalNotice, 'resize')"></span>
                             </div>
                             <div
+                                v-for="box in currentPageSignNoteBoxes"
+                                :key="box.clientKey"
+                                class="signature-box sign-note-box"
+                                :class="{ selected: selectedBoxKey === box.clientKey, readonly: !canEdit }"
+                                :style="boxStyle(box)"
+                                @pointerdown="startBoxPointer($event, box, 'move')"
+                            >
+                                <div class="signature-box-label">{{ box.label || 'หมายเหตุผู้เซ็น' }}</div>
+                                <button v-if="canEdit" class="signature-box-delete" type="button" aria-label="ลบกรอบหมายเหตุ" @pointerdown.stop @click.stop="deleteSignNoteBox(box)">
+                                    <i class="pi pi-times"></i>
+                                </button>
+                                <span v-if="canEdit" class="signature-box-handle" @pointerdown="startBoxPointer($event, box, 'resize')"></span>
+                            </div>
+                            <div
                                 v-for="box in currentPageBoxes"
                                 :key="box.clientKey"
                                 class="signature-box"
@@ -1054,6 +1249,7 @@ function recordDesignerEvent(event, extra = {}) {
                         <div>
                             <div class="font-semibold">กรอบที่เลือก</div>
                             <div v-if="selectedIsLegalNotice" class="text-sm text-muted-color">ข้อความกฎหมายบน PDF จริง</div>
+                            <div v-else-if="selectedIsSignNote" class="text-sm text-muted-color">{{ selectedBoxStep?.positionCode }} - หมายเหตุผู้เซ็น</div>
                             <div v-else-if="selectedBoxStep" class="text-sm text-muted-color">{{ selectedBoxStep.positionCode }} - {{ selectedBoxStep.positionName }}</div>
                         </div>
                     </div>
@@ -1070,10 +1266,11 @@ function recordDesignerEvent(event, extra = {}) {
                                 :id="`box-label-${selectedItem.clientKey}`"
                                 :modelValue="selectedItem.label"
                                 maxlength="80"
-                                :disabled="!canEdit || selectedIsLegalNotice"
+                                :disabled="!canEdit || selectedIsLegalNotice || selectedIsSignNote"
                                 @update:modelValue="updateBoxLabel(selectedItem, $event)"
                             />
                             <small v-if="selectedIsLegalNotice" class="text-muted-color">{{ legalNoticeText }}</small>
+                            <small v-else-if="selectedIsSignNote" class="text-muted-color">ข้อความจริงมาจากช่องหมายเหตุที่ผู้เซ็นกรอกตอนยืนยันเอกสาร</small>
                         </div>
 
                         <div class="field-grid">
@@ -1091,7 +1288,7 @@ function recordDesignerEvent(event, extra = {}) {
                             </div>
                             <div class="field-row">
                                 <span>ประเภท</span>
-                                <Tag :value="selectedIsLegalNotice ? 'ข้อความกฎหมาย' : selectedBoxSignerTypeLabel" :severity="selectedIsLegalNotice ? 'success' : conditionSeverity(selectedBoxStep?.conditionType)" class="w-fit" />
+                                <Tag :value="selectedIsLegalNotice ? 'ข้อความกฎหมาย' : selectedBoxSignerTypeLabel" :severity="selectedIsLegalNotice ? 'success' : selectedIsSignNote ? 'warn' : conditionSeverity(selectedBoxStep?.conditionType)" class="w-fit" />
                             </div>
                         </div>
 
@@ -1132,7 +1329,7 @@ function recordDesignerEvent(event, extra = {}) {
                     <div class="panel-title">
                         <div>
                             <div class="font-semibold">ขั้นตอนและกรอบ</div>
-                            <div class="text-sm text-muted-color">{{ boxes.length }} กรอบเริ่มต้น</div>
+                            <div class="text-sm text-muted-color">{{ boxes.length }} กรอบลายเซ็น · {{ signNoteBoxes.length }} กรอบหมายเหตุ</div>
                         </div>
                         <Tag :value="validationStatusLabel" :severity="validationStatusSeverity" />
                     </div>
@@ -1157,13 +1354,10 @@ function recordDesignerEvent(event, extra = {}) {
 
                             <div class="step-status-row">
                                 <span :class="['box-count', { ok: step.isComplete, warn: step.issues.length > 0 }]">{{ step.boxes.length }}/{{ step.required }}</span>
-                                <Button
-                                    label="เพิ่ม"
-                                    :icon="step.canAdd ? 'pi pi-plus' : 'pi pi-check'"
-                                    size="small"
-                                    :disabled="!step.canAdd"
-                                    @click.stop="addBox(step)"
-                                />
+                                <div class="step-actions">
+                                    <Button label="ลายเซ็น" :icon="step.canAdd ? 'pi pi-plus' : 'pi pi-check'" size="small" :disabled="!step.canAdd" @click.stop="addBox(step)" />
+                                    <Button label="หมายเหตุ" icon="pi pi-comment" severity="secondary" outlined size="small" :disabled="!canAddBoxes" @click.stop="addSignNoteBox(step)" />
+                                </div>
                             </div>
 
                             <small v-if="step.addDisabledReason" class="text-muted-color">{{ step.addDisabledReason }}</small>
@@ -1178,6 +1372,19 @@ function recordDesignerEvent(event, extra = {}) {
                                     @click.stop="selectBox(box, { scrollIntoView: true })"
                                 >
                                     <span>{{ box.label || box.signerUser || box.positionCode }}</span>
+                                    <small>หน้า {{ box.pageNo }} / {{ signerTypeShortLabel(box.signerType) }}</small>
+                                </button>
+                            </div>
+                            <div v-if="step.noteBoxes.length" class="step-box-list sign-note-list">
+                                <button
+                                    v-for="box in step.noteBoxes"
+                                    :key="box.clientKey"
+                                    type="button"
+                                    class="box-list-item"
+                                    :class="{ active: selectedBoxKey === box.clientKey }"
+                                    @click.stop="selectSignNoteBox(box, { scrollIntoView: true })"
+                                >
+                                    <span>หมายเหตุผู้เซ็น</span>
                                     <small>หน้า {{ box.pageNo }} / {{ signerTypeShortLabel(box.signerType) }}</small>
                                 </button>
                             </div>
@@ -1337,6 +1544,18 @@ function recordDesignerEvent(event, extra = {}) {
     box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.24);
 }
 
+.sign-note-box {
+    border-color: var(--p-orange-500, #f97316);
+    background: rgba(251, 146, 60, 0.16);
+}
+
+.sign-note-box.selected {
+    border-color: var(--p-orange-600, #ea580c);
+    background: rgba(251, 146, 60, 0.24);
+    outline: 2px solid rgba(251, 146, 60, 0.22);
+    outline-offset: 2px;
+}
+
 .legal-notice-preview-text {
     display: block;
     width: 100%;
@@ -1493,6 +1712,18 @@ function recordDesignerEvent(event, extra = {}) {
 
 .step-row.complete:not(.active) {
     border-color: color-mix(in srgb, var(--green-500, #22c55e) 55%, var(--surface-border));
+}
+
+.step-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.35rem;
+}
+
+.sign-note-list .box-list-item {
+    border-color: color-mix(in srgb, var(--p-orange-500, #f97316) 35%, var(--surface-border));
+    background: color-mix(in srgb, var(--p-orange-500, #f97316) 7%, var(--surface-card));
 }
 
 .step-head,

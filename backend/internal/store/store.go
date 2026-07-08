@@ -303,6 +303,29 @@ ON signature_template_boxes (template_id, lower(position_code), signer_slot);
 CREATE INDEX IF NOT EXISTS signature_template_boxes_lookup_idx
 ON signature_template_boxes (template_id, page_no, lower(position_code), signer_slot);
 
+CREATE TABLE IF NOT EXISTS signer_note_template_boxes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    template_id UUID NOT NULL REFERENCES signature_templates(id) ON DELETE CASCADE,
+    position_code TEXT NOT NULL,
+    signer_slot INTEGER NOT NULL CHECK (signer_slot > 0),
+    signer_type TEXT NOT NULL CHECK (signer_type IN ('any', 'internal', 'external')),
+    signer_user TEXT NOT NULL DEFAULT '',
+    page_no INTEGER NOT NULL CHECK (page_no > 0),
+    x_ratio DOUBLE PRECISION NOT NULL,
+    y_ratio DOUBLE PRECISION NOT NULL,
+    width_ratio DOUBLE PRECISION NOT NULL,
+    height_ratio DOUBLE PRECISION NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (x_ratio >= 0 AND y_ratio >= 0),
+    CHECK (width_ratio > 0 AND height_ratio > 0),
+    CHECK (x_ratio + width_ratio <= 1),
+    CHECK (y_ratio + height_ratio <= 1)
+);
+
+CREATE INDEX IF NOT EXISTS signer_note_template_boxes_lookup_idx
+ON signer_note_template_boxes (template_id, page_no, lower(position_code), signer_slot);
+
 CREATE TABLE IF NOT EXISTS signing_documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sml_tenant TEXT NOT NULL DEFAULT 'sml1_2026',
@@ -330,6 +353,7 @@ CREATE TABLE IF NOT EXISTS signing_documents (
     legal_notice_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
     signature_placement_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
     legal_notice_boxes_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
+    sign_note_placement_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_by UUID REFERENCES users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -354,6 +378,9 @@ ADD COLUMN IF NOT EXISTS signature_placement_snapshot JSONB NOT NULL DEFAULT '[]
 
 ALTER TABLE signing_documents
 ADD COLUMN IF NOT EXISTS legal_notice_boxes_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS sign_note_placement_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 ALTER TABLE signing_documents
 DROP CONSTRAINT IF EXISTS signing_documents_status_check;
@@ -1227,6 +1254,11 @@ ORDER BY CASE t.status WHEN 'draft' THEN 0 ELSE 1 END, t.version DESC
 			return nil, nil, err
 		}
 		template.Boxes = boxes
+		noteBoxes, err := s.ListSignerNoteTemplateBoxes(ctx, template.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		template.SignNoteBoxes = noteBoxes
 		if template.Status == "draft" && draft == nil {
 			copy := template
 			draft = &copy
@@ -1264,6 +1296,11 @@ WHERE t.id = $1
 		return models.SignatureTemplate{}, err
 	}
 	template.Boxes = boxes
+	noteBoxes, err := s.ListSignerNoteTemplateBoxes(ctx, template.ID)
+	if err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	template.SignNoteBoxes = noteBoxes
 	return template, nil
 }
 
@@ -1335,6 +1372,9 @@ WHERE id = $3 AND status = 'active'
 	if _, err := tx.Exec(ctx, `DELETE FROM signature_template_boxes WHERE template_id = $1`, templateID); err != nil {
 		return models.SignatureTemplate{}, err
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM signer_note_template_boxes WHERE template_id = $1`, templateID); err != nil {
+		return models.SignatureTemplate{}, err
+	}
 	if _, err := tx.Exec(ctx, `UPDATE signature_templates SET legal_notice_box = '{}'::jsonb WHERE id = $1`, templateID); err != nil {
 		return models.SignatureTemplate{}, err
 	}
@@ -1380,7 +1420,31 @@ ORDER BY page_no, lower(position_code), signer_slot
 	return boxes, rows.Err()
 }
 
-func (s *Store) ReplaceSignatureTemplateBoxes(ctx context.Context, templateID string, revision int, boxes []models.SignatureTemplateBoxRequest, legalNoticeBox *models.LegalNoticeBoxRequest) (models.SignatureTemplate, error) {
+func (s *Store) ListSignerNoteTemplateBoxes(ctx context.Context, templateID string) ([]models.SignatureTemplateBox, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id::text, template_id::text, position_code, signer_slot, signer_type, signer_user, page_no,
+       x_ratio, y_ratio, width_ratio, height_ratio, label, created_at
+FROM signer_note_template_boxes
+WHERE template_id = $1
+ORDER BY page_no, lower(position_code), signer_slot, y_ratio, x_ratio
+`, templateID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	boxes := []models.SignatureTemplateBox{}
+	for rows.Next() {
+		box, err := scanSignatureTemplateBox(rows)
+		if err != nil {
+			return nil, err
+		}
+		boxes = append(boxes, box)
+	}
+	return boxes, rows.Err()
+}
+
+func (s *Store) ReplaceSignatureTemplateBoxes(ctx context.Context, templateID string, revision int, boxes []models.SignatureTemplateBoxRequest, signNoteBoxes []models.SignatureTemplateBoxRequest, legalNoticeBox *models.LegalNoticeBoxRequest) (models.SignatureTemplate, error) {
 	tenant := tenantFilterValue(ctx)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -1406,9 +1470,23 @@ func (s *Store) ReplaceSignatureTemplateBoxes(ctx context.Context, templateID st
 	if _, err := tx.Exec(ctx, `DELETE FROM signature_template_boxes WHERE template_id = $1`, templateID); err != nil {
 		return models.SignatureTemplate{}, err
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM signer_note_template_boxes WHERE template_id = $1`, templateID); err != nil {
+		return models.SignatureTemplate{}, err
+	}
 	for _, box := range boxes {
 		if _, err := tx.Exec(ctx, `
 INSERT INTO signature_template_boxes (
+    template_id, position_code, signer_slot, signer_type, signer_user, page_no,
+    x_ratio, y_ratio, width_ratio, height_ratio, label
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+`, templateID, box.PositionCode, box.SignerSlot, box.SignerType, box.SignerUser, box.PageNo, box.XRatio, box.YRatio, box.WidthRatio, box.HeightRatio, box.Label); err != nil {
+			return models.SignatureTemplate{}, err
+		}
+	}
+	for _, box := range signNoteBoxes {
+		if _, err := tx.Exec(ctx, `
+INSERT INTO signer_note_template_boxes (
     template_id, position_code, signer_slot, signer_type, signer_user, page_no,
     x_ratio, y_ratio, width_ratio, height_ratio, label
 )
@@ -1686,6 +1764,25 @@ func parseSignaturePlacementSnapshots(raw string) []models.SignaturePlacementSna
 		return nil
 	}
 	out := make([]models.SignaturePlacementSnapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if strings.TrimSpace(snapshot.PositionCode) == "" || snapshot.PageNo <= 0 || snapshot.WidthRatio <= 0 || snapshot.HeightRatio <= 0 {
+			continue
+		}
+		out = append(out, snapshot)
+	}
+	return out
+}
+
+func parseSignNotePlacementSnapshots(raw string) []models.SignNotePlacementSnapshot {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" || raw == "null" {
+		return nil
+	}
+	var snapshots []models.SignNotePlacementSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshots); err != nil {
+		return nil
+	}
+	out := make([]models.SignNotePlacementSnapshot, 0, len(snapshots))
 	for _, snapshot := range snapshots {
 		if strings.TrimSpace(snapshot.PositionCode) == "" || snapshot.PageNo <= 0 || snapshot.WidthRatio <= 0 || snapshot.HeightRatio <= 0 {
 			continue

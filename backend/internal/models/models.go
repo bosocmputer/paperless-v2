@@ -157,6 +157,7 @@ type SignatureTemplate struct {
 	UpdatedAt      time.Time              `json:"updatedAt"`
 	PublishedAt    *time.Time             `json:"publishedAt,omitempty"`
 	Boxes          []SignatureTemplateBox `json:"boxes"`
+	SignNoteBoxes  []SignatureTemplateBox `json:"signNoteBoxes,omitempty"`
 	LegalNoticeBox *LegalNoticeBox        `json:"legalNoticeBox,omitempty"`
 }
 
@@ -238,9 +239,27 @@ type SignaturePlacementSnapshot struct {
 	Label         string  `json:"label"`
 }
 
+type SignNotePlacementSnapshot struct {
+	PositionCode  string  `json:"positionCode"`
+	PositionName  string  `json:"positionName"`
+	SequenceNo    float64 `json:"sequenceNo"`
+	ConditionType int     `json:"conditionType"`
+	SignerSlot    int     `json:"signerSlot"`
+	SignerType    string  `json:"signerType"`
+	SignerUser    string  `json:"signerUser"`
+	SignerName    string  `json:"signerName"`
+	PageNo        int     `json:"pageNo"`
+	XRatio        float64 `json:"xRatio"`
+	YRatio        float64 `json:"yRatio"`
+	WidthRatio    float64 `json:"widthRatio"`
+	HeightRatio   float64 `json:"heightRatio"`
+	Label         string  `json:"label"`
+}
+
 type SaveSignatureBoxesRequest struct {
 	Revision       int                           `json:"revision"`
 	Boxes          []SignatureTemplateBoxRequest `json:"boxes"`
+	SignNoteBoxes  []SignatureTemplateBoxRequest `json:"signNoteBoxes,omitempty"`
 	LegalNoticeBox *LegalNoticeBoxRequest        `json:"legalNoticeBox"`
 }
 
@@ -429,6 +448,7 @@ type SigningDocument struct {
 	LegalNoticeSnapshot *LegalNoticeSnapshot         `json:"legalNoticeSnapshot,omitempty"`
 	LegalNoticeBoxes    []LegalNoticeSnapshot        `json:"legalNoticeBoxes,omitempty"`
 	SignaturePlacements []SignaturePlacementSnapshot `json:"signaturePlacements,omitempty"`
+	SignNotePlacements  []SignNotePlacementSnapshot  `json:"signNotePlacements,omitempty"`
 	OriginalFile        *UploadedFile                `json:"originalFile,omitempty"`
 	CurrentFile         *UploadedFile                `json:"currentFile,omitempty"`
 	FinalFile           *UploadedFile                `json:"finalFile,omitempty"`

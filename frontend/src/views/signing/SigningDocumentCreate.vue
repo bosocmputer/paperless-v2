@@ -133,7 +133,7 @@ watch(
 );
 
 watch(
-    () => [form.value.selectedCandidate, form.value.fileId, form.value.layoutBoxes, form.value.legalNoticeBox, form.value.legalNoticeBoxes, form.value.selectedPresetId, activeStep.value],
+    () => [form.value.selectedCandidate, form.value.fileId, form.value.layoutBoxes, form.value.signNoteBoxes, form.value.legalNoticeBox, form.value.legalNoticeBoxes, form.value.selectedPresetId, activeStep.value],
     persistDraft,
     { deep: true }
 );
@@ -200,6 +200,7 @@ function emptyForm() {
         presetTemplate: null,
         selectedPresetId: '',
         layoutBoxes: [],
+        signNoteBoxes: [],
         legalNoticeBox: null,
         legalNoticeBoxes: []
     };
@@ -326,7 +327,7 @@ async function onFileChange(event) {
     if (!file) return;
     if (hasLayoutWork()) {
         confirm.require({
-            message: 'การเปลี่ยน PDF จะล้างกรอบลายเซ็นและกรอบข้อความกฎหมายเดิมทั้งหมด ต้องการดำเนินการต่อหรือไม่?',
+            message: 'การเปลี่ยน PDF จะล้างกรอบลายเซ็น กรอบหมายเหตุ และกรอบข้อความกฎหมายเดิมทั้งหมด ต้องการดำเนินการต่อหรือไม่?',
             header: 'เปลี่ยน PDF',
             icon: 'pi pi-exclamation-triangle',
             rejectProps: { label: 'ยกเลิก', severity: 'secondary', outlined: true },
@@ -345,6 +346,7 @@ async function uploadSelectedPDF(file) {
     form.value.fileUrl = '';
     form.value.uploadedFile = null;
     form.value.layoutBoxes = [];
+    form.value.signNoteBoxes = [];
     form.value.legalNoticeBox = null;
     form.value.legalNoticeBoxes = [];
     form.value.selectedPresetId = '';
@@ -408,7 +410,7 @@ function onApplyPreset(template) {
 
 function applyPresetAfterUpload() {
     const template = form.value.presetTemplate;
-    if ((!template?.boxes?.length && !template?.legalNoticeBox) || !form.value.uploadedFile) return;
+    if ((!template?.boxes?.length && !template?.signNoteBoxes?.length && !template?.legalNoticeBox) || !form.value.uploadedFile) return;
     if (hasLayoutWork()) return;
     const presetPageCount = Number(template.sampleFile?.pageCount || 0);
     const uploadedPageCount = Number(form.value.uploadedFile?.pageCount || 0);
@@ -420,6 +422,16 @@ function applyPresetAfterUpload() {
         yRatio: Number(box.yRatio || 0.1),
         widthRatio: Number(box.widthRatio || 0.2),
         heightRatio: Number(box.heightRatio || 0.08)
+    }));
+    form.value.signNoteBoxes = expandPresetBoxes(template.signNoteBoxes || [], presetPageCount, uploadedPageCount).map((box) => ({
+        ...box,
+        clientKey: makeSignNoteBoxKey(),
+        pageNo: Number(box.pageNo || 1),
+        xRatio: Number(box.xRatio || 0.55),
+        yRatio: Number(box.yRatio || 0.72),
+        widthRatio: Number(box.widthRatio || 0.25),
+        heightRatio: Number(box.heightRatio || 0.06),
+        label: box.label || 'หมายเหตุผู้เซ็น'
     }));
     form.value.legalNoticeBoxes = template.legalNoticeBox
         ? expandPresetBoxes([template.legalNoticeBox], presetPageCount, uploadedPageCount).map((box) => ({
@@ -552,6 +564,7 @@ async function submitDocument() {
             signatureTemplateId: form.value.selectedPresetId,
             confirmLocked: form.value.confirmLocked,
             layoutBoxes: form.value.layoutBoxes.map(toLayoutPayload),
+            signNoteBoxes: form.value.signNoteBoxes.map(toLayoutPayload),
             legalNoticeBox: toLegalNoticePayload(form.value.legalNoticeBoxes[0] || form.value.legalNoticeBox),
             legalNoticeBoxes: form.value.legalNoticeBoxes.map(toLegalNoticePayload),
             idempotencyKey: createIdempotencyKey.value
@@ -605,6 +618,7 @@ function validateLayout() {
     const issues = [];
     const pageCount = Number(form.value.uploadedFile?.pageCount || 0);
     const boxes = form.value.layoutBoxes || [];
+    const signNoteBoxes = form.value.signNoteBoxes || [];
     const legalNoticeBoxes = form.value.legalNoticeBoxes || [];
     const configsByPosition = new Map((form.value.configs || []).map((step) => [String(step.positionCode), step]));
     boxes.forEach((box) => {
@@ -612,6 +626,13 @@ function validateLayout() {
         if (box.pageNo < 1 || (pageCount && box.pageNo > pageCount)) issues.push(`กรอบ ${box.label || box.positionCode} อยู่หน้าที่ไม่ถูกต้อง`);
         if (box.xRatio < 0 || box.yRatio < 0 || box.widthRatio <= 0 || box.heightRatio <= 0 || box.xRatio + box.widthRatio > 1 || box.yRatio + box.heightRatio > 1) {
             issues.push(`กรอบ ${box.label || box.positionCode} อยู่นอกหน้า PDF`);
+        }
+    });
+    signNoteBoxes.forEach((box) => {
+        if (!configsByPosition.has(String(box.positionCode))) issues.push(`กรอบหมายเหตุ ${box.positionCode} ไม่อยู่ใน Workflow`);
+        if (box.pageNo < 1 || (pageCount && box.pageNo > pageCount)) issues.push(`กรอบหมายเหตุ ${box.label || box.positionCode} อยู่หน้าที่ไม่ถูกต้อง`);
+        if (box.xRatio < 0 || box.yRatio < 0 || box.widthRatio <= 0 || box.heightRatio <= 0 || box.xRatio + box.widthRatio > 1 || box.yRatio + box.heightRatio > 1) {
+            issues.push(`กรอบหมายเหตุ ${box.label || box.positionCode} อยู่นอกหน้า PDF`);
         }
     });
     if (!legalNoticeBoxes.length) {
@@ -649,6 +670,13 @@ function validateLayout() {
             required.forEach((user) => {
                 if (!seen.has(user)) issues.push(`${step.positionName} ต้องมีกรอบของ ${user}`);
             });
+            signNoteBoxes
+                .filter((box) => String(box.positionCode) === String(step.positionCode))
+                .forEach((box) => {
+                    const user = signerUsername(box.signerUser);
+                    if (!user) issues.push(`กรอบหมายเหตุ ${step.positionName} ต้องเลือก user`);
+                    if (user && !required.has(user)) issues.push(`กรอบหมายเหตุ ${step.positionName} มี user ที่ไม่อยู่ใน Workflow`);
+                });
         }
     });
     return [...new Set(issues)];
@@ -710,6 +738,7 @@ function resetUploadedLayout() {
     form.value.fileUrl = '';
     form.value.uploadedFile = null;
     form.value.layoutBoxes = [];
+    form.value.signNoteBoxes = [];
     form.value.legalNoticeBox = null;
     form.value.legalNoticeBoxes = [];
     form.value.selectedPresetId = '';
@@ -795,6 +824,7 @@ function restoreDraft() {
         if (!Array.isArray(form.value.legalNoticeBoxes) || !form.value.legalNoticeBoxes.length) {
             form.value.legalNoticeBoxes = form.value.legalNoticeBox ? [{ ...form.value.legalNoticeBox, clientKey: makeLegalNoticeBoxKey() }] : [];
         }
+        if (!Array.isArray(form.value.signNoteBoxes)) form.value.signNoteBoxes = [];
         form.value.legalNoticeBox = form.value.legalNoticeBoxes[0] || null;
         if (form.value.fileId && !form.value.fileUrl) form.value.fileUrl = api.signingDocumentUploadPDFUrl(form.value.fileId);
         const restoredStep = isLegacyDraft ? migrateLegacyStep(parsed.activeStep) : Number(parsed.activeStep || 0);
@@ -828,7 +858,7 @@ function signerUsername(value) {
 }
 
 function hasLayoutWork() {
-    return (form.value.layoutBoxes || []).length > 0 || (form.value.legalNoticeBoxes || []).length > 0 || !!form.value.legalNoticeBox;
+    return (form.value.layoutBoxes || []).length > 0 || (form.value.signNoteBoxes || []).length > 0 || (form.value.legalNoticeBoxes || []).length > 0 || !!form.value.legalNoticeBox;
 }
 
 function expandPresetBoxes(sourceBoxes, samplePageCount, targetPageCount) {
@@ -867,6 +897,8 @@ function recordCreateEvent(event) {
         'preset_applied',
         'box_add',
         'box_delete',
+        'sign_note_box_add',
+        'sign_note_box_delete',
         'legal_notice_box_add',
         'legal_notice_box_delete',
         'legal_notice_missing_blocked',
@@ -899,6 +931,10 @@ function makeLayoutBoxKey() {
 
 function makeLegalNoticeBoxKey() {
     return `legal_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function makeSignNoteBoxKey() {
+    return `sign_note_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 </script>
 
@@ -1101,6 +1137,7 @@ function makeLegalNoticeBoxKey() {
                         <DocumentLayoutDesigner
                             v-if="activeStep === 1 && form.fileUrl"
                             v-model="form.layoutBoxes"
+                            v-model:signNoteBoxes="form.signNoteBoxes"
                             v-model:legalNoticeBox="form.legalNoticeBox"
                             v-model:legalNoticeBoxes="form.legalNoticeBoxes"
                             :pdfUrl="form.fileUrl"
@@ -1131,6 +1168,8 @@ function makeLegalNoticeBoxKey() {
                                     <dd class="col-span-7 m-0">{{ form.uploadedFile?.originalName || '-' }}</dd>
                                     <dt class="col-span-5 text-muted-color">กรอบลายเซ็น</dt>
                                     <dd class="col-span-7 m-0">{{ form.layoutBoxes.length }} กรอบ / {{ countPagesWithBoxes(form.layoutBoxes) }} หน้า</dd>
+                                    <dt class="col-span-5 text-muted-color">กรอบหมายเหตุผู้เซ็น</dt>
+                                    <dd class="col-span-7 m-0">{{ form.signNoteBoxes.length ? `${form.signNoteBoxes.length} กรอบ / ${countPagesWithBoxes(form.signNoteBoxes)} หน้า` : '-' }}</dd>
                                     <dt class="col-span-5 text-muted-color">ข้อความกฎหมาย</dt>
                                     <dd class="col-span-7 m-0">{{ form.legalNoticeBoxes.length ? `${form.legalNoticeBoxes.length} กรอบ / ${countPagesWithBoxes(form.legalNoticeBoxes)} หน้า` : '-' }}</dd>
                                 </dl>

@@ -84,6 +84,7 @@ type createSigningDocumentRequest struct {
 	SignatureTemplateID string                               `json:"signatureTemplateId"`
 	ConfirmLocked       bool                                 `json:"confirmLocked"`
 	LayoutBoxes         []models.SignatureTemplateBoxRequest `json:"layoutBoxes"`
+	SignNoteBoxes       []models.SignatureTemplateBoxRequest `json:"signNoteBoxes"`
 	LegalNoticeBox      *models.LegalNoticeBoxRequest        `json:"legalNoticeBox"`
 	LegalNoticeBoxes    []models.LegalNoticeBoxRequest       `json:"legalNoticeBoxes"`
 }
@@ -302,7 +303,7 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	layoutSource := "per_document_upload"
 	if actor.Role == "admin" {
-		templateID, layout, legalBoxes, issues, err := s.lockedAdminCreateLayout(r.Context(), screenCode, format.Code, uploaded.PageCount)
+		templateID, layout, noteBoxes, legalBoxes, issues, err := s.lockedAdminCreateLayout(r.Context(), screenCode, format.Code, uploaded.PageCount)
 		if err != nil {
 			s.logger.Error("load admin create template failed", "error", err, "docFormatCode", format.Code)
 			writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load active signature template right now.")
@@ -314,6 +315,7 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		}
 		req.SignatureTemplateID = templateID
 		req.LayoutBoxes = layout
+		req.SignNoteBoxes = noteBoxes
 		req.LegalNoticeBoxes = legalBoxes
 		req.LegalNoticeBox = &legalBoxes[0]
 		layoutSource = "active_template_locked"
@@ -322,6 +324,8 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 	if len(issues) == 0 {
 		issues = append(issues, s.inactiveSigningLayoutUserIssues(r.Context(), selectedConfigs, layoutBoxes)...)
 	}
+	signNoteBoxes, signNotePlacements, signNoteIssues := validateSigningDocumentSignNoteLayout(req.SignNoteBoxes, configs, uploaded.PageCount)
+	issues = append(issues, signNoteIssues...)
 	legalNoticeBoxes, legalNoticeIssues := normalizeAndValidateLegalNoticeBoxes(req.LegalNoticeBoxes, req.LegalNoticeBox, uploaded.PageCount, true)
 	issues = append(issues, legalNoticeIssues...)
 	if len(issues) > 0 {
@@ -350,6 +354,8 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		"signaturePlacements": signaturePlacements,
 		"legalNoticeBox":      legalNoticeBoxes[0],
 		"legalNoticeBoxes":    legalNoticeBoxes,
+		"signNoteBoxes":       signNoteBoxes,
+		"signNotePlacements":  signNotePlacements,
 	}
 	session, _ := currentSession(r)
 	document, err := s.store.CreateSigningDocument(r.Context(), store.CreateSigningDocumentInput{
@@ -363,6 +369,7 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		LegalNoticeSnapshot: legalNoticeSnapshot,
 		LegalNoticeBoxes:    legalNoticeSnapshots,
 		SignaturePlacements: signaturePlacements,
+		SignNotePlacements:  signNotePlacements,
 		LayoutBoxes:         layoutBoxes,
 		Configs:             selectedConfigs,
 		File:                uploaded,
@@ -605,6 +612,13 @@ func (s *Server) decodeCreateSigningDocumentRequest(w http.ResponseWriter, r *ht
 				return req, false
 			}
 		}
+		rawSignNoteBoxes := firstNonEmpty(r.FormValue("signNoteBoxes"), r.FormValue("sign_note_boxes"))
+		if rawSignNoteBoxes != "" {
+			if err := json.Unmarshal([]byte(rawSignNoteBoxes), &req.SignNoteBoxes); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_sign_note_boxes", "sign_note_boxes must be valid JSON.")
+				return req, false
+			}
+		}
 		rawLegalNoticeBox := firstNonEmpty(r.FormValue("legalNoticeBox"), r.FormValue("legal_notice_box"))
 		if rawLegalNoticeBox != "" {
 			if err := json.Unmarshal([]byte(rawLegalNoticeBox), &req.LegalNoticeBox); err != nil {
@@ -750,15 +764,15 @@ func normalizeSigningCreateEventMetadata(req signingCreateEventRequest) (map[str
 	return metadata, nil
 }
 
-func (s *Server) lockedAdminCreateLayout(ctx context.Context, screenCode, docFormatCode string, pageCount int) (string, []models.SignatureTemplateBoxRequest, []models.LegalNoticeBoxRequest, []models.SignatureValidationIssue, error) {
+func (s *Server) lockedAdminCreateLayout(ctx context.Context, screenCode, docFormatCode string, pageCount int) (string, []models.SignatureTemplateBoxRequest, []models.SignatureTemplateBoxRequest, []models.LegalNoticeBoxRequest, []models.SignatureValidationIssue, error) {
 	_, active, err := s.store.GetSignatureTemplateState(ctx, screenCode, docFormatCode)
 	if err != nil {
-		return "", nil, nil, nil, err
+		return "", nil, nil, nil, nil, err
 	}
 	issues := []models.SignatureValidationIssue{}
 	if active == nil {
 		issues = append(issues, signatureIssue("signature_template_required", "", "Active signature template is required. Please contact superadmin."))
-		return "", nil, nil, issues, nil
+		return "", nil, nil, nil, issues, nil
 	}
 	if len(active.Boxes) == 0 {
 		issues = append(issues, signatureIssue("signature_template_boxes_required", "", "Active signature template has no signature boxes. Please contact superadmin."))
@@ -768,15 +782,16 @@ func (s *Server) lockedAdminCreateLayout(ctx context.Context, screenCode, docFor
 		issues = append(issues, signatureIssue("signature_template_legal_notice_required", "", "Active signature template has no legal notice box. Please contact superadmin."))
 	}
 	if len(issues) > 0 {
-		return active.ID, nil, nil, issues, nil
+		return active.ID, nil, nil, nil, issues, nil
 	}
 	samplePageCount := 0
 	if active.SampleFile != nil {
 		samplePageCount = active.SampleFile.PageCount
 	}
 	layout := expandTemplateBoxesForDocument(boxRequestsFromTemplate(active.Boxes), samplePageCount, pageCount)
+	noteBoxes := expandTemplateBoxesForDocument(boxRequestsFromTemplate(active.SignNoteBoxes), samplePageCount, pageCount)
 	legalBoxes := expandLegalNoticeBoxesForDocument([]models.LegalNoticeBoxRequest{*legalBox}, samplePageCount, pageCount)
-	return active.ID, layout, legalBoxes, nil, nil
+	return active.ID, layout, noteBoxes, legalBoxes, nil, nil
 }
 
 func expandTemplateBoxesForDocument(source []models.SignatureTemplateBoxRequest, samplePageCount, targetPageCount int) []models.SignatureTemplateBoxRequest {
@@ -995,6 +1010,98 @@ func validateSigningDocumentLayout(boxes []models.SignatureTemplateBoxRequest, c
 	return taskBoxes, selected, placements, issues
 }
 
+func validateSigningDocumentSignNoteLayout(boxes []models.SignatureTemplateBoxRequest, configs []models.DocumentConfigStep, pageCount int) ([]models.SignatureTemplateBoxRequest, []models.SignNotePlacementSnapshot, []models.SignatureValidationIssue) {
+	normalized, issues := normalizeAndValidateSignNoteBoxRequests(boxes, pageCount)
+	if len(normalized) == 0 {
+		return nil, nil, issues
+	}
+
+	stepsByPosition := map[string]models.DocumentConfigStep{}
+	for _, step := range configs {
+		stepsByPosition[strings.ToLower(strings.TrimSpace(step.PositionCode))] = step
+	}
+	boxesByPosition := map[string][]models.SignatureTemplateBoxRequest{}
+	for _, box := range normalized {
+		key := strings.ToLower(strings.TrimSpace(box.PositionCode))
+		boxesByPosition[key] = append(boxesByPosition[key], box)
+		if _, ok := stepsByPosition[key]; !ok && box.PositionCode != "" {
+			issues = append(issues, signatureIssue("sign_note_box_position_unknown", box.PositionCode, "Signer note box uses a position that is not in document config."))
+		}
+	}
+
+	placements := []models.SignNotePlacementSnapshot{}
+	for _, step := range configs {
+		key := strings.ToLower(strings.TrimSpace(step.PositionCode))
+		positionBoxes := boxesByPosition[key]
+		if len(positionBoxes) == 0 {
+			continue
+		}
+		sortPlacementBoxes(positionBoxes)
+		switch step.ConditionType {
+		case 1:
+			for i := range positionBoxes {
+				positionBoxes[i].SignerType = "any"
+				positionBoxes[i].SignerUser = ""
+				positionBoxes[i].SignerSlot = 1
+				placements = append(placements, signNotePlacementSnapshotFromBox(step, positionBoxes[i], "any", "", "", 1))
+			}
+		case 2:
+			required := map[string]struct {
+				Full    string
+				Slot    int
+				Display string
+			}{}
+			for index, user := range stepUsers(step) {
+				username, display := splitSignerUser(user)
+				if username != "" {
+					required[strings.ToLower(username)] = struct {
+						Full    string
+						Slot    int
+						Display string
+					}{Full: user, Slot: index + 1, Display: display}
+				}
+			}
+			for i := range positionBoxes {
+				positionBoxes[i].SignerType = "internal"
+				username, _ := splitSignerUser(positionBoxes[i].SignerUser)
+				requiredUser, ok := required[strings.ToLower(username)]
+				if !ok || username == "" {
+					issues = append(issues, signatureIssue("sign_note_condition_all_unknown_user", step.PositionCode, fmt.Sprintf("%s note box must choose a user in this position.", step.PositionName)))
+					continue
+				}
+				positionBoxes[i].SignerUser = requiredUser.Full
+				positionBoxes[i].SignerSlot = requiredUser.Slot
+				placements = append(placements, signNotePlacementSnapshotFromBox(step, positionBoxes[i], "internal", username, requiredUser.Display, requiredUser.Slot))
+			}
+		case 3:
+			for i := range positionBoxes {
+				positionBoxes[i].SignerType = "external"
+				positionBoxes[i].SignerUser = ""
+				positionBoxes[i].SignerSlot = 1
+				placements = append(placements, signNotePlacementSnapshotFromBox(step, positionBoxes[i], "external", "", "บุคคลภายนอก", 1))
+			}
+		default:
+			issues = append(issues, signatureIssue("condition_type_invalid", step.PositionCode, fmt.Sprintf("%s uses unsupported condition type.", step.PositionName)))
+		}
+	}
+	sort.SliceStable(placements, func(i, j int) bool {
+		if placements[i].SequenceNo == placements[j].SequenceNo {
+			if placements[i].PositionCode == placements[j].PositionCode {
+				if placements[i].SignerSlot == placements[j].SignerSlot {
+					return placements[i].PageNo < placements[j].PageNo
+				}
+				return placements[i].SignerSlot < placements[j].SignerSlot
+			}
+			return placements[i].PositionCode < placements[j].PositionCode
+		}
+		return placements[i].SequenceNo < placements[j].SequenceNo
+	})
+	sort.SliceStable(issues, func(i, j int) bool {
+		return issues[i].PositionCode < issues[j].PositionCode
+	})
+	return normalized, placements, issues
+}
+
 const (
 	minSignatureBoxWidthRatio  = 0.03
 	minSignatureBoxHeightRatio = 0.03
@@ -1071,6 +1178,28 @@ func signaturePlacementSnapshotFromBox(step models.DocumentConfigStep, box model
 		WidthRatio:    box.WidthRatio,
 		HeightRatio:   box.HeightRatio,
 		Label:         box.Label,
+	}
+}
+
+func signNotePlacementSnapshotFromBox(step models.DocumentConfigStep, box models.SignatureTemplateBoxRequest, signerType, signerUser, signerName string, signerSlot int) models.SignNotePlacementSnapshot {
+	if strings.TrimSpace(signerName) == "" {
+		_, signerName = splitSignerUser(box.SignerUser)
+	}
+	return models.SignNotePlacementSnapshot{
+		PositionCode:  step.PositionCode,
+		PositionName:  step.PositionName,
+		SequenceNo:    step.SequenceNo,
+		ConditionType: step.ConditionType,
+		SignerSlot:    signerSlot,
+		SignerType:    signerType,
+		SignerUser:    strings.TrimSpace(signerUser),
+		SignerName:    strings.TrimSpace(signerName),
+		PageNo:        box.PageNo,
+		XRatio:        box.XRatio,
+		YRatio:        box.YRatio,
+		WidthRatio:    box.WidthRatio,
+		HeightRatio:   box.HeightRatio,
+		Label:         firstNonEmpty(box.Label, "หมายเหตุผู้เซ็น"),
 	}
 }
 

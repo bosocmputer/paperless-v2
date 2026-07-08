@@ -570,6 +570,7 @@ function newRequestKey() {
                 <div class="sign-note-field">
                     <label for="signNote">หมายเหตุผู้เซ็น (ถ้ามี)</label>
                     <Textarea id="signNote" v-model="signNote" rows="3" autoResize :maxlength="1000" :disabled="!canInteract" placeholder="ระบุหมายเหตุเพิ่มเติมสำหรับการเซ็นครั้งนี้" />
+                    <small class="text-muted-color">จะแสดงบน PDF เมื่อมีการตั้งกรอบหมายเหตุไว้ และยังเก็บเต็มในประวัติ</small>
                 </div>
 
                 <div class="legal-check">
