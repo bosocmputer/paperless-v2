@@ -66,6 +66,7 @@ const filteredSteps = computed(() => {
 });
 const validationIssues = computed(() => validateSteps(steps.value));
 const dirty = computed(() => snapshotSteps(steps.value) !== originalSnapshot.value);
+const reorderDisabled = computed(() => Boolean(normalizeSearch(searchQuery.value)));
 const deletedStepCount = computed(() => {
     const currentIds = new Set(steps.value.map((step) => step.id).filter(Boolean));
     return (workflow.value?.steps || []).filter((step) => step.id && !currentIds.has(step.id)).length;
@@ -214,6 +215,7 @@ function requestRemoveStep(step) {
 }
 
 function moveStepByKey(stepKey, direction) {
+    if (reorderDisabled.value) return;
     const source = steps.value.findIndex((step) => step.key === stepKey);
     if (source < 0) return;
     const nextIndex = source + direction;
@@ -229,6 +231,14 @@ function moveStepByKey(stepKey, direction) {
 function resequence(markDirty = true) {
     steps.value = steps.value.map((step, index) => ({ ...step, sequenceNo: index + 1 }));
     if (markDirty) conflictMessage.value = '';
+}
+
+function canMoveStep(stepKey, direction) {
+    if (reorderDisabled.value) return false;
+    const source = steps.value.findIndex((step) => step.key === stepKey);
+    if (source < 0) return false;
+    const nextIndex = source + direction;
+    return nextIndex >= 0 && nextIndex < steps.value.length;
 }
 
 function requestSave() {
@@ -612,8 +622,8 @@ function normalizeCode(value) {
             <Column header="จัดการ" :exportable="false" style="min-width: 13rem">
                 <template #body="{ data }">
                     <div class="flex gap-2">
-                        <Button icon="pi pi-arrow-up" severity="secondary" rounded outlined aria-label="เลื่อนขึ้น" :disabled="data.sequenceNo === 1 || searchQuery" @click.stop="moveStepByKey(data.key, -1)" />
-                        <Button icon="pi pi-arrow-down" severity="secondary" rounded outlined aria-label="เลื่อนลง" :disabled="data.sequenceNo === steps.length || searchQuery" @click.stop="moveStepByKey(data.key, 1)" />
+                        <Button icon="pi pi-arrow-up" severity="secondary" rounded outlined aria-label="เลื่อนขึ้น" :disabled="!canMoveStep(data.key, -1)" @click.stop="moveStepByKey(data.key, -1)" />
+                        <Button icon="pi pi-arrow-down" severity="secondary" rounded outlined aria-label="เลื่อนลง" :disabled="!canMoveStep(data.key, 1)" @click.stop="moveStepByKey(data.key, 1)" />
                         <Button icon="pi pi-pencil" severity="secondary" rounded outlined aria-label="แก้ไขขั้นตอน" @click.stop="openEditStep(data)" />
                         <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบขั้นตอน" @click.stop="requestRemoveStep(data)" />
                     </div>
