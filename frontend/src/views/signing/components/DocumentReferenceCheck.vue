@@ -291,7 +291,7 @@ function openReferencePDF(item = {}) {
     height: 100%;
     flex: 1 1 auto;
     gap: 0.55rem;
-    background: color-mix(in srgb, var(--orange-50) 16%, var(--surface-card));
+    background: color-mix(in srgb, var(--orange-50) 22%, var(--surface-card));
 }
 
 .reference-head {
@@ -304,8 +304,10 @@ function openReferencePDF(item = {}) {
 .reference-check.dialog-mode .reference-head {
     flex: 0 0 auto;
     align-items: center;
-    padding-bottom: 0.55rem;
-    border-bottom: 1px solid var(--surface-border);
+    padding: 0.6rem 0.75rem;
+    border: 1px solid color-mix(in srgb, var(--orange-200) 64%, var(--surface-border));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--orange-50) 66%, var(--surface-card));
 }
 
 .reference-actions {
@@ -349,9 +351,9 @@ function openReferencePDF(item = {}) {
 
 .reference-check.dialog-mode .reference-compact {
     overflow: hidden;
-    border: 1px solid var(--surface-border);
+    border: 1px solid color-mix(in srgb, var(--orange-200) 58%, var(--surface-border));
     border-radius: 8px;
-    background: color-mix(in srgb, var(--surface-ground) 72%, var(--surface-card));
+    background: color-mix(in srgb, var(--orange-50) 18%, var(--surface-ground));
 }
 
 .reference-list {
@@ -429,9 +431,9 @@ function openReferencePDF(item = {}) {
 
 .reference-check.dialog-mode .reference-flow-scroll {
     height: 100%;
-    border: 1px solid color-mix(in srgb, var(--orange-200) 48%, var(--surface-border));
+    border: 1px solid color-mix(in srgb, var(--orange-300) 48%, var(--surface-border));
     border-radius: 8px;
-    background: color-mix(in srgb, var(--orange-50) 38%, var(--surface-ground));
+    background: color-mix(in srgb, var(--orange-50) 48%, var(--surface-ground));
 }
 
 .reference-flow-row {
@@ -471,15 +473,16 @@ function openReferencePDF(item = {}) {
 
 :global(.reference-check-dialog.reference-audit-dialog .p-dialog-header) {
     border-bottom: 1px solid color-mix(in srgb, var(--orange-200) 58%, var(--surface-border));
-    background: color-mix(in srgb, var(--orange-50) 42%, var(--surface-card));
+    background: linear-gradient(90deg, color-mix(in srgb, var(--orange-50) 86%, var(--surface-card)) 0%, var(--surface-card) 72%);
+    box-shadow: inset 6px 0 0 var(--orange-500);
 }
 
 :global(.reference-check-dialog.reference-audit-dialog .p-dialog-content) {
-    background: color-mix(in srgb, var(--orange-50) 18%, var(--surface-card));
+    background: color-mix(in srgb, var(--orange-50) 24%, var(--surface-card));
 }
 
 :global(.reference-check-dialog.reference-audit-dialog .reference-dialog-layout) {
-    background: color-mix(in srgb, var(--orange-50) 16%, var(--surface-card));
+    background: color-mix(in srgb, var(--orange-50) 22%, var(--surface-card));
 }
 
 :global(.reference-audit-dialog .reference-dialog-title) {
@@ -495,10 +498,10 @@ function openReferencePDF(item = {}) {
     display: inline-grid;
     place-items: center;
     flex: 0 0 auto;
-    border: 1px solid color-mix(in srgb, var(--orange-500) 35%, var(--surface-border));
+    border: 1px solid color-mix(in srgb, var(--orange-500) 48%, var(--surface-border));
     border-radius: 10px;
-    background: color-mix(in srgb, var(--orange-50) 78%, var(--surface-card));
-    color: var(--orange-600);
+    background: color-mix(in srgb, var(--orange-100, #ffedd5) 84%, var(--surface-card));
+    color: var(--orange-700, #c2410c);
 }
 
 :global(.reference-audit-dialog .reference-dialog-title-copy) {
@@ -516,7 +519,7 @@ function openReferencePDF(item = {}) {
 
 :global(.reference-audit-dialog .reference-dialog-title-copy strong) {
     font-size: 1rem;
-    color: var(--text-color);
+    color: var(--orange-800, #9a3412);
 }
 
 :global(.reference-audit-dialog .reference-dialog-title-copy small) {

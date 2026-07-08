@@ -309,10 +309,10 @@ function recordFlowEvent(event, extra = {}) {
     display: inline-grid;
     place-items: center;
     flex: 0 0 auto;
-    border: 1px solid color-mix(in srgb, var(--blue-500) 35%, var(--surface-border));
+    border: 1px solid color-mix(in srgb, var(--blue-500) 48%, var(--surface-border));
     border-radius: 10px;
-    background: color-mix(in srgb, var(--blue-50) 72%, var(--surface-card));
-    color: var(--blue-600);
+    background: color-mix(in srgb, var(--blue-100, #dbeafe) 82%, var(--surface-card));
+    color: var(--blue-700, #1d4ed8);
 }
 
 .flow-dialog-title-copy {
@@ -330,7 +330,7 @@ function recordFlowEvent(event, extra = {}) {
 
 .flow-dialog-title-copy strong {
     font-size: 1rem;
-    color: var(--text-color);
+    color: var(--blue-800, #1e40af);
 }
 
 .flow-dialog-title-copy small {
@@ -340,8 +340,10 @@ function recordFlowEvent(event, extra = {}) {
 
 .flow-dialog-toolbar {
     flex: 0 0 auto;
-    padding-bottom: 0.55rem;
-    border-bottom: 1px solid var(--surface-border);
+    padding: 0.6rem 0.75rem;
+    border: 1px solid color-mix(in srgb, var(--blue-200) 66%, var(--surface-border));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--blue-50) 62%, var(--surface-card));
 }
 
 .flow-dialog-viewer {
@@ -372,7 +374,8 @@ function recordFlowEvent(event, extra = {}) {
 
 :global(.document-flow-dialog .p-dialog-header) {
     border-bottom: 1px solid color-mix(in srgb, var(--blue-200) 58%, var(--surface-border));
-    background: color-mix(in srgb, var(--blue-50) 38%, var(--surface-card));
+    background: linear-gradient(90deg, color-mix(in srgb, var(--blue-50) 84%, var(--surface-card)) 0%, var(--surface-card) 72%);
+    box-shadow: inset 6px 0 0 var(--blue-500);
 }
 
 .flow-dialog-viewer :deep(.document-flow-viewer),
