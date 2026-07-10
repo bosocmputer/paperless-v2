@@ -695,7 +695,12 @@ func (s *Server) createSigningDocumentWithMode(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusConflict, "sml_document_locked", "SML document is already locked. Confirm before creating a PaperLess document.")
 		return
 	}
-	duplicateCheck, err := s.store.CheckSigningDocumentDuplicate(r.Context(), format.Code, candidate.DocNo)
+	var duplicateCheck store.SigningDocumentDuplicateCheckResult
+	if batchMode {
+		duplicateCheck, err = s.store.CheckSigningDocumentBatchDuplicate(r.Context(), format.Code, candidate.DocNo)
+	} else {
+		duplicateCheck, err = s.store.CheckSigningDocumentDuplicate(r.Context(), format.Code, candidate.DocNo)
+	}
 	if err != nil {
 		s.logger.Error("check signing document duplicate failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "duplicate_check_failed", "ตรวจสอบเอกสารซ้ำไม่สำเร็จ")

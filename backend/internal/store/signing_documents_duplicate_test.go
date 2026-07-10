@@ -66,6 +66,34 @@ func TestBuildSigningDocumentDuplicateCheckResultPrefersLatestBlockingDocument(t
 	}
 }
 
+func TestBuildSigningDocumentBatchDuplicateCheckResultBlocksCompletedAndRejected(t *testing.T) {
+	for _, status := range []string{"completed", "rejected"} {
+		t.Run(status, func(t *testing.T) {
+			result := buildSigningDocumentBatchDuplicateCheckResult([]models.SigningDocumentReference{{
+				ID:            "doc-1",
+				DocNo:         "QT26070001",
+				DocFormatCode: "QT",
+				Status:        status,
+			}})
+			if result.CanCreate || result.BlockingDocument == nil {
+				t.Fatalf("batch import must block existing %s document: %#v", status, result)
+			}
+		})
+	}
+}
+
+func TestBuildSigningDocumentBatchDuplicateCheckResultAllowsCancelledDocument(t *testing.T) {
+	result := buildSigningDocumentBatchDuplicateCheckResult([]models.SigningDocumentReference{{
+		ID:            "doc-1",
+		DocNo:         "QT26070001",
+		DocFormatCode: "QT",
+		Status:        "cancelled",
+	}})
+	if !result.CanCreate {
+		t.Fatalf("cancelled document should remain importable: %#v", result)
+	}
+}
+
 func TestSigningDocumentListWhereFiltersDraftByCreator(t *testing.T) {
 	where, args := signingDocumentListWhere(context.Background(), SigningDocumentListQuery{
 		Queue:           "draft",

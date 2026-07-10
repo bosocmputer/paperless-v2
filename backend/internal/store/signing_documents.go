@@ -409,9 +409,21 @@ func (s *Store) CheckSigningDocumentDuplicates(ctx context.Context, docFormatCod
 		grouped[key] = append(grouped[key], ref)
 	}
 	for _, docNo := range clean {
-		result[docNo] = buildSigningDocumentDuplicateCheckResult(grouped[docNo])
+		result[docNo] = buildSigningDocumentBatchDuplicateCheckResult(grouped[docNo])
 	}
 	return result, nil
+}
+
+func (s *Store) CheckSigningDocumentBatchDuplicate(ctx context.Context, docFormatCode, docNo string) (SigningDocumentDuplicateCheckResult, error) {
+	docNo = strings.ToUpper(strings.TrimSpace(docNo))
+	results, err := s.CheckSigningDocumentDuplicates(ctx, docFormatCode, []string{docNo})
+	if err != nil {
+		return SigningDocumentDuplicateCheckResult{}, err
+	}
+	if result, ok := results[docNo]; ok {
+		return result, nil
+	}
+	return buildSigningDocumentBatchDuplicateCheckResult(nil), nil
 }
 
 func signingDocumentListWhere(ctx context.Context, query SigningDocumentListQuery) (string, []any) {
@@ -481,6 +493,24 @@ func buildSigningDocumentDuplicateCheckResult(refs []models.SigningDocumentRefer
 	}
 	if result.CanCreate && len(result.PreviousDocuments) > 0 {
 		result.Message = "เคยมีเอกสารนี้ใน PaperLess แล้ว หากเป็นเอกสารฉบับใหม่สามารถสร้างต่อได้"
+	}
+	return result
+}
+
+func buildSigningDocumentBatchDuplicateCheckResult(refs []models.SigningDocumentReference) SigningDocumentDuplicateCheckResult {
+	result := buildSigningDocumentDuplicateCheckResult(refs)
+	if !result.CanCreate {
+		return result
+	}
+	for _, ref := range refs {
+		if strings.EqualFold(strings.TrimSpace(ref.Status), "cancelled") {
+			continue
+		}
+		item := ref
+		result.CanCreate = false
+		result.BlockingDocument = &item
+		result.Message = fmt.Sprintf("เอกสารนี้มีอยู่ใน PaperLess แล้วในสถานะ%s Batch import จึงไม่นำเข้าเอกสารซ้ำ", signingDocumentDuplicateStatusLabel(ref.Status))
+		return result
 	}
 	return result
 }

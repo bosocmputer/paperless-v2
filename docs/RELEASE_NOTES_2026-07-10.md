@@ -6,6 +6,7 @@
 - PDF filenames are treated as SML document numbers and validated server-side.
 - Added batch SML exact-match lookup across `ic_trans` and `ap_ar_trans` with a maximum of 30 document numbers per request.
 - Added staged-upload ownership, 24-hour expiry, PDF/page validation, duplicate checks, SML lock confirmation, and context-version protection.
+- Batch duplicate validation blocks existing active, completed, or rejected PaperLess documents; a deliberately cancelled document remains eligible for a new draft.
 - Batch creation is limited to two concurrent items and uses a stable idempotency key per file.
 - Successful drafts remain saved when another item fails; only retryable failures are offered for retry.
 - Removing a row or discarding the dialog deletes unconsumed staged uploads.
