@@ -19,6 +19,7 @@ It receives document metadata and PDFs from SML, routes them through configured 
 - Tenant isolation by selected SML database while keeping one PaperLess database
 - Superadmin user management, workflow configuration, and signature template design
 - Admin document operations with locked signature/template placements
+- Batch PDF import into the draft queue with filename-to-SML validation, duplicate checks, partial retry, and staged-file cleanup
 - Multi-page document creation with cloned signature/legal-notice placements that remain editable per page
 - Internal signer task queue, waiting queue, and signing history
 - External sign-only flow with OTP and sanitized public API surface
@@ -90,6 +91,12 @@ When the last signer completes a document, the backend starts a background final
 The intermediate status is `auto_confirming`. If image upload fails, status becomes `completed_image_failed` and SML lock is not attempted. Admin can retry SML images. Retrying a completed document is allowed for repair and remains idempotent.
 
 Before enabling a new SML tenant, verify that both the main database and matching image database exist. Example: tenant `stpt` requires `stpt` and `stpt_images`, both with `public.sml_doc_images`. Use the SML API maintenance command `verify-sml-tenant`; if the image DB or table is missing, the login page can self-provision it after SML credential verification, or an admin can provision it explicitly with `provision-sml-image-db`. Use PaperLess retry instead of direct SQL image inserts.
+
+## Batch Draft Import
+
+Admins can open `เอกสารเตรียมส่ง` and choose `นำเข้าหลายไฟล์` to stage up to 30 PDFs for one document format. Each filename must equal the SML document number, for example `QT26070001.pdf`. PaperLess validates Workflow, Active Template, PDF integrity, a combined 100-page limit, SML exact matches, PaperLess duplicates, and SML lock state before creating anything.
+
+Valid items are created as independent drafts with concurrency capped at two. Successful items remain saved if another item fails; retry reuses the same idempotency key and cannot create a duplicate after a network timeout. Removing a row or discarding the dialog deletes unconsumed staged uploads, with the 24-hour cleanup job retained as a fallback.
 
 ## Local Development
 

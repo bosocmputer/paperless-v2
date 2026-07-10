@@ -60,6 +60,76 @@ func TestNormalizeSigningTaskEventMetadataKeepsOnlySafeFields(t *testing.T) {
 	}
 }
 
+func TestDocumentNumberFromPDFName(t *testing.T) {
+	got, err := documentNumberFromPDFName(" qt26070001.PDF ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "QT26070001" {
+		t.Fatalf("doc no = %q, want QT26070001", got)
+	}
+}
+
+func TestDocumentNumberFromPDFNameRejectsInvalidNames(t *testing.T) {
+	tests := []string{
+		"document.txt",
+		".pdf",
+		"../QT26070001.pdf",
+		`QT\\26070001.pdf`,
+		strings.Repeat("A", 26) + ".pdf",
+		"QT2607\n0001.pdf",
+	}
+	for _, name := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := documentNumberFromPDFName(name); err == nil {
+				t.Fatal("expected invalid filename")
+			}
+		})
+	}
+}
+
+func TestSigningDocumentBatchContextVersionTracksWorkflowAndTemplate(t *testing.T) {
+	configs := []models.DocumentConfigStep{{ID: "step-1", PositionCode: "1", SequenceNo: 1, UpdatedAt: time.Date(2026, 7, 10, 9, 0, 0, 0, time.UTC)}}
+	template := models.SignatureTemplate{ID: "template-1", Version: 1, Revision: 2, UpdatedAt: time.Date(2026, 7, 10, 9, 0, 0, 0, time.UTC)}
+	base := signingDocumentBatchContextVersion(configs, template)
+
+	changedConfigs := append([]models.DocumentConfigStep(nil), configs...)
+	changedConfigs[0].UpdatedAt = changedConfigs[0].UpdatedAt.Add(time.Second)
+	if got := signingDocumentBatchContextVersion(changedConfigs, template); got == base {
+		t.Fatal("workflow update must change context version")
+	}
+	template.Revision++
+	if got := signingDocumentBatchContextVersion(configs, template); got == base {
+		t.Fatal("template revision must change context version")
+	}
+}
+
+func TestApplyBatchPageLimitMarksEveryItemOnlyWhenTotalExceedsLimit(t *testing.T) {
+	items := []signingDocumentBatchValidationItem{{FileID: "one"}, {FileID: "two"}}
+	applyBatchPageLimit(items, 101)
+	for _, item := range items {
+		if !hasBatchIssue(item.Issues, "batch_page_limit") {
+			t.Fatalf("item %s was not marked with batch_page_limit", item.FileID)
+		}
+	}
+
+	withinLimit := []signingDocumentBatchValidationItem{{FileID: "one"}}
+	applyBatchPageLimit(withinLimit, 100)
+	if len(withinLimit[0].Issues) != 0 {
+		t.Fatalf("100 pages must remain valid: %#v", withinLimit[0].Issues)
+	}
+}
+
+func TestNormalizeBatchFileIDsRejectsDuplicatesAndInvalidValues(t *testing.T) {
+	valid := "4ad1a25f-7d82-4d37-8895-30bd2aa73453"
+	if _, err := normalizeBatchFileIDs([]string{valid, valid}); err == nil {
+		t.Fatal("duplicate file ids must be rejected")
+	}
+	if _, err := normalizeBatchFileIDs([]string{"not-a-uuid"}); err == nil {
+		t.Fatal("invalid file ids must be rejected")
+	}
+}
+
 func TestNormalizeSigningTaskEventMetadataRejectsInvalidEvent(t *testing.T) {
 	_, err := normalizeSigningTaskEventMetadata(models.SigningTaskEventRequest{Event: "mousemove"}, models.SigningDocument{}, models.SigningDocumentSigner{})
 	if err == nil {

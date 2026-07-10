@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 	"github.com/bosocmputer/paperless-v2/backend/internal/store"
@@ -100,6 +101,79 @@ type createSigningDocumentRequest struct {
 	SignNoteBoxes       []models.SignatureTemplateBoxRequest `json:"signNoteBoxes"`
 	LegalNoticeBox      *models.LegalNoticeBoxRequest        `json:"legalNoticeBox"`
 	LegalNoticeBoxes    []models.LegalNoticeBoxRequest       `json:"legalNoticeBoxes"`
+	ContextVersion      string                               `json:"contextVersion,omitempty"`
+}
+
+type signingDocumentBatchValidationRequest struct {
+	DocFormatCode string   `json:"docFormatCode"`
+	FileIDs       []string `json:"fileIds"`
+}
+
+type signingDocumentBatchEventRequest struct {
+	Event         string `json:"event"`
+	DocFormatCode string `json:"docFormatCode"`
+	Total         int    `json:"total"`
+	Created       int    `json:"created"`
+	Failed        int    `json:"failed"`
+}
+
+type signingDocumentBatchValidationIssue struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Retryable bool   `json:"retryable,omitempty"`
+}
+
+type signingDocumentBatchValidationItem struct {
+	FileID       string                                     `json:"fileId"`
+	OriginalName string                                     `json:"originalName"`
+	DocNo        string                                     `json:"docNo,omitempty"`
+	PageCount    int                                        `json:"pageCount,omitempty"`
+	SizeBytes    int64                                      `json:"sizeBytes,omitempty"`
+	Status       string                                     `json:"status"`
+	Candidate    *models.SMLDocumentCandidate               `json:"candidate,omitempty"`
+	Issues       []signingDocumentBatchValidationIssue      `json:"issues"`
+	Duplicate    *store.SigningDocumentDuplicateCheckResult `json:"duplicate,omitempty"`
+}
+
+func documentNumberFromPDFName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || filepath.Base(name) != name || strings.ContainsAny(name, `/\\`) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("ชื่อไฟล์ไม่ถูกต้อง")
+	}
+	ext := filepath.Ext(name)
+	if !strings.EqualFold(ext, ".pdf") {
+		return "", fmt.Errorf("รองรับเฉพาะไฟล์ PDF ที่ตั้งชื่อตามเลขเอกสาร")
+	}
+	docNo := strings.ToUpper(strings.TrimSpace(strings.TrimSuffix(name, ext)))
+	if docNo == "" {
+		return "", fmt.Errorf("ชื่อไฟล์ต้องมีเลขเอกสารก่อน .pdf")
+	}
+	if len([]rune(docNo)) > 25 {
+		return "", fmt.Errorf("เลขเอกสารจากชื่อไฟล์ต้องไม่เกิน 25 ตัวอักษร")
+	}
+	if strings.IndexFunc(docNo, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("ชื่อไฟล์มีอักขระที่ไม่รองรับ")
+	}
+	return docNo, nil
+}
+
+func signingDocumentBatchContextVersion(configs []models.DocumentConfigStep, template models.SignatureTemplate) string {
+	payload := struct {
+		Configs  []models.DocumentConfigStep `json:"configs"`
+		Template struct {
+			ID        string    `json:"id"`
+			Version   int       `json:"version"`
+			Revision  int       `json:"revision"`
+			UpdatedAt time.Time `json:"updatedAt"`
+		} `json:"template"`
+	}{Configs: configs}
+	payload.Template.ID = template.ID
+	payload.Template.Version = template.Version
+	payload.Template.Revision = template.Revision
+	payload.Template.UpdatedAt = template.UpdatedAt
+	data, _ := json.Marshal(payload)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 type signingCreateEventRequest struct {
@@ -201,6 +275,299 @@ func (s *Server) getSigningDocumentUploadPDF(w http.ResponseWriter, r *http.Requ
 	serveInlinePDF(w, r, file)
 }
 
+func (s *Server) deleteSigningDocumentUpload(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
+	fileID := strings.TrimSpace(r.PathValue("fileId"))
+	if !isUUIDText(fileID) {
+		writeError(w, http.StatusBadRequest, "file_id_invalid", "Uploaded file id is invalid.")
+		return
+	}
+	storagePath, deleted, err := s.store.DeleteSigningDocumentUpload(r.Context(), fileID, actor.ID)
+	if err != nil {
+		s.logger.Error("delete signing document upload failed", "error", err, "fileId", fileID)
+		writeError(w, http.StatusInternalServerError, "upload_delete_failed", "Cannot discard uploaded PDF right now.")
+		return
+	}
+	if deleted && strings.TrimSpace(storagePath) != "" {
+		if err := os.Remove(storagePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.logger.Warn("remove discarded signing document upload failed", "error", err, "fileId", fileID)
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) validateSigningDocumentBatch(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
+	startedAt := time.Now()
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	var req signingDocumentBatchValidationRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
+		return
+	}
+	docFormatCode := strings.ToUpper(strings.TrimSpace(req.DocFormatCode))
+	fileIDs, err := normalizeBatchFileIDs(req.FileIDs)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "batch_files_invalid", err.Error())
+		return
+	}
+	format, err := s.fetchSMLDocFormatByCode(r.Context(), docFormatCode)
+	if err != nil {
+		s.writeDocFormatValidationError(w, err)
+		return
+	}
+	screenCode := normalizeScreenCode(format.ScreenCode)
+	configs, err := s.store.ListDocumentConfigSteps(r.Context(), screenCode, format.Code)
+	if err != nil || len(configs) == 0 {
+		writeError(w, http.StatusBadRequest, "document_config_required", "กรุณาตั้งค่า Workflow ของชนิดเอกสารนี้ก่อนนำเข้า")
+		return
+	}
+	_, active, err := s.store.GetSignatureTemplateState(r.Context(), screenCode, format.Code)
+	if err != nil {
+		s.logger.Error("load batch active template failed", "error", err, "docFormatCode", format.Code)
+		writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load active signature template right now.")
+		return
+	}
+	_, baseLayout, baseLegalBoxes, templateIssues := activeTemplateCreateLayout(active, 1)
+	if len(templateIssues) == 0 {
+		var normalizedLayout []models.SignatureTemplateBoxRequest
+		var selectedConfigs []models.DocumentConfigStep
+		normalizedLayout, selectedConfigs, _, templateIssues = validateSigningDocumentLayout(baseLayout, configs, 1)
+		if len(templateIssues) == 0 {
+			templateIssues = append(templateIssues, s.inactiveSigningLayoutUserIssues(r.Context(), selectedConfigs, normalizedLayout)...)
+		}
+		_, legalIssues := normalizeAndValidateLegalNoticeBoxes(baseLegalBoxes, nil, 1, true)
+		templateIssues = append(templateIssues, legalIssues...)
+	}
+	if len(templateIssues) > 0 {
+		writeValidationIssues(w, http.StatusBadRequest, "signature_template_required", templateIssues)
+		return
+	}
+
+	uploads, err := s.store.FindSigningDocumentUploadFiles(r.Context(), fileIDs, actor.ID)
+	if err != nil {
+		s.logger.Error("load batch uploads failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "batch_uploads_failed", "Cannot load uploaded PDFs right now.")
+		return
+	}
+	items := make([]signingDocumentBatchValidationItem, 0, len(fileIDs))
+	docNoCounts := make(map[string]int, len(fileIDs))
+	docNos := make([]string, 0, len(fileIDs))
+	totalPageCount := 0
+	totalBytes := int64(0)
+	for _, fileID := range fileIDs {
+		item := signingDocumentBatchValidationItem{FileID: fileID, Status: "invalid", Issues: []signingDocumentBatchValidationIssue{}}
+		uploaded, ok := uploads[fileID]
+		if !ok {
+			item.Issues = append(item.Issues, batchValidationIssue("upload_not_found", "ไม่พบไฟล์ที่อัปโหลดหรือไฟล์หมดอายุ", false))
+			items = append(items, item)
+			continue
+		}
+		item.OriginalName = uploaded.OriginalName
+		item.PageCount = uploaded.PageCount
+		item.SizeBytes = uploaded.SizeBytes
+		totalBytes += uploaded.SizeBytes
+		if uploaded.PageCount > 0 {
+			totalPageCount += uploaded.PageCount
+		}
+		docNo, parseErr := documentNumberFromPDFName(uploaded.OriginalName)
+		if parseErr != nil {
+			item.Issues = append(item.Issues, batchValidationIssue("filename_invalid", parseErr.Error(), false))
+		} else {
+			item.DocNo = docNo
+			docNoCounts[docNo]++
+			docNos = append(docNos, docNo)
+		}
+		if uploaded.PageCount <= 0 {
+			item.Issues = append(item.Issues, batchValidationIssue("pdf_invalid", "PDF ไม่สามารถอ่านจำนวนหน้าได้", false))
+		}
+		items = append(items, item)
+	}
+	applyBatchPageLimit(items, totalPageCount)
+
+	candidateByDocNo := map[string]models.SMLDocumentCandidate{}
+	if len(docNos) > 0 {
+		payload, fetchErr := s.fetchSMLDocumentCandidatesBatch(r.Context(), format.Code, docNos)
+		if fetchErr != nil {
+			s.logger.Warn("fetch SML batch candidates failed", "error", fetchErr, "docFormatCode", format.Code, "count", len(docNos))
+			writeError(w, http.StatusBadGateway, "sml_batch_validation_failed", "ตรวจสอบรายการเอกสารกับ SML ไม่สำเร็จ กรุณาลองใหม่")
+			return
+		}
+		for _, candidate := range payload.Data {
+			candidateByDocNo[strings.ToUpper(strings.TrimSpace(candidate.DocNo))] = candidate
+		}
+	}
+	duplicates, err := s.store.CheckSigningDocumentDuplicates(r.Context(), format.Code, docNos)
+	if err != nil {
+		s.logger.Error("check signing batch duplicates failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "duplicate_check_failed", "ตรวจสอบเอกสารซ้ำไม่สำเร็จ")
+		return
+	}
+
+	summary := map[string]int{"total": len(items), "ready": 0, "warning": 0, "invalid": 0}
+	for index := range items {
+		item := &items[index]
+		if item.DocNo != "" && docNoCounts[item.DocNo] > 1 {
+			item.Issues = append(item.Issues, batchValidationIssue("duplicate_in_batch", "มีชื่อเอกสารซ้ำภายในชุด กรุณาลบให้เหลือหนึ่งไฟล์", false))
+		}
+		candidate, found := candidateByDocNo[item.DocNo]
+		if item.DocNo != "" && !found {
+			item.Issues = append(item.Issues, batchValidationIssue("sml_document_not_found", "ไม่พบเลขเอกสารนี้ใน SML สำหรับชนิดเอกสารที่เลือก", false))
+		}
+		if found {
+			candidateCopy := candidate
+			item.Candidate = &candidateCopy
+			duplicate := duplicates[item.DocNo]
+			duplicate = prepareSigningDocumentDuplicateResponse(duplicate, actor.ID)
+			if !duplicate.CanCreate {
+				duplicateCopy := duplicate
+				item.Duplicate = &duplicateCopy
+				item.Issues = append(item.Issues, batchValidationIssue("signing_document_duplicate", duplicate.Message, false))
+			}
+			if candidate.IsLockRecord == 1 {
+				item.Issues = append(item.Issues, batchValidationIssue("sml_document_locked", "เอกสารนี้ถูก Lock ใน SML ต้องยืนยันก่อนนำเข้า", false))
+			}
+		}
+		if batchIssuesExcept(item.Issues, "sml_document_locked") == 0 && item.PageCount > 0 {
+			_, layout, legalBoxes, layoutIssues := activeTemplateCreateLayout(active, item.PageCount)
+			if len(layoutIssues) == 0 {
+				_, _, _, layoutIssues = validateSigningDocumentLayout(layout, configs, item.PageCount)
+				_, legalIssues := normalizeAndValidateLegalNoticeBoxes(legalBoxes, nil, item.PageCount, true)
+				layoutIssues = append(layoutIssues, legalIssues...)
+			}
+			for _, issue := range layoutIssues {
+				item.Issues = append(item.Issues, batchValidationIssue(issue.Code, issue.Message, false))
+			}
+		}
+		if hasBatchIssue(item.Issues, "sml_document_locked") && len(item.Issues) == 1 {
+			item.Status = "warning"
+			summary["warning"]++
+		} else if len(item.Issues) == 0 {
+			item.Status = "ready"
+			summary["ready"]++
+		} else {
+			item.Status = "invalid"
+			summary["invalid"]++
+		}
+	}
+	contextVersion := signingDocumentBatchContextVersion(configs, *active)
+	_ = s.store.WriteAuditWithMetadata(r.Context(), actor.ID, "signing_document.batch_validate", "signing_document_batch", format.Code, clientIP(r), r.UserAgent(), map[string]any{
+		"docFormatCode": format.Code,
+		"total":         summary["total"], "ready": summary["ready"], "warning": summary["warning"], "invalid": summary["invalid"],
+		"pageCount": totalPageCount,
+		"bytes":     totalBytes,
+		"elapsedMs": time.Since(startedAt).Milliseconds(),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"docFormatCode":  format.Code,
+		"contextVersion": contextVersion,
+		"items":          items,
+		"summary":        summary,
+	})
+}
+
+func (s *Server) recordSigningDocumentBatchEvent(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	var req signingDocumentBatchEventRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_batch_event", "Batch event payload is invalid.")
+		return
+	}
+	req.Event = strings.TrimSpace(req.Event)
+	if req.Event != "batch_retry" && req.Event != "batch_discard" {
+		writeError(w, http.StatusBadRequest, "invalid_batch_event", "Batch event is invalid.")
+		return
+	}
+	metadata := map[string]any{
+		"docFormatCode": truncateForMetadata(strings.ToUpper(strings.TrimSpace(req.DocFormatCode)), 25),
+		"total":         clampInt(req.Total, 0, 30),
+		"created":       clampInt(req.Created, 0, 30),
+		"failed":        clampInt(req.Failed, 0, 30),
+	}
+	if err := s.store.WriteAuditWithMetadata(r.Context(), actor.ID, "signing_document."+req.Event, "signing_document_batch", "", clientIP(r), r.UserAgent(), metadata); err != nil {
+		s.logger.Warn("write signing document batch event failed", "error", err, "event", req.Event)
+		writeError(w, http.StatusInternalServerError, "batch_event_failed", "Cannot record batch event right now.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func batchValidationIssue(code, message string, retryable bool) signingDocumentBatchValidationIssue {
+	return signingDocumentBatchValidationIssue{Code: code, Message: message, Retryable: retryable}
+}
+
+func applyBatchPageLimit(items []signingDocumentBatchValidationItem, totalPageCount int) {
+	if totalPageCount <= 100 {
+		return
+	}
+	message := fmt.Sprintf("ชุดนี้มี PDF รวม %d หน้า เกินขีดจำกัด 100 หน้า กรุณาลบบางรายการ", totalPageCount)
+	for index := range items {
+		items[index].Issues = append(items[index].Issues, batchValidationIssue("batch_page_limit", message, false))
+	}
+}
+
+func hasBatchIssue(issues []signingDocumentBatchValidationIssue, code string) bool {
+	for _, issue := range issues {
+		if issue.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func batchIssuesExcept(issues []signingDocumentBatchValidationIssue, ignoredCode string) int {
+	count := 0
+	for _, issue := range issues {
+		if issue.Code != ignoredCode {
+			count++
+		}
+	}
+	return count
+}
+
+func normalizeBatchFileIDs(values []string) ([]string, error) {
+	if len(values) == 0 || len(values) > 30 {
+		return nil, fmt.Errorf("กรุณาเลือกไฟล์ตั้งแต่ 1 ถึง 30 ไฟล์")
+	}
+	result := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if !isUUIDText(value) {
+			return nil, fmt.Errorf("พบรหัสไฟล์ที่ไม่ถูกต้อง")
+		}
+		if seen[value] {
+			return nil, fmt.Errorf("พบไฟล์ซ้ำในคำขอตรวจสอบ")
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func isUUIDText(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for index, ch := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			if ch != '-' {
+				return false
+			}
+			continue
+		}
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 func serveInlinePDF(w http.ResponseWriter, r *http.Request, file models.UploadedFile) {
 	setNoStoreHeaders(w)
 	w.Header().Set("Content-Type", "application/pdf")
@@ -241,12 +608,24 @@ func (s *Server) recordSigningDocumentCreateEvent(w http.ResponseWriter, r *http
 }
 
 func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
+	s.createSigningDocumentWithMode(w, r, false)
+}
+
+func (s *Server) createSigningDocumentBatchItem(w http.ResponseWriter, r *http.Request) {
+	s.createSigningDocumentWithMode(w, r, true)
+}
+
+func (s *Server) createSigningDocumentWithMode(w http.ResponseWriter, r *http.Request, batchMode bool) {
 	actor, _ := currentUser(r)
+	startedAt := time.Now()
 	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
 		writeError(w, http.StatusBadRequest, "idempotency_key_required", "Idempotency-Key is required when creating a signing document.")
 		return
 	}
-	const idempotencyScope = "signing_document_create"
+	idempotencyScope := "signing_document_create"
+	if batchMode {
+		idempotencyScope = "signing_document_batch_item_create"
+	}
 	if s.replayIdempotentResponse(w, r, idempotencyScope, actor.ID) {
 		return
 	}
@@ -265,13 +644,41 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 	req.DocNo = strings.TrimSpace(req.DocNo)
 	req.FileID = strings.TrimSpace(req.FileID)
 	req.SignatureTemplateID = strings.TrimSpace(req.SignatureTemplateID)
-	if req.DocFormatCode == "" || req.DocNo == "" {
+	req.ContextVersion = strings.TrimSpace(req.ContextVersion)
+	if req.DocFormatCode == "" || (!batchMode && req.DocNo == "") {
 		writeError(w, http.StatusBadRequest, "document_required", "doc_format_code and doc_no are required.")
 		return
 	}
 	if req.FileID == "" {
 		writeError(w, http.StatusBadRequest, "document_pdf_required", "Uploaded PDF fileId is required.")
 		return
+	}
+
+	var uploaded models.UploadedFile
+	var err error
+	if batchMode {
+		uploaded, err = s.store.FindSigningDocumentUploadFile(r.Context(), req.FileID, actor.ID)
+		if errors.Is(err, store.ErrSigningDocumentUploadNotFound) {
+			writeError(w, http.StatusNotFound, "upload_not_found", "Uploaded PDF was not found or has expired. Upload the PDF again.")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "upload_failed", "Cannot load uploaded PDF right now.")
+			return
+		}
+		if uploaded.PageCount > 100 {
+			writeError(w, http.StatusBadRequest, "pdf_page_limit", "A single PDF in batch import cannot exceed 100 pages. Create this document separately.")
+			return
+		}
+		req.DocNo, err = documentNumberFromPDFName(uploaded.OriginalName)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "filename_invalid", err.Error())
+			return
+		}
+		if req.ContextVersion == "" {
+			writeError(w, http.StatusBadRequest, "context_version_required", "Batch validation must be completed before importing documents.")
+			return
+		}
 	}
 
 	format, err := s.fetchSMLDocFormatByCode(r.Context(), req.DocFormatCode)
@@ -298,14 +705,16 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		s.writeSigningDocumentDuplicateConflict(w, duplicateCheck, actor.ID)
 		return
 	}
-	uploaded, err := s.store.FindSigningDocumentUploadFile(r.Context(), req.FileID, actor.ID)
-	if errors.Is(err, store.ErrSigningDocumentUploadNotFound) {
-		writeError(w, http.StatusNotFound, "upload_not_found", "Uploaded PDF was not found or has expired. Upload the PDF again.")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "upload_failed", "Cannot load uploaded PDF right now.")
-		return
+	if !batchMode {
+		uploaded, err = s.store.FindSigningDocumentUploadFile(r.Context(), req.FileID, actor.ID)
+		if errors.Is(err, store.ErrSigningDocumentUploadNotFound) {
+			writeError(w, http.StatusNotFound, "upload_not_found", "Uploaded PDF was not found or has expired. Upload the PDF again.")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "upload_failed", "Cannot load uploaded PDF right now.")
+			return
+		}
 	}
 
 	screenCode := normalizeScreenCode(format.ScreenCode)
@@ -316,13 +725,18 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 	}
 	layoutSource := "per_document_upload"
 	req.SignNoteBoxes = nil
-	if actor.Role == "admin" {
-		templateID, layout, _, legalBoxes, issues, err := s.lockedAdminCreateLayout(r.Context(), screenCode, format.Code, uploaded.PageCount)
-		if err != nil {
-			s.logger.Error("load admin create template failed", "error", err, "docFormatCode", format.Code)
+	if actor.Role == "admin" || batchMode {
+		_, active, templateErr := s.store.GetSignatureTemplateState(r.Context(), screenCode, format.Code)
+		if templateErr != nil {
+			s.logger.Error("load admin create template failed", "error", templateErr, "docFormatCode", format.Code)
 			writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load active signature template right now.")
 			return
 		}
+		if batchMode && active != nil && signingDocumentBatchContextVersion(configs, *active) != req.ContextVersion {
+			writeError(w, http.StatusConflict, "batch_context_changed", "Workflow or Active Template changed. Please validate the batch again.")
+			return
+		}
+		templateID, layout, legalBoxes, issues := activeTemplateCreateLayout(active, uploaded.PageCount)
 		if len(issues) > 0 {
 			writeValidationIssues(w, http.StatusBadRequest, "signature_template_required", issues)
 			return
@@ -416,6 +830,14 @@ func (s *Server) createSigningDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := map[string]any{"document": s.withExternalURLs(r, document)}
+	if batchMode {
+		_ = s.store.WriteAuditWithMetadata(r.Context(), actor.ID, "signing_document.batch_import", "signing_document", document.ID, clientIP(r), r.UserAgent(), map[string]any{
+			"docFormatCode": document.DocFormatCode,
+			"pageCount":     uploaded.PageCount,
+			"bytes":         uploaded.SizeBytes,
+			"elapsedMs":     time.Since(startedAt).Milliseconds(),
+		})
+	}
 	s.completeIdempotency(idempotencyScope, actor.ID, r, http.StatusCreated, payload)
 	idempotencyCompleted = true
 	writeJSON(w, http.StatusCreated, payload)
@@ -782,10 +1204,15 @@ func (s *Server) lockedAdminCreateLayout(ctx context.Context, screenCode, docFor
 	if err != nil {
 		return "", nil, nil, nil, nil, err
 	}
+	templateID, layout, legalBoxes, issues := activeTemplateCreateLayout(active, pageCount)
+	return templateID, layout, nil, legalBoxes, issues, nil
+}
+
+func activeTemplateCreateLayout(active *models.SignatureTemplate, pageCount int) (string, []models.SignatureTemplateBoxRequest, []models.LegalNoticeBoxRequest, []models.SignatureValidationIssue) {
 	issues := []models.SignatureValidationIssue{}
 	if active == nil {
 		issues = append(issues, signatureIssue("signature_template_required", "", "Active signature template is required. Please contact superadmin."))
-		return "", nil, nil, nil, issues, nil
+		return "", nil, nil, issues
 	}
 	if len(active.Boxes) == 0 {
 		issues = append(issues, signatureIssue("signature_template_boxes_required", "", "Active signature template has no signature boxes. Please contact superadmin."))
@@ -795,7 +1222,7 @@ func (s *Server) lockedAdminCreateLayout(ctx context.Context, screenCode, docFor
 		issues = append(issues, signatureIssue("signature_template_legal_notice_required", "", "Active signature template has no legal notice box. Please contact superadmin."))
 	}
 	if len(issues) > 0 {
-		return active.ID, nil, nil, nil, issues, nil
+		return active.ID, nil, nil, issues
 	}
 	samplePageCount := 0
 	if active.SampleFile != nil {
@@ -803,7 +1230,7 @@ func (s *Server) lockedAdminCreateLayout(ctx context.Context, screenCode, docFor
 	}
 	layout := expandTemplateBoxesForDocument(boxRequestsFromTemplate(active.Boxes), samplePageCount, pageCount)
 	legalBoxes := expandLegalNoticeBoxesForDocument([]models.LegalNoticeBoxRequest{*legalBox}, samplePageCount, pageCount)
-	return active.ID, layout, nil, legalBoxes, nil, nil
+	return active.ID, layout, legalBoxes, nil
 }
 
 func expandTemplateBoxesForDocument(source []models.SignatureTemplateBoxRequest, samplePageCount, targetPageCount int) []models.SignatureTemplateBoxRequest {

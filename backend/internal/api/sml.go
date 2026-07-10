@@ -66,6 +66,14 @@ type smlDocumentCandidateResponse struct {
 	Message string                      `json:"message"`
 }
 
+type smlDocumentCandidatesBatchResponse struct {
+	Success       bool                          `json:"success"`
+	Data          []models.SMLDocumentCandidate `json:"data"`
+	MissingDocNos []string                      `json:"missingDocNos"`
+	Error         *smlAPIError                  `json:"error"`
+	Message       string                        `json:"message"`
+}
+
 type smlLockResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
@@ -449,6 +457,45 @@ func (s *Server) fetchSMLDocumentCandidate(ctx context.Context, docFormatCode, d
 		return models.SMLDocumentCandidate{}, errors.New(smlErrorMessage(payload.Error, payload.Message, "SML request failed"))
 	}
 	return payload.Data, nil
+}
+
+func (s *Server) fetchSMLDocumentCandidatesBatch(ctx context.Context, docFormatCode string, docNos []string) (smlDocumentCandidatesBatchResponse, error) {
+	tenant, ok := s.hasSMLAPIConfig(ctx)
+	if !ok {
+		return smlDocumentCandidatesBatchResponse{}, errSMLConfigMissing
+	}
+	endpoint, err := url.Parse(s.cfg.SMLPaperlessBaseURL + "/api/v1/ic/document-candidates/batch")
+	if err != nil {
+		return smlDocumentCandidatesBatchResponse{}, fmt.Errorf("invalid SML base URL")
+	}
+	body, err := json.Marshal(map[string]any{"docFormatCode": docFormatCode, "docNos": docNos})
+	if err != nil {
+		return smlDocumentCandidatesBatchResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), strings.NewReader(string(body)))
+	if err != nil {
+		return smlDocumentCandidatesBatchResponse{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
+	req.Header.Set("X-Tenant", tenant)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return smlDocumentCandidatesBatchResponse{}, err
+	}
+	defer resp.Body.Close()
+	var payload smlDocumentCandidatesBatchResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&payload); err != nil {
+		return smlDocumentCandidatesBatchResponse{}, fmt.Errorf("cannot parse SML response")
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return smlDocumentCandidatesBatchResponse{}, errors.New(smlErrorMessage(payload.Error, payload.Message, resp.Status))
+	}
+	if !payload.Success {
+		return smlDocumentCandidatesBatchResponse{}, errors.New(smlErrorMessage(payload.Error, payload.Message, "SML request failed"))
+	}
+	return payload, nil
 }
 
 func (s *Server) lockSMLDocument(ctx context.Context, docNo string) (map[string]any, error) {

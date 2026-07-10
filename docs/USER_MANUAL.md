@@ -35,6 +35,17 @@ For PDFs with more pages than the template, PaperLess clones the first-page patt
 6. Save as draft.
 7. Send the document when ready.
 
+To prepare many documents of the same type:
+
+1. Open `เอกสารเตรียมส่ง` and click `นำเข้าหลายไฟล์`.
+2. Select a document format that already has Workflow and an Active Template.
+3. Select up to 30 PDFs. Name each file exactly as its SML document number, such as `QT26070001.pdf`.
+4. Click `อัปโหลดและตรวจสอบ` and review SML metadata, duplicate warnings, PDF page count, and status for every row.
+5. Remove invalid/duplicate rows. For an SML-locked document, confirm that row explicitly before import.
+6. Click `ยืนยันนำเข้า`. Successful files become drafts; failed files can be retried without recreating successful items.
+
+Batch import uses the Active Template automatically and does not open the placement designer. The combined PDFs in one batch may contain at most 100 pages. Closing and discarding a batch removes unconsumed staged files.
+
 ### 4. Track Active Documents
 
 Open `เอกสารรอเซ็น`.

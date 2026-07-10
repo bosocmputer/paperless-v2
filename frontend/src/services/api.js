@@ -269,12 +269,38 @@ export const api = {
             body: JSON.stringify(payload)
         });
     },
-    uploadSigningDocumentPDF(file) {
+    uploadSigningDocumentPDF(file, options = {}) {
         const form = new FormData();
         form.set('file', file);
         return request('/api/signing-documents/uploads', {
             method: 'POST',
-            body: form
+            body: form,
+            signal: options.signal
+        });
+    },
+    discardSigningDocumentUpload(fileId) {
+        return request(`/api/signing-documents/uploads/${encodeURIComponent(fileId)}`, { method: 'DELETE' });
+    },
+    validateSigningDocumentBatch(payload, options = {}) {
+        return request('/api/signing-documents/batch-validation', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            signal: options.signal
+        });
+    },
+    createSigningDocumentBatchItem(payload, options = {}) {
+        const { body, headers } = splitIdempotencyPayload(payload);
+        return request('/api/signing-documents/batch-items', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+            signal: options.signal
+        });
+    },
+    recordSigningDocumentBatchEvent(payload) {
+        return request('/api/signing-documents/batch-events', {
+            method: 'POST',
+            body: JSON.stringify(payload)
         });
     },
     signingDocumentUploadPDFUrl(fileId) {

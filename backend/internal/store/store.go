@@ -1354,6 +1354,67 @@ WHERE u.file_id = $1
 	return file, err
 }
 
+func (s *Store) FindSigningDocumentUploadFiles(ctx context.Context, fileIDs []string, actorID string) (map[string]models.UploadedFile, error) {
+	if len(fileIDs) == 0 {
+		return map[string]models.UploadedFile{}, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT f.id::text, f.original_name, f.stored_name, f.storage_path, f.content_type,
+       f.size_bytes, f.page_count, f.sha256, COALESCE(f.created_by::text, ''), f.created_at
+FROM signing_document_uploads u
+JOIN uploaded_files f ON f.id = u.file_id
+WHERE u.file_id = ANY($1::uuid[])
+  AND u.created_by = NULLIF($2, '')::uuid
+  AND u.consumed_at IS NULL
+  AND u.created_at >= now() - interval '24 hours'
+`, fileIDs, actorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string]models.UploadedFile, len(fileIDs))
+	for rows.Next() {
+		file, scanErr := scanUploadedFile(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result[file.ID] = file
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) DeleteSigningDocumentUpload(ctx context.Context, fileID, actorID string) (string, bool, error) {
+	var storagePath string
+	err := s.pool.QueryRow(ctx, `
+WITH deleted_upload AS (
+    DELETE FROM signing_document_uploads
+    WHERE file_id = $1
+      AND created_by = NULLIF($2, '')::uuid
+      AND consumed_at IS NULL
+    RETURNING file_id
+), deleted_file AS (
+    DELETE FROM uploaded_files f
+    USING deleted_upload u
+    WHERE f.id = u.file_id
+      AND NOT EXISTS (SELECT 1 FROM signing_documents d WHERE d.original_file_id = f.id OR d.current_file_id = f.id OR d.final_file_id = f.id)
+      AND NOT EXISTS (SELECT 1 FROM signature_templates t WHERE t.sample_file_id = f.id)
+      AND NOT EXISTS (SELECT 1 FROM signing_document_versions v WHERE v.file_id = f.id)
+      AND NOT EXISTS (SELECT 1 FROM signing_document_signers sg WHERE sg.signature_file_id = f.id)
+      AND NOT EXISTS (SELECT 1 FROM signing_document_attachments a WHERE a.file_id = f.id)
+      AND NOT EXISTS (SELECT 1 FROM signing_document_print_events p WHERE p.file_id = f.id)
+    RETURNING f.storage_path
+)
+SELECT storage_path FROM deleted_file
+`, fileID, actorID).Scan(&storagePath)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return storagePath, true, nil
+}
+
 func (s *Store) CleanupExpiredSigningDocumentUploads(ctx context.Context, cutoff time.Time) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
 DELETE FROM uploaded_files f

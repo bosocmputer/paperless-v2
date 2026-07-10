@@ -5,6 +5,7 @@ import DocumentAttachmentActionButton from '@/views/signing/components/DocumentA
 import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
 import DocumentReferenceCheck from '@/views/signing/components/DocumentReferenceCheck.vue';
+import BatchDocumentImportDialog from '@/views/signing/components/BatchDocumentImportDialog.vue';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -36,6 +37,7 @@ const generatedToken = ref(null);
 const generatingExternalIds = ref(new Set());
 const copyFallbackVisible = ref(false);
 const copyFallbackValue = ref('');
+const batchImportDialog = ref(false);
 
 let searchTimer = null;
 
@@ -142,6 +144,20 @@ async function loadPage() {
 
 function openCreate() {
     router.push({ name: 'signing-document-new' });
+}
+
+function openBatchImport() {
+    batchImportDialog.value = true;
+}
+
+async function onBatchImportCompleted(result = {}) {
+    await loadPage();
+    toast.add({
+        severity: result.failed ? 'warn' : 'success',
+        summary: result.failed ? 'นำเข้าแล้วบางส่วน' : 'สร้างเอกสารเตรียมส่งแล้ว',
+        detail: `สำเร็จ ${result.created || 0} รายการ${result.failed ? ` · ล้มเหลว ${result.failed}` : ''}`,
+        life: 3500
+    });
 }
 
 function openDetail(doc) {
@@ -519,6 +535,7 @@ function selectInput(event) {
                     <InputText v-model="searchQuery" type="search" :placeholder="pageConfig.searchPlaceholder" class="w-full" />
                 </IconField>
                 <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
+                <Button v-if="pageConfig.showCreate" label="นำเข้าหลายไฟล์" icon="pi pi-upload" severity="secondary" outlined @click="openBatchImport" />
                 <Button v-if="pageConfig.showCreate" label="สร้างเอกสารใหม่" icon="pi pi-plus" @click="openCreate" />
             </div>
         </div>
@@ -606,6 +623,7 @@ function selectInput(event) {
         </DataTable>
 
         <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="(documentId) => openDetail({ id: documentId })" />
+        <BatchDocumentImportDialog v-model:visible="batchImportDialog" @completed="onBatchImportCompleted" />
         <DocumentAttachmentsDialog
             v-model:visible="attachmentsDialog"
             :title="attachmentsDialogTitle"

@@ -379,6 +379,41 @@ LIMIT 20
 	return buildSigningDocumentDuplicateCheckResult(refs), nil
 }
 
+func (s *Store) CheckSigningDocumentDuplicates(ctx context.Context, docFormatCode string, docNos []string) (map[string]SigningDocumentDuplicateCheckResult, error) {
+	docFormatCode = strings.ToUpper(strings.TrimSpace(docFormatCode))
+	result := make(map[string]SigningDocumentDuplicateCheckResult, len(docNos))
+	clean := make([]string, 0, len(docNos))
+	seen := make(map[string]bool, len(docNos))
+	for _, raw := range docNos {
+		docNo := strings.ToUpper(strings.TrimSpace(raw))
+		if docNo == "" || seen[docNo] {
+			continue
+		}
+		seen[docNo] = true
+		clean = append(clean, docNo)
+		result[docNo] = buildSigningDocumentDuplicateCheckResult(nil)
+	}
+	if docFormatCode == "" || len(clean) == 0 {
+		return result, nil
+	}
+	refs, err := s.ListSigningDocumentReferencesByDocNos(ctx, clean)
+	if err != nil {
+		return nil, err
+	}
+	grouped := make(map[string][]models.SigningDocumentReference, len(clean))
+	for _, ref := range refs {
+		if !strings.EqualFold(strings.TrimSpace(ref.DocFormatCode), docFormatCode) {
+			continue
+		}
+		key := strings.ToUpper(strings.TrimSpace(ref.DocNo))
+		grouped[key] = append(grouped[key], ref)
+	}
+	for _, docNo := range clean {
+		result[docNo] = buildSigningDocumentDuplicateCheckResult(grouped[docNo])
+	}
+	return result, nil
+}
+
 func signingDocumentListWhere(ctx context.Context, query SigningDocumentListQuery) (string, []any) {
 	clauses := []string{}
 	args := []any{}
