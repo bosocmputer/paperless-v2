@@ -13,15 +13,16 @@
 
 ## Customer Deployment
 
-- PaperLess API/Web release: `20260716153839` from commit `fac91c7`.
+- PaperLess API/Web release: `20260716161907` from commit `dadab7f`.
 - SML API hotfix release: `20260716155654` from commit `4232d27`.
 - The SML hotfix includes the login-capable built-in `superadmin` in sync even when an installation stores it with `active_status=0`; ordinary inactive users remain excluded.
 - Production login and database selection passed for `STPT`.
-- Sync dry-run found the real `superadmin` signature as new, and the binary endpoint returned its JPEG successfully.
-- Deployment QA did not execute the actual sync. The customer initiates it from `/admin/users` after reviewing the preview.
+- The customer sync created the current `superadmin` saved signature for `STPT`.
+- Production QA opened that signature from `/admin/users`; the protected PNG loaded at `1600x912`, the dialog closed cleanly, and the browser console had no errors.
+- An unauthenticated saved-signature request returned `401` as expected.
 - Build cache and obsolete PaperLess images were cleaned while retaining each active image and its immediate rollback image.
 
-Evidence is stored at `/data/paperless/releases/20260716155654/postdeploy-checks.txt` on the customer server.
+Evidence is stored at `/data/paperless/releases/20260716161907/postdeploy-checks.txt` on the customer server.
 
 ## Customer Test
 
