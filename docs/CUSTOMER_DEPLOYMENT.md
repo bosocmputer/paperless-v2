@@ -12,24 +12,24 @@
 
 The server has other projects. Keep PaperLess isolated and expose only the approved port.
 
-## Current Customer Status - 2026-07-05
+## Current Customer Status - 2026-07-16
 
-- Active customer test release: `20260705203244`
-- Status: deployed and waiting for customer/user feedback
-- Post-deploy evidence: `/data/paperless/releases/20260705203244/postdeploy-checks.txt`
+- PaperLess API/Web release: `20260716153839` (`fac91c7`)
+- SML API hotfix release: `20260716155654` (`4232d27`)
+- Status: deployed with SML saved-signature sync enabled; waiting for customer confirmation sync and signing test
+- Post-deploy evidence: `/data/paperless/releases/20260716155654/postdeploy-checks.txt`
 
 Latest smoke results:
 
-- Web/API/SML API/PaperLess DB containers were healthy.
+- Web container was running; PaperLess API, SML API, and PaperLess DB containers were healthy.
 - `http://45.122.49.250:8095/` and `http://45.122.49.250:8095/health/ready` returned HTTP 200.
-- PaperLess API and SML API containers returned ready responses.
-- Database selection returned the customer SML database list.
-- Tenant `SILK` was verified end-to-end for login-time image DB setup: not-ready before setup, ready after setup, and login succeeded.
+- Login returned 27 SML databases and selected tenant `STPT` successfully.
+- Saved-signature dry-run found one valid new signature for `superadmin`; no sync was applied during deployment QA.
+- The protected SML binary endpoint returned the real JPEG (`9000x5284`) successfully without exposing it in list responses or logs.
+- Browser smoke confirmed the Sync button and SML signature column on `/admin/users`, with no console errors.
+- Build cache was removed after deployment; current and immediate previous service images remain for rollback.
 
-Known tenant readiness notes:
-
-- `RUHRES` is missing image DB/table. Users can click `ตั้งค่า image DB` on the login page to repair it after SML credential verification.
-- `PTTP-TAX` is missing the main tenant DB. PaperLess must keep it blocked until SML/admin database setup is complete.
+Known tenant readiness note: `PTTP-TAX` was still missing its main tenant DB during the latest login smoke and must remain blocked until SML/admin database setup is complete.
 
 ## Port Policy
 

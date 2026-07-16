@@ -1,26 +1,25 @@
 # QA Summary - 2026-07-03
 
-## Current Customer Test Status - 2026-07-05
+## Current Customer Test Status - 2026-07-16
 
 Status: deployed to the customer server and waiting for customer feedback.
 
 - Customer URL: `http://45.122.49.250:8095/`
-- Customer release evidence: `/data/paperless/releases/20260705203244/postdeploy-checks.txt`
-- Customer image tag tested: `20260705203244`
+- Customer release evidence: `/data/paperless/releases/20260716155654/postdeploy-checks.txt`
+- PaperLess API/Web image tag tested: `20260716153839`
+- SML API image tag tested: `20260716155654`
 
-Customer smoke passed on release `20260705203244`:
+Latest customer smoke passed after the saved-signature release:
 
-- `paperless-prod-web`, `paperless-prod-api`, `paperless-prod-sml-api`, and `paperless-prod-db` were healthy/running.
+- `paperless-prod-web` was running; API, SML API, and DB were healthy.
 - Web `/`, `/health/live`, and `/health/ready` returned HTTP 200.
-- PaperLess API container returned `{"status":"ready"}`.
-- SML API container returned ready for database `iampcoffee`.
-- SML login/database selection returned the customer database list.
-- Self-service image DB setup was verified with tenant `SILK`: before setup it returned tenant-not-ready, after setup login succeeded and JWT was issued.
+- SML login returned 27 databases and issued a `superadmin` session for `STPT`.
+- Saved-signature dry-run returned one available/new signature and no invalid/failed signature.
+- The protected binary endpoint returned the real `superadmin` JPEG at `9000x5284`.
+- `/admin/users` showed the SML Sync action and signature-status column with no browser console errors.
+- Deployment QA used dry-run only; the customer still controls the first actual signature sync.
 
-Known tenant readiness states from the latest customer smoke:
-
-- `RUHRES`: image DB missing; user can repair from the login page with `ตั้งค่า image DB`.
-- `PTTP-TAX`: main tenant DB missing; this is blocked for SML/admin database setup and cannot be auto-provisioned by PaperLess.
+Known tenant readiness state from the latest customer smoke: `PTTP-TAX` is missing its main tenant DB and cannot be auto-provisioned by PaperLess.
 
 ## Scope
 
