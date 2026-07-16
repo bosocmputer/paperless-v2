@@ -261,15 +261,33 @@ function statusSeverity(status) {
 function savedSignatureLabel(user) {
     if (user?.savedSignature?.available && user?.savedSignature?.lastError) return 'พร้อมใช้ (รูปเดิม)';
     if (user?.savedSignature?.available) return 'พร้อมใช้';
-    if (user?.savedSignature?.lastError) return 'Sync ไม่สำเร็จ';
-    return 'ยังไม่มี';
+    if (savedSignatureIssueType(user) === 'missing') return 'ไม่มีลายเซ็นใน SML';
+    if (savedSignatureIssueType(user) === 'invalid') return 'รูปลายเซ็นใช้ไม่ได้';
+    if (savedSignatureIssueType(user) === 'failed') return 'Sync ลายเซ็นมีปัญหา';
+    return 'ยังไม่มีข้อมูลลายเซ็น';
 }
 
 function savedSignatureSeverity(user) {
     if (user?.savedSignature?.available && user?.savedSignature?.lastError) return 'warn';
     if (user?.savedSignature?.available) return 'success';
-    if (user?.savedSignature?.lastError) return 'warn';
+    if (savedSignatureIssueType(user) === 'invalid') return 'warn';
+    if (savedSignatureIssueType(user) === 'failed') return 'danger';
     return 'secondary';
+}
+
+function savedSignatureIssueType(user) {
+    const issue = String(user?.savedSignature?.lastError || '').trim().toLowerCase();
+    if (!issue) return 'none';
+    if (issue === 'signature_missing') return 'missing';
+    if (['signature_invalid', 'signature_content_type_invalid', 'signature_normalize_failed'].includes(issue)) return 'invalid';
+    return 'failed';
+}
+
+function savedSignatureHint(user) {
+    if (!user?.savedSignature?.available || !user?.savedSignature?.lastError) return '';
+    if (savedSignatureIssueType(user) === 'missing') return 'ไม่พบลายเซ็นใน SML จึงคงรูปเดิมไว้';
+    if (savedSignatureIssueType(user) === 'invalid') return 'รูปใหม่ใน SML ใช้ไม่ได้ จึงคงรูปเดิมไว้';
+    return 'อัปเดตล่าสุดไม่สำเร็จ จึงคงรูปเดิมไว้';
 }
 
 function signatureSyncLabel(status) {
@@ -356,7 +374,7 @@ function normalizeSearch(value) {
                             />
                         </div>
                         <small v-if="data.savedSignature?.syncedAt" class="text-muted-color">{{ formatDate(data.savedSignature.syncedAt) }}</small>
-                        <small v-if="data.savedSignature?.available && data.savedSignature?.lastError" class="text-orange-600">Sync ล่าสุดมีปัญหา จึงคงรูปเดิมไว้</small>
+                        <small v-if="savedSignatureHint(data)" class="text-orange-600">{{ savedSignatureHint(data) }}</small>
                     </div>
                 </template>
             </Column>

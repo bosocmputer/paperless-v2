@@ -6,6 +6,7 @@
 - Candidate lists expose only availability, dimensions, byte count, and a source fingerprint; image bytes use a protected internal endpoint.
 - Saved images are normalized to immutable transparent PNG files in PaperLess.
 - Superadmin can open the current tenant-scoped saved signature from `/admin/users` through a protected, audited, no-store preview. The image is loaded only after clicking the view icon and is never exposed through a public URL.
+- Saved-signature status text now distinguishes a normal missing SML image, an invalid image, and an actual sync failure instead of presenting every condition as a failed sync.
 - Missing or invalid SML data preserves the previous usable PaperLess signature.
 - Internal signers explicitly choose a saved signature or draw a new signature for each task. External signers remain draw-only.
 - Signing snapshots the selected file and version so later syncs cannot rewrite completed documents.
