@@ -42,6 +42,13 @@ type SignTaskResult struct {
 	Completed  bool
 }
 
+type SignTaskSignature struct {
+	FileID  string
+	Source  string
+	Version string
+	UserID  string
+}
+
 type CreatePrintEventInput struct {
 	DocumentID      string
 	FileID          string
@@ -1495,11 +1502,15 @@ WHERE sg.id = $1
 }
 
 func (s *Store) SignInternalTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string, signNoteBoxes []models.SignNoteBox) (SignTaskResult, error) {
-	return s.signTask(ctx, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote, signNoteBoxes, false)
+	return s.SignInternalTaskWithSignature(ctx, taskID, username, SignTaskSignature{FileID: signatureFileID, Source: "drawn"}, deviceID, ipAddress, userAgent, legalTextVersion, signNote, signNoteBoxes)
+}
+
+func (s *Store) SignInternalTaskWithSignature(ctx context.Context, taskID, username string, signature SignTaskSignature, deviceID, ipAddress, userAgent, legalTextVersion, signNote string, signNoteBoxes []models.SignNoteBox) (SignTaskResult, error) {
+	return s.signTask(ctx, taskID, username, signature, deviceID, ipAddress, userAgent, legalTextVersion, signNote, signNoteBoxes, false)
 }
 
 func (s *Store) SignExternalTask(ctx context.Context, taskID, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string, signNoteBoxes []models.SignNoteBox) (SignTaskResult, error) {
-	return s.signTask(ctx, taskID, "", signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote, signNoteBoxes, true)
+	return s.signTask(ctx, taskID, "", SignTaskSignature{FileID: signatureFileID, Source: "drawn"}, deviceID, ipAddress, userAgent, legalTextVersion, signNote, signNoteBoxes, true)
 }
 
 func (s *Store) RejectInternalTask(ctx context.Context, taskID, username, reason, deviceID, ipAddress, userAgent string) (string, error) {
@@ -2020,7 +2031,7 @@ RETURNING id::text
 	return s.FindSigningDocumentPrintEvent(ctx, input.DocumentID, id)
 }
 
-func (s *Store) signTask(ctx context.Context, taskID, username, signatureFileID, deviceID, ipAddress, userAgent, legalTextVersion, signNote string, signNoteBoxes []models.SignNoteBox, external bool) (SignTaskResult, error) {
+func (s *Store) signTask(ctx context.Context, taskID, username string, signature SignTaskSignature, deviceID, ipAddress, userAgent, legalTextVersion, signNote string, signNoteBoxes []models.SignNoteBox, external bool) (SignTaskResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return SignTaskResult{}, err
@@ -2048,8 +2059,8 @@ FOR UPDATE OF sg
 	if external && signer.SignerType != "external" {
 		return SignTaskResult{}, ErrSigningTaskUnavailable
 	}
-	var documentStatus string
-	if err := tx.QueryRow(ctx, `SELECT status FROM signing_documents WHERE id = $1 FOR UPDATE`, signer.DocumentID).Scan(&documentStatus); err != nil {
+	var documentStatus, documentTenant string
+	if err := tx.QueryRow(ctx, `SELECT status, sml_tenant FROM signing_documents WHERE id = $1 FOR UPDATE`, signer.DocumentID).Scan(&documentStatus, &documentTenant); err != nil {
 		return SignTaskResult{}, err
 	}
 	if documentStatus != "in_progress" {
@@ -2062,6 +2073,36 @@ FOR UPDATE OF sg
 	if len(missing) > 0 {
 		return SignTaskResult{}, ErrRequiredAttachmentsMissing
 	}
+	signature.Source = strings.ToLower(strings.TrimSpace(signature.Source))
+	if signature.Source == "" {
+		signature.Source = "drawn"
+	}
+	if signature.Source == "sml_saved" {
+		var savedFileID, savedVersion string
+		err := tx.QueryRow(ctx, `
+SELECT us.file_id::text, us.source_version
+FROM user_saved_signatures us
+JOIN uploaded_files f ON f.id = us.file_id
+WHERE us.user_id = NULLIF($1,'')::uuid AND us.sml_tenant = $2
+FOR SHARE OF us
+`, signature.UserID, NormalizeSMLTenant(documentTenant)).Scan(&savedFileID, &savedVersion)
+		if errors.Is(err, pgx.ErrNoRows) || strings.TrimSpace(savedFileID) == "" {
+			return SignTaskResult{}, ErrSavedSignatureUnavailable
+		}
+		if err != nil {
+			return SignTaskResult{}, err
+		}
+		if strings.TrimSpace(signature.Version) == "" || signature.Version != savedVersion {
+			return SignTaskResult{}, ErrSavedSignatureChanged
+		}
+		signature.FileID = savedFileID
+		signature.Version = savedVersion
+	} else {
+		signature.Source = "drawn"
+		if strings.TrimSpace(signature.FileID) == "" {
+			return SignTaskResult{}, ErrSavedSignatureUnavailable
+		}
+	}
 
 	signNoteBoxesJSON, err := json.Marshal(signNoteBoxes)
 	if err != nil {
@@ -2071,14 +2112,16 @@ FOR UPDATE OF sg
 UPDATE signing_document_signers
 SET status = 'signed',
     signature_file_id = $2,
+    signature_source = $3,
+    signature_version = $4,
     signed_at = now(),
-    device_id = $3,
-    ip_address = $4,
-    user_agent = $5,
-    sign_note = $6,
-    sign_note_boxes = $7::jsonb
+    device_id = $5,
+    ip_address = $6,
+    user_agent = $7,
+    sign_note = $8,
+    sign_note_boxes = $9::jsonb
 WHERE id = $1
-`, taskID, signatureFileID, deviceID, ipAddress, userAgent, strings.TrimSpace(signNote), string(signNoteBoxesJSON)); err != nil {
+`, taskID, signature.FileID, signature.Source, strings.TrimSpace(signature.Version), deviceID, ipAddress, userAgent, strings.TrimSpace(signNote), string(signNoteBoxesJSON)); err != nil {
 		return SignTaskResult{}, err
 	}
 	if err := insertSigningEvent(ctx, tx, signer.DocumentID, "", signer.SignerName, "signed", signer.PositionName+" เซ็นเอกสารแล้ว", ipAddress, userAgent, map[string]any{
@@ -2089,6 +2132,8 @@ WHERE id = $1
 		"signNotePresent":  strings.TrimSpace(signNote) != "",
 		"signNoteBoxCount": len(signNoteBoxes),
 		"signNotePages":    signNoteBoxPages(signNoteBoxes),
+		"signatureSource":  signature.Source,
+		"signatureVersion": strings.TrimSpace(signature.Version),
 	}); err != nil {
 		return SignTaskResult{}, err
 	}
@@ -2403,7 +2448,7 @@ func signingSignerSelect() string {
 SELECT sg.id::text, sg.document_id::text, sg.step_id::text, sg.position_code, sg.position_name, sg.sequence_no,
        sg.condition_type, sg.signer_slot, sg.signer_type, sg.signer_user, sg.signer_name, sg.status,
        sg.page_no, sg.x_ratio, sg.y_ratio, sg.width_ratio, sg.height_ratio, sg.label,
-       COALESCE(sg.signature_file_id::text,''), sg.signed_at, sg.rejected_at, sg.reject_reason,
+       COALESCE(sg.signature_file_id::text,''), COALESCE(sg.signature_source,'drawn'), COALESCE(sg.signature_version,''), sg.signed_at, sg.rejected_at, sg.reject_reason,
        sg.sign_note, COALESCE(sg.sign_note_boxes, '[]'::jsonb)::text, COALESCE(sg.attachment_requirements_snapshot, '[]'::jsonb)::text,
        sg.device_id, sg.ip_address, sg.user_agent, COALESCE(sg.external_token_id::text,'')
 FROM signing_document_signers sg
@@ -2480,7 +2525,7 @@ func scanSigningDocumentSigner(row rowScanner) (models.SigningDocumentSigner, er
 	err := row.Scan(&signer.ID, &signer.DocumentID, &signer.StepID, &signer.PositionCode, &signer.PositionName, &signer.SequenceNo,
 		&signer.ConditionType, &signer.SignerSlot, &signer.SignerType, &signer.SignerUser, &signer.SignerName, &signer.Status,
 		&signer.PageNo, &signer.XRatio, &signer.YRatio, &signer.WidthRatio, &signer.HeightRatio, &signer.Label,
-		&signer.SignatureFileID, &signedAt, &rejectedAt, &signer.RejectReason, &signer.SignNote, &signNoteBoxesRaw, &attachmentRequirementsRaw, &signer.DeviceID, &signer.IPAddress,
+		&signer.SignatureFileID, &signer.SignatureSource, &signer.SignatureVersion, &signedAt, &rejectedAt, &signer.RejectReason, &signer.SignNote, &signNoteBoxesRaw, &attachmentRequirementsRaw, &signer.DeviceID, &signer.IPAddress,
 		&signer.UserAgent, &signer.ExternalTokenID)
 	if signedAt.Valid {
 		signer.SignedAt = &signedAt.Time

@@ -67,6 +67,48 @@ func TestNormalizeSignatureImageRejectsBlankSignature(t *testing.T) {
 	}
 }
 
+func TestNormalizeSavedSignatureImageCropsAndScalesLargeJPEG(t *testing.T) {
+	source := image.NewGray(image.Rect(0, 0, 2400, 1800))
+	for index := range source.Pix {
+		source.Pix[index] = 255
+	}
+	for y := 700; y < 900; y++ {
+		for x := 300; x < 2200; x++ {
+			if (x+y)%17 < 5 {
+				source.SetGray(x, y, color.Gray{Y: 20})
+			}
+		}
+	}
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, source, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+
+	normalized, err := normalizeSavedSignatureImage(encoded.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, format, err := image.DecodeConfig(bytes.NewReader(normalized))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if format != "png" {
+		t.Fatalf("expected PNG output, got %s", format)
+	}
+	if config.Width > maxSavedSignatureOutputSide || config.Height > maxSavedSignatureOutputSide {
+		t.Fatalf("normalized image exceeds output cap: %dx%d", config.Width, config.Height)
+	}
+	if config.Height >= 1800 {
+		t.Fatalf("expected whitespace crop, got height %d", config.Height)
+	}
+}
+
+func TestNormalizeSavedSignatureImageRejectsBlank(t *testing.T) {
+	if _, err := normalizeSavedSignatureImage(encodeBlankPNG(t, color.RGBA{R: 255, G: 255, B: 255, A: 255})); err == nil {
+		t.Fatal("expected blank saved signature to be rejected")
+	}
+}
+
 func signatureTestImage(background color.RGBA) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, 24, 12))
 	for y := 0; y < 12; y++ {

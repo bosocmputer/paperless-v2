@@ -3,13 +3,32 @@ package models
 import "time"
 
 type User struct {
-	ID           string    `json:"id"`
-	DisplayName  string    `json:"displayName"`
-	Username     string    `json:"username"`
-	Role         string    `json:"role"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"createdAt"`
-	PasswordHash string    `json:"-"`
+	ID             string                 `json:"id"`
+	DisplayName    string                 `json:"displayName"`
+	Username       string                 `json:"username"`
+	Role           string                 `json:"role"`
+	Status         string                 `json:"status"`
+	CreatedAt      time.Time              `json:"createdAt"`
+	PasswordHash   string                 `json:"-"`
+	SavedSignature *SavedSignatureSummary `json:"savedSignature,omitempty"`
+}
+
+type SavedSignatureSummary struct {
+	Available bool       `json:"available"`
+	Version   string     `json:"version,omitempty"`
+	SyncedAt  *time.Time `json:"syncedAt,omitempty"`
+	LastError string     `json:"lastError,omitempty"`
+}
+
+type UserSavedSignature struct {
+	UserID        string
+	SMLTenant     string
+	FileID        string
+	SMLUserCode   string
+	SourceVersion string
+	SyncedAt      *time.Time
+	LastError     string
+	File          UploadedFile
 }
 
 type CreateUserRequest struct {
@@ -33,10 +52,24 @@ type SyncSMLUsersRequest struct {
 }
 
 type SMLUserSyncCandidate struct {
+	Username           string `json:"username"`
+	DisplayName        string `json:"displayName"`
+	PasswordHash       string `json:"-"`
+	PasswordSynced     bool   `json:"passwordSynced"`
+	SignatureAvailable bool   `json:"signatureAvailable"`
+	SignatureVersion   string `json:"signatureVersion,omitempty"`
+	SignatureBytes     int    `json:"signatureBytes,omitempty"`
+	SignatureWidth     int    `json:"signatureWidth,omitempty"`
+	SignatureHeight    int    `json:"signatureHeight,omitempty"`
+	SignatureIssue     string `json:"signatureIssue,omitempty"`
+}
+
+type SMLSignatureSyncItem struct {
 	Username       string `json:"username"`
 	DisplayName    string `json:"displayName"`
-	PasswordHash   string `json:"-"`
-	PasswordSynced bool   `json:"passwordSynced"`
+	Status         string `json:"status"`
+	Issue          string `json:"issue,omitempty"`
+	PreviousExists bool   `json:"previousExists"`
 }
 
 type SMLUserSyncInput struct {
@@ -58,20 +91,30 @@ type SMLUserSyncResult struct {
 }
 
 type SMLUserSyncResponse struct {
-	DryRun            bool                   `json:"dryRun"`
-	Tenant            string                 `json:"tenant"`
-	DataCode          string                 `json:"dataCode"`
-	DataName          string                 `json:"dataName"`
-	TotalAllowed      int                    `json:"totalAllowed"`
-	Active            int                    `json:"active"`
-	Existing          int                    `json:"existing"`
-	ToCreate          int                    `json:"toCreate"`
-	ToActivate        int                    `json:"toActivate"`
-	Created           int                    `json:"created"`
-	Activated         int                    `json:"activated"`
-	SkippedInactive   int                    `json:"skippedInactive"`
-	PasswordNotSynced int                    `json:"passwordNotSynced"`
-	Users             []SMLUserSyncCandidate `json:"users,omitempty"`
+	DryRun             bool                   `json:"dryRun"`
+	Tenant             string                 `json:"tenant"`
+	DataCode           string                 `json:"dataCode"`
+	DataName           string                 `json:"dataName"`
+	TotalAllowed       int                    `json:"totalAllowed"`
+	Active             int                    `json:"active"`
+	Existing           int                    `json:"existing"`
+	ToCreate           int                    `json:"toCreate"`
+	ToActivate         int                    `json:"toActivate"`
+	Created            int                    `json:"created"`
+	Activated          int                    `json:"activated"`
+	SkippedInactive    int                    `json:"skippedInactive"`
+	PasswordNotSynced  int                    `json:"passwordNotSynced"`
+	Users              []SMLUserSyncCandidate `json:"users,omitempty"`
+	SignatureAvailable int                    `json:"signatureAvailable"`
+	SignatureNew       int                    `json:"signatureNew"`
+	SignatureChanged   int                    `json:"signatureChanged"`
+	SignatureUnchanged int                    `json:"signatureUnchanged"`
+	SignatureMissing   int                    `json:"signatureMissing"`
+	SignatureInvalid   int                    `json:"signatureInvalid"`
+	SignatureSynced    int                    `json:"signatureSynced"`
+	SignatureFailed    int                    `json:"signatureFailed"`
+	SignatureError     string                 `json:"signatureError,omitempty"`
+	Signatures         []SMLSignatureSyncItem `json:"signatures,omitempty"`
 }
 
 type SeedUser struct {
@@ -608,6 +651,8 @@ type SigningDocumentSigner struct {
 	HeightRatio                    float64                 `json:"heightRatio"`
 	Label                          string                  `json:"label"`
 	SignatureFileID                string                  `json:"signatureFileId"`
+	SignatureSource                string                  `json:"signatureSource"`
+	SignatureVersion               string                  `json:"signatureVersion,omitempty"`
 	SignedAt                       *time.Time              `json:"signedAt,omitempty"`
 	RejectedAt                     *time.Time              `json:"rejectedAt,omitempty"`
 	RejectReason                   string                  `json:"rejectReason"`
@@ -774,12 +819,14 @@ type CreatePrintCopyRequest struct {
 }
 
 type SignTaskRequest struct {
-	SignatureDataURL string        `json:"signatureDataUrl"`
-	DeviceID         string        `json:"deviceId"`
-	LegalText        string        `json:"legalText"`
-	LegalAccepted    bool          `json:"legalAccepted"`
-	SignNote         string        `json:"signNote"`
-	SignNoteBoxes    []SignNoteBox `json:"signNoteBoxes,omitempty"`
+	SignatureDataURL      string        `json:"signatureDataUrl"`
+	SignatureMode         string        `json:"signatureMode"`
+	SavedSignatureVersion string        `json:"savedSignatureVersion"`
+	DeviceID              string        `json:"deviceId"`
+	LegalText             string        `json:"legalText"`
+	LegalAccepted         bool          `json:"legalAccepted"`
+	SignNote              string        `json:"signNote"`
+	SignNoteBoxes         []SignNoteBox `json:"signNoteBoxes,omitempty"`
 }
 
 type RejectTaskRequest struct {

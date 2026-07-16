@@ -34,9 +34,10 @@ const statusOptions = [
 const dialogTitle = computed(() => (editingUser.value ? 'แก้ไขผู้ใช้' : 'เพิ่มผู้ใช้'));
 const passwordHint = computed(() => (editingUser.value ? 'เว้นว่างไว้ถ้าไม่ต้องการเปลี่ยนรหัสผ่าน' : 'รหัสผ่านอย่างน้อย 6 ตัวอักษร'));
 const syncUsers = computed(() => syncPreview.value?.users || []);
+const syncSignatures = computed(() => syncPreview.value?.signatures || []);
 const canConfirmSync = computed(() => {
     if (!syncPreview.value || syncPreview.value.dryRun === false || syncSaving.value) return false;
-    return Number(syncPreview.value.toCreate || 0) > 0 || Number(syncPreview.value.toActivate || 0) > 0;
+    return Number(syncPreview.value.toCreate || 0) > 0 || Number(syncPreview.value.toActivate || 0) > 0 || Number(syncPreview.value.signatureNew || 0) > 0 || Number(syncPreview.value.signatureChanged || 0) > 0;
 });
 const filteredUsers = computed(() => {
     const query = normalizeSearch(searchQuery.value);
@@ -95,11 +96,19 @@ async function confirmSyncSMLUsers() {
         syncPreview.value = result;
         const created = Number(result.created || 0);
         const activated = Number(result.activated || 0);
-        if (created > 0 || activated > 0) {
+        const signatures = Number(result.signatureSynced || 0);
+        const signatureFailed = Number(result.signatureFailed || 0);
+        const signatureError = Boolean(result.signatureError);
+        if (created > 0 || activated > 0 || signatures > 0 || signatureFailed > 0) {
             const details = [];
             if (created > 0) details.push(`เพิ่มผู้ใช้ใหม่ ${created} คน`);
             if (activated > 0) details.push(`เปิดใช้งาน ${activated} คน`);
-            toast.add({ severity: 'success', summary: 'Sync user จาก SML สำเร็จ', detail: details.join(' · '), life: 3500 });
+            if (signatures > 0) details.push(`อัปเดตลายเซ็น ${signatures} คน`);
+            if (signatureFailed > 0) details.push(`ลายเซ็นมีปัญหา ${signatureFailed} คน`);
+            if (signatureError) details.push('ระบบลายเซ็นยังไม่พร้อม กรุณาลอง Sync อีกครั้ง');
+            toast.add({ severity: signatureFailed > 0 || signatureError ? 'warn' : 'success', summary: 'Sync จาก SML เสร็จแล้ว', detail: details.join(' · '), life: 4500 });
+        } else if (signatureError) {
+            toast.add({ severity: 'warn', summary: 'Sync ผู้ใช้เสร็จแล้ว', detail: 'ยังตรวจสอบลายเซ็นจาก SML ไม่สำเร็จ กรุณาลองอีกครั้ง', life: 4500 });
         } else {
             toast.add({ severity: 'info', summary: 'ไม่มีผู้ใช้ใหม่จาก SML', life: 3000 });
         }
@@ -205,6 +214,39 @@ function statusSeverity(status) {
     return status === 'active' ? 'success' : 'secondary';
 }
 
+function savedSignatureLabel(user) {
+    if (user?.savedSignature?.available && user?.savedSignature?.lastError) return 'พร้อมใช้ (รูปเดิม)';
+    if (user?.savedSignature?.available) return 'พร้อมใช้';
+    if (user?.savedSignature?.lastError) return 'Sync ไม่สำเร็จ';
+    return 'ยังไม่มี';
+}
+
+function savedSignatureSeverity(user) {
+    if (user?.savedSignature?.available && user?.savedSignature?.lastError) return 'warn';
+    if (user?.savedSignature?.available) return 'success';
+    if (user?.savedSignature?.lastError) return 'warn';
+    return 'secondary';
+}
+
+function signatureSyncLabel(status) {
+    return {
+        new: 'ลายเซ็นใหม่',
+        changed: 'มีการเปลี่ยนแปลง',
+        unchanged: 'เป็นรุ่นล่าสุดแล้ว',
+        missing: 'ไม่มีรูปใน SML',
+        invalid: 'รูปใช้ไม่ได้',
+        synced: 'Sync สำเร็จ',
+        failed: 'Sync ไม่สำเร็จ'
+    }[status] || status || '-';
+}
+
+function signatureSyncSeverity(status) {
+    if (status === 'synced' || status === 'unchanged') return 'success';
+    if (status === 'new' || status === 'changed') return 'info';
+    if (status === 'missing') return 'secondary';
+    return 'warn';
+}
+
 function syncTenantLabel(result) {
     if (!result) return '-';
     return [result.dataCode, result.dataName].filter(Boolean).join(' · ') || result.tenant || '-';
@@ -250,6 +292,15 @@ function normalizeSearch(value) {
             <Column field="status" header="สถานะ" sortable>
                 <template #body="{ data }">
                     <Tag :value="data.status" :severity="statusSeverity(data.status)" />
+                </template>
+            </Column>
+            <Column header="ลายเซ็น SML">
+                <template #body="{ data }">
+                    <div class="flex flex-col gap-1 items-start">
+                        <Tag :value="savedSignatureLabel(data)" :severity="savedSignatureSeverity(data)" />
+                        <small v-if="data.savedSignature?.syncedAt" class="text-muted-color">{{ formatDate(data.savedSignature.syncedAt) }}</small>
+                        <small v-if="data.savedSignature?.available && data.savedSignature?.lastError" class="text-orange-600">Sync ล่าสุดมีปัญหา จึงคงรูปเดิมไว้</small>
+                    </div>
                 </template>
             </Column>
             <Column field="createdAt" header="วันที่สร้าง" sortable>
@@ -304,11 +355,14 @@ function normalizeSearch(value) {
         </form>
     </Dialog>
 
-    <Dialog v-model:visible="syncDialogVisible" modal header="Sync user จาก SML" :style="{ width: 'min(52rem, 94vw)' }">
+    <Dialog v-model:visible="syncDialogVisible" modal header="Sync ผู้ใช้และลายเซ็นจาก SML" :style="{ width: 'min(64rem, 94vw)' }">
         <div class="flex flex-col gap-4">
             <Message v-if="syncError" severity="error">{{ syncError }}</Message>
+            <Message v-if="syncPreview?.signatureError" severity="warn" :closable="false">
+                ระบบลายเซ็นจาก SML ยังไม่พร้อม ข้อมูลผู้ใช้ยัง Sync ได้ตามปกติ กรุณาลอง Sync ลายเซ็นอีกครั้งภายหลัง
+            </Message>
             <Message v-if="syncPreview && !syncPreview.dryRun" severity="success" :closable="false">
-                Sync สำเร็จ เพิ่มผู้ใช้ใหม่ {{ syncPreview.created || 0 }} คน และเปิดใช้งาน {{ syncPreview.activated || 0 }} คน
+                Sync เสร็จแล้ว เพิ่มผู้ใช้ {{ syncPreview.created || 0 }} คน เปิดใช้งาน {{ syncPreview.activated || 0 }} คน และอัปเดตลายเซ็น {{ syncPreview.signatureSynced || 0 }} คน
             </Message>
             <Message v-else-if="syncPreview && syncPreview.passwordNotSynced > 0" severity="warn" :closable="false">
                 มี {{ syncPreview.passwordNotSynced }} user ที่ไม่สามารถ sync รหัส local ได้ ระบบยังให้ login ผ่าน SML ได้ตามปกติ
@@ -341,6 +395,29 @@ function normalizeSearch(value) {
                 </div>
             </div>
 
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3 surface-ground border-round p-3">
+                <div>
+                    <div class="text-sm text-muted-color">มีรูปใน SML</div>
+                    <div class="font-semibold">{{ syncPreview?.signatureAvailable ?? '-' }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-muted-color">ลายเซ็นใหม่</div>
+                    <div class="font-semibold text-primary">{{ syncPreview?.signatureNew ?? '-' }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-muted-color">มีการเปลี่ยนแปลง</div>
+                    <div class="font-semibold text-orange-600">{{ syncPreview?.signatureChanged ?? '-' }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-muted-color">เป็นรุ่นล่าสุด</div>
+                    <div class="font-semibold text-green-600">{{ syncPreview?.signatureUnchanged ?? '-' }}</div>
+                </div>
+                <div>
+                    <div class="text-sm text-muted-color">ไม่มี/รูปใช้ไม่ได้</div>
+                    <div class="font-semibold">{{ Number(syncPreview?.signatureMissing || 0) + Number(syncPreview?.signatureInvalid || 0) }}</div>
+                </div>
+            </div>
+
             <DataTable :value="syncUsers" dataKey="username" responsiveLayout="scroll" :rows="8" paginator size="small">
                 <template #empty>
                     <div class="py-5 text-center text-muted-color">ไม่มีผู้ใช้ใหม่จาก SML ที่ต้องเพิ่ม</div>
@@ -363,6 +440,32 @@ function normalizeSearch(value) {
                     </template>
                 </Column>
             </DataTable>
+
+            <div>
+                <div class="font-semibold mb-2">สถานะลายเซ็น</div>
+                <DataTable :value="syncSignatures" dataKey="username" responsiveLayout="scroll" :rows="8" paginator size="small">
+                    <template #empty>
+                        <div class="py-5 text-center text-muted-color">ไม่พบข้อมูลลายเซ็นจาก SML</div>
+                    </template>
+                    <Column field="displayName" header="ผู้ใช้">
+                        <template #body="{ data }">
+                            <div class="font-medium">{{ data.displayName || data.username }}</div>
+                            <div class="text-sm text-muted-color">@{{ data.username }}</div>
+                        </template>
+                    </Column>
+                    <Column header="สถานะ">
+                        <template #body="{ data }">
+                            <Tag :value="signatureSyncLabel(data.status)" :severity="signatureSyncSeverity(data.status)" />
+                        </template>
+                    </Column>
+                    <Column header="ข้อมูลเดิม">
+                        <template #body="{ data }">{{ data.previousExists ? 'มีลายเซ็นเดิม' : '-' }}</template>
+                    </Column>
+                    <Column field="issue" header="หมายเหตุ">
+                        <template #body="{ data }"><span class="text-sm text-muted-color">{{ data.issue || '-' }}</span></template>
+                    </Column>
+                </DataTable>
+            </div>
         </div>
         <template #footer>
             <Button label="ปิด" icon="pi pi-times" text severity="secondary" :disabled="syncSaving" @click="syncDialogVisible = false" />

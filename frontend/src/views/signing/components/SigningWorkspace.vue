@@ -14,6 +14,8 @@ const props = defineProps({
     document: { type: Object, default: null },
     task: { type: Object, default: null },
     legal: { type: Object, default: null },
+    signatureOptions: { type: Object, default: null },
+    savedSignatureLoader: { type: Function, default: null },
     pdfUrl: { type: String, default: '' },
     pdfHeaders: { type: Object, default: () => ({}) },
     loading: { type: Boolean, default: false },
@@ -51,6 +53,10 @@ const currentPage = ref(1);
 const pageCount = ref(0);
 const pdfReady = ref(false);
 const hasSignature = ref(false);
+const signatureMode = ref('');
+const savedSignatureUrl = ref('');
+const savedSignatureLoading = ref(false);
+const savedSignatureError = ref('');
 const legalAccepted = ref(false);
 const signNoteBoxes = ref([]);
 const selectedSignNoteBoxKey = ref('');
@@ -71,6 +77,7 @@ let signCtx = null;
 let drawing = false;
 let submitted = false;
 let taskOpenRecorded = false;
+let savedSignatureRequestSeq = 0;
 
 const isBusy = computed(() => props.saving || localSaving.value);
 const legalText = computed(() => props.legal?.text || 'ข้าพเจ้ายืนยันการลงลายเซ็นอิเล็กทรอนิกส์นี้ตาม พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์ และยอมรับให้ใช้เป็นหลักฐานประกอบเอกสารนี้');
@@ -92,7 +99,17 @@ const ownRequirementAttachmentKeys = computed(() => {
 });
 const missingRequiredAttachments = computed(() => requiredAttachments.value.filter((item) => !ownRequirementAttachmentKeys.value.has(item.key)));
 const incompleteSignNoteBoxes = computed(() => signNoteBoxes.value.filter((box) => !String(box.text || '').trim()));
-const canConfirm = computed(() => canInteract.value && pdfReady.value && hasSignature.value && legalAccepted.value && missingRequiredAttachments.value.length === 0 && incompleteSignNoteBoxes.value.length === 0 && !isBusy.value);
+const savedSignatureAvailable = computed(() => props.signatureOptions?.savedAvailable === true && !!props.signatureOptions?.savedSignatureVersion && !!props.savedSignatureLoader && !props.externalSignOnly);
+const signatureReady = computed(() => {
+    if (signatureMode.value === 'sml_saved') return savedSignatureAvailable.value && !!savedSignatureUrl.value && !savedSignatureLoading.value && !savedSignatureError.value;
+    if (signatureMode.value === 'drawn') return hasSignature.value;
+    return false;
+});
+const signatureModeOptions = [
+    { label: 'ลายเซ็นที่บันทึกไว้', value: 'sml_saved', icon: 'pi pi-id-card' },
+    { label: 'วาดลายเซ็นใหม่', value: 'drawn', icon: 'pi pi-pencil' }
+];
+const canConfirm = computed(() => canInteract.value && pdfReady.value && signatureReady.value && legalAccepted.value && missingRequiredAttachments.value.length === 0 && incompleteSignNoteBoxes.value.length === 0 && !isBusy.value);
 const allowFullPDF = computed(() => !props.externalSignOnly);
 const allowReject = computed(() => !props.externalSignOnly && !!props.onReject);
 const allowAttachments = computed(() => (!props.externalSignOnly || props.allowExternalAttachments) && !!props.onAttach);
@@ -137,7 +154,10 @@ const taskOpenEvent = computed(() => {
 const primaryDisabledReason = computed(() => {
     if (!canInteract.value) return statusView.value.message;
     if (!pdfReady.value) return 'รอให้ PDF โหลดเสร็จก่อน';
-    if (!hasSignature.value) return 'กรุณาวาดลายเซ็นก่อน';
+    if (!signatureMode.value) return 'กรุณาเลือกวิธีลงลายเซ็น';
+    if (signatureMode.value === 'sml_saved' && savedSignatureLoading.value) return 'กำลังโหลดลายเซ็นที่บันทึกไว้';
+    if (signatureMode.value === 'sml_saved' && !signatureReady.value) return savedSignatureError.value || 'กรุณาตรวจลายเซ็นที่บันทึกไว้';
+    if (signatureMode.value === 'drawn' && !hasSignature.value) return 'กรุณาวาดลายเซ็นก่อน';
     if (!legalAccepted.value) return 'กรุณายืนยันข้อความ พ.ร.บ. ก่อน';
     if (missingRequiredAttachments.value.length) return `กรุณาแนบเอกสารให้ครบ: ${missingRequiredAttachments.value.map((item) => item.label).join(', ')}`;
     if (incompleteSignNoteBoxes.value.length) return 'กรุณาระบุข้อความในกล่องหมายเหตุให้ครบ หรือ ลบกล่องที่ไม่ใช้';
@@ -146,12 +166,14 @@ const primaryDisabledReason = computed(() => {
 
 onMounted(async () => {
     window.addEventListener('beforeunload', handleBeforeUnload);
+    if (props.externalSignOnly || props.publicMode) signatureMode.value = 'drawn';
     await nextTick();
     setupSignatureCanvas();
 });
 
 onBeforeUnmount(() => {
     window.removeEventListener('beforeunload', handleBeforeUnload);
+    clearSavedSignaturePreview();
 });
 
 onBeforeRouteLeave((_to, _from, next) => {
@@ -160,7 +182,7 @@ onBeforeRouteLeave((_to, _from, next) => {
         return;
     }
     confirm.require({
-        message: 'คุณวาดลายเซ็นไว้แล้ว แต่ยังไม่ได้ยืนยัน ต้องการออกจากหน้านี้หรือไม่?',
+        message: 'คุณมีข้อมูลการเซ็นที่ยังไม่ได้ยืนยัน ต้องการออกจากหน้านี้หรือไม่?',
         header: 'ออกจากหน้าเซ็นเอกสาร',
         icon: 'pi pi-exclamation-triangle',
         rejectProps: {
@@ -187,6 +209,48 @@ watch(
 );
 
 watch(
+    () => [props.task?.id, props.signatureOptions?.savedAvailable, props.signatureOptions?.savedSignatureVersion],
+    async ([taskId, available], previous = []) => {
+        const taskChanged = taskId !== previous[0];
+        if (!taskId) return;
+        if (taskChanged) {
+            clearSavedSignaturePreview();
+            hasSignature.value = false;
+            signatureMode.value = props.externalSignOnly || props.publicMode ? 'drawn' : '';
+        }
+        if (props.externalSignOnly || props.publicMode) {
+            signatureMode.value = 'drawn';
+            await nextTick();
+            setupSignatureCanvas(taskChanged);
+            return;
+        }
+        if (props.signatureOptions && available !== true) {
+            signatureMode.value = 'drawn';
+            await nextTick();
+            setupSignatureCanvas(taskChanged);
+        }
+        if (!taskChanged && signatureMode.value === 'sml_saved' && savedSignatureUrl.value && props.signatureOptions?.savedSignatureVersion !== previous[2]) {
+            resetSavedSignatureChoice('ลายเซ็นที่บันทึกไว้มีการอัปเดต กรุณาตรวจสอบและเลือกใหม่');
+        }
+    },
+    { immediate: true }
+);
+
+watch(signatureMode, async (mode, previousMode) => {
+    if (mode === previousMode) return;
+    if (previousMode === 'sml_saved') clearSavedSignaturePreview();
+    if (mode === 'sml_saved') {
+        await loadSavedSignaturePreview();
+        return;
+    }
+    if (mode === 'drawn') {
+        hasSignature.value = false;
+        await nextTick();
+        setupSignatureCanvas(true);
+    }
+});
+
+watch(
     () => props.task?.id,
     (taskId) => {
         if (taskId && !taskOpenRecorded) {
@@ -203,7 +267,7 @@ watch(
         const previousTaskId = oldValue[1];
         if (!loading && taskId) {
             await nextTick();
-            setupSignatureCanvas(taskId !== previousTaskId);
+            if (signatureMode.value === 'drawn') setupSignatureCanvas(taskId !== previousTaskId);
             if (taskId !== previousTaskId) {
                 signIdempotencyKey.value = newRequestKey();
                 rejectIdempotencyKey.value = newRequestKey();
@@ -234,6 +298,52 @@ function onPdfLoadError(err) {
 
 function onPdfPageChange(pageNo) {
     currentPage.value = Number(pageNo || 1);
+}
+
+async function loadSavedSignaturePreview() {
+    if (!savedSignatureAvailable.value || signatureMode.value !== 'sml_saved') return;
+    const requestSeq = ++savedSignatureRequestSeq;
+    clearSavedSignaturePreview(false);
+    savedSignatureLoading.value = true;
+    savedSignatureError.value = '';
+    try {
+        const blob = await props.savedSignatureLoader(props.signatureOptions.savedSignatureVersion);
+        if (requestSeq !== savedSignatureRequestSeq || signatureMode.value !== 'sml_saved') return;
+        savedSignatureUrl.value = URL.createObjectURL(blob);
+    } catch (err) {
+        if (requestSeq !== savedSignatureRequestSeq) return;
+        if (err?.payload?.error === 'saved_signature_changed' || err?.payload?.error === 'saved_signature_unavailable') {
+            resetSavedSignatureChoice(err.message || 'ลายเซ็นที่บันทึกไว้มีการเปลี่ยนแปลง');
+            await props.onReload?.();
+            return;
+        }
+        savedSignatureError.value = err?.payload?.error === 'saved_signature_changed' ? 'ลายเซ็นมีการอัปเดต กรุณาโหลดหน้าใหม่' : err?.message || 'โหลดลายเซ็นที่บันทึกไว้ไม่สำเร็จ';
+    } finally {
+        if (requestSeq === savedSignatureRequestSeq) savedSignatureLoading.value = false;
+    }
+}
+
+function clearSavedSignaturePreview(invalidate = true) {
+    if (invalidate) savedSignatureRequestSeq += 1;
+    if (savedSignatureUrl.value) URL.revokeObjectURL(savedSignatureUrl.value);
+    savedSignatureUrl.value = '';
+    savedSignatureLoading.value = false;
+    savedSignatureError.value = '';
+}
+
+function resetSavedSignatureChoice(message = '') {
+    clearSavedSignaturePreview();
+    signatureMode.value = '';
+    if (message) toast.add({ severity: 'warn', summary: 'กรุณาตรวจลายเซ็นอีกครั้ง', detail: message, life: 4500 });
+}
+
+function formatSavedSignatureDate(value) {
+    if (!value) return '-';
+    try {
+        return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+    } catch {
+        return '-';
+    }
 }
 
 function setupSignatureCanvas(force = false) {
@@ -301,7 +411,9 @@ async function confirmSign() {
     recordEvent('sign_attempt');
     try {
         const payload = {
-            signatureDataUrl: signCanvas.value.toDataURL('image/png'),
+            signatureMode: signatureMode.value,
+            signatureDataUrl: signatureMode.value === 'drawn' ? signCanvas.value?.toDataURL('image/png') || '' : '',
+            savedSignatureVersion: signatureMode.value === 'sml_saved' ? props.signatureOptions?.savedSignatureVersion || '' : '',
             legalAccepted: true,
             legalText: legalText.value,
             signNoteBoxes: signNoteBoxes.value.map(toSignNotePayload),
@@ -313,6 +425,10 @@ async function confirmSign() {
         recordEvent('sign_success');
     } catch (err) {
         recordEvent('sign_error', { errorCode: err?.payload?.error || err?.message || 'sign_error' });
+        if (err?.payload?.error === 'saved_signature_changed' || err?.payload?.error === 'saved_signature_unavailable') {
+            resetSavedSignatureChoice(err.message);
+            await props.onReload?.();
+        }
     } finally {
         localSaving.value = false;
     }
@@ -506,7 +622,7 @@ function recordEvent(event, extra = {}) {
 }
 
 function shouldWarnBeforeLeave() {
-    return canInteract.value && (hasSignature.value || signNoteBoxes.value.length > 0) && !submitted && !isBusy.value;
+    return canInteract.value && (hasSignature.value || signatureMode.value === 'sml_saved' || signNoteBoxes.value.length > 0) && !submitted && !isBusy.value;
 }
 
 function handleBeforeUnload(event) {
@@ -676,10 +792,19 @@ function newRequestKey() {
                             <strong>{{ signatureTitle }}</strong>
                             <small>{{ signerLine }}</small>
                         </div>
-                        <Button label="ล้าง" icon="pi pi-eraser" severity="secondary" outlined size="small" :disabled="!hasSignature || !canInteract" @click="clearSignature" />
+                        <Button v-if="signatureMode === 'drawn'" label="ล้าง" icon="pi pi-eraser" severity="secondary" outlined size="small" :disabled="!hasSignature || !canInteract" @click="clearSignature" />
                     </div>
                     <Message severity="info" class="compact-status">{{ statusView.message }}</Message>
+                    <div v-if="savedSignatureAvailable" class="signature-mode-choice">
+                        <span class="signature-mode-label">เลือกวิธีลงลายเซ็น</span>
+                        <SelectButton v-model="signatureMode" :options="signatureModeOptions" optionLabel="label" optionValue="value" :allowEmpty="false" fluid>
+                            <template #option="{ option }">
+                                <span class="signature-mode-option"><i :class="option.icon"></i>{{ option.label }}</span>
+                            </template>
+                        </SelectButton>
+                    </div>
                     <canvas
+                        v-if="signatureMode === 'drawn'"
                         ref="signCanvas"
                         class="signature-canvas"
                         :class="{ disabled: !canInteract }"
@@ -689,6 +814,20 @@ function newRequestKey() {
                         @pointercancel="endDraw"
                         @pointerleave="endDraw"
                     ></canvas>
+                    <div v-else-if="signatureMode === 'sml_saved'" class="saved-signature-preview">
+                        <div v-if="savedSignatureLoading" class="saved-signature-loading">
+                            <i class="pi pi-spin pi-spinner"></i>
+                            <span>กำลังโหลดลายเซ็นที่บันทึกไว้</span>
+                        </div>
+                        <Message v-else-if="savedSignatureError" severity="error" :closable="false">{{ savedSignatureError }}</Message>
+                        <template v-else-if="savedSignatureUrl">
+                            <div class="saved-signature-image-shell">
+                                <img :src="savedSignatureUrl" alt="ลายเซ็นที่บันทึกไว้" />
+                            </div>
+                            <small>Sync ล่าสุด {{ formatSavedSignatureDate(signatureOptions?.syncedAt) }} · ลายเซ็นนี้จะใช้กับเอกสารฉบับนี้</small>
+                        </template>
+                    </div>
+                    <Message v-else-if="savedSignatureAvailable" severity="warn" :closable="false" class="compact-status">กรุณาเลือกวิธีลงลายเซ็นก่อนยืนยัน</Message>
                 </div>
 
                 <DocumentAttachmentsPanel
@@ -1249,6 +1388,70 @@ function newRequestKey() {
 
 .reference-status-strip.status-unavailable i {
     background: color-mix(in srgb, #f59e0b 16%, var(--surface-card));
+}
+
+.signature-mode-choice {
+    display: grid;
+    gap: 0.4rem;
+    margin-bottom: 0.65rem;
+}
+
+.signature-mode-label {
+    color: var(--text-color-secondary);
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.signature-mode-choice :deep(.p-selectbutton) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.signature-mode-choice :deep(.p-togglebutton) {
+    min-width: 0;
+}
+
+.signature-mode-option {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    white-space: normal;
+    text-align: center;
+}
+
+.saved-signature-preview {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.saved-signature-loading,
+.saved-signature-image-shell {
+    min-height: 188px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: #fff;
+}
+
+.saved-signature-loading {
+    align-content: center;
+    gap: 0.55rem;
+    color: var(--text-color-secondary);
+}
+
+.saved-signature-image-shell img {
+    width: 100%;
+    max-width: 100%;
+    height: 170px;
+    object-fit: contain;
+}
+
+.saved-signature-preview > small {
+    color: var(--text-color-secondary);
+    line-height: 1.4;
 }
 
 .signature-canvas {

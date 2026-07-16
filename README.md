@@ -16,6 +16,7 @@ It receives document metadata and PDFs from SML, routes them through configured 
 
 - SML login with two-step database selection on every login
 - Automatic PaperLess user provisioning from SML login
+- Superadmin-triggered SML user sync with tenant-scoped saved signature import from `erp_user.signature_1`
 - Tenant isolation by selected SML database while keeping one PaperLess database
 - Superadmin user management, workflow configuration, and signature template design
 - Admin document operations with locked signature/template placements
@@ -53,6 +54,14 @@ On first successful SML login, PaperLess creates the local user automatically:
 - Inactive PaperLess users cannot log in even if SML credentials are valid.
 
 `PAPERLESS_LOCAL_AUTH_FALLBACK_ENABLED=true` is only for migration/rollout safety. Production should disable it after SML users are ready.
+
+## Saved Signatures From SML
+
+`Sync จาก SML` on the superadmin user page synchronizes active SML users and saved signatures for the currently selected tenant. Users are matched case-insensitively by SML user code and `erp_user.code`. Signature images are normalized to immutable transparent PNG files; a missing or invalid SML image never deletes the last usable PaperLess signature.
+
+When a saved signature is available, an internal signer must explicitly choose either the saved signature or a newly drawn signature for each task. The saved image is loaded only after selection. Signing snapshots the selected immutable file and source version, so a later SML sync does not rewrite completed documents. External signers can only draw a new signature.
+
+Set `SML_SIGNATURE_SYNC_ENABLED=false` to disable SML signature sync and saved-signature selection without affecting the normal drawing flow. Deploy the SML API before the PaperLess backend/frontend when enabling this feature.
 
 ## Tenant Model
 

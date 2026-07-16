@@ -28,6 +28,26 @@ async function request(path, options = {}) {
     return payload;
 }
 
+async function requestBlob(path, options = {}) {
+    const headers = new Headers(options.headers || {});
+    const token = localStorage.getItem('paperless_token');
+    if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(`${API_BASE}${path}`, {
+        cache: 'no-store',
+        ...options,
+        headers
+    });
+    if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const error = new Error(payload.message || 'Cannot connect to PaperLess API.');
+        error.status = response.status;
+        error.payload = payload;
+        if (response.status === 401) handleUnauthorized(path);
+        throw error;
+    }
+    return response.blob();
+}
+
 function handleUnauthorized(path) {
     localStorage.removeItem('paperless_token');
     localStorage.removeItem('paperless_user');
@@ -418,6 +438,9 @@ export const api = {
     },
     getMySigningTask(taskId) {
         return request(`/api/my/signing-tasks/${taskId}`);
+    },
+    getMySavedSignatureBlob(taskId, version) {
+        return requestBlob(withQuery(`/api/my/signing-tasks/${taskId}/saved-signature`, { version }));
     },
     listMySigningHistory(params = {}) {
         return request(

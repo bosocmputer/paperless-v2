@@ -2185,7 +2185,78 @@ func (s *Server) getMySigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"document": sanitizeSigningDocumentForSigner(document), "task": sanitizeSigningTaskForUser(signer), "legal": signingLegalPayload()})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"document":         sanitizeSigningDocumentForSigner(document),
+		"task":             sanitizeSigningTaskForUser(signer),
+		"legal":            signingLegalPayload(),
+		"signatureOptions": s.signingTaskSignatureOptions(r.Context(), user.ID, document.SMLTenant),
+	})
+}
+
+func (s *Server) signingTaskSignatureOptions(ctx context.Context, userID, tenant string) map[string]any {
+	options := map[string]any{"savedAvailable": false}
+	if !s.cfg.SMLSignatureSync {
+		return options
+	}
+	saved, err := s.store.FindUserSavedSignature(ctx, userID, tenant)
+	if err != nil || saved.FileID == "" || saved.File.ID == "" || saved.SourceVersion == "" {
+		return options
+	}
+	options["savedAvailable"] = true
+	options["savedSignatureVersion"] = saved.SourceVersion
+	options["syncedAt"] = saved.SyncedAt
+	return options
+}
+
+func (s *Server) getMySigningTaskSavedSignature(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.SMLSignatureSync {
+		writeError(w, http.StatusNotFound, "saved_signature_unavailable", "Saved signature is not available.")
+		return
+	}
+	user, _ := currentUser(r)
+	taskID := strings.TrimSpace(r.PathValue("taskId"))
+	signer, err := s.store.FindSigningTaskByID(r.Context(), taskID)
+	if errors.Is(err, store.ErrSigningTaskNotFound) || (err == nil && !strings.EqualFold(signer.SignerUser, user.Username)) {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot load signing task right now.")
+		return
+	}
+	if signer.Status != "pending" || signer.SignerType == "external" {
+		writeError(w, http.StatusConflict, "saved_signature_unavailable", "Saved signature is not available for this task.")
+		return
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
+	if err != nil || document.Status != "in_progress" {
+		writeError(w, http.StatusConflict, "saved_signature_unavailable", "Saved signature is not available for this task.")
+		return
+	}
+	saved, err := s.store.FindUserSavedSignature(r.Context(), user.ID, document.SMLTenant)
+	if err != nil || saved.File.ID == "" || saved.SourceVersion == "" {
+		writeError(w, http.StatusConflict, "saved_signature_unavailable", "Saved signature is not available.")
+		return
+	}
+	if expected := strings.TrimSpace(r.URL.Query().Get("version")); expected == "" || expected != saved.SourceVersion {
+		writeError(w, http.StatusConflict, "saved_signature_changed", "Saved signature changed. Please review it again.")
+		return
+	}
+	file, err := os.Open(saved.File.StoragePath)
+	if err != nil {
+		writeError(w, http.StatusConflict, "saved_signature_unavailable", "Saved signature is not available.")
+		return
+	}
+	defer file.Close()
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Disposition", `inline; filename="saved-signature.png"`)
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Signature-Version", saved.SourceVersion)
+	if saved.File.SizeBytes > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(saved.File.SizeBytes, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, file)
 }
 
 func (s *Server) getMySigningHistory(w http.ResponseWriter, r *http.Request) {
@@ -2319,6 +2390,7 @@ func sanitizeSigningDocumentForExternal(document models.SigningDocument) models.
 
 func sanitizeSigningTaskForUser(signer models.SigningDocumentSigner) models.SigningDocumentSigner {
 	signer.SignatureFileID = ""
+	signer.SignatureVersion = ""
 	signer.DeviceID = ""
 	signer.IPAddress = ""
 	signer.UserAgent = ""
@@ -2832,15 +2904,39 @@ func (s *Server) signMySigningTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claimed := strings.TrimSpace(r.Header.Get("Idempotency-Key")) != ""
-	uploaded, err := s.storeSignatureImage(r.Context(), req.SignatureDataURL, user.ID)
-	if err != nil {
+	mode := strings.ToLower(strings.TrimSpace(req.SignatureMode))
+	if mode == "" && strings.TrimSpace(req.SignatureDataURL) != "" {
+		mode = "drawn"
+	}
+	var signature store.SignTaskSignature
+	switch mode {
+	case "sml_saved":
+		if !s.cfg.SMLSignatureSync || strings.TrimSpace(req.SavedSignatureVersion) == "" {
+			if claimed {
+				_ = s.store.ReleaseIdempotencyKey(context.Background(), scope, r.Header.Get("Idempotency-Key"), user.ID)
+			}
+			writeError(w, http.StatusConflict, "saved_signature_unavailable", "Saved signature is not available.")
+			return
+		}
+		signature = store.SignTaskSignature{Source: "sml_saved", Version: strings.TrimSpace(req.SavedSignatureVersion), UserID: user.ID}
+	case "drawn":
+		uploaded, uploadErr := s.storeSignatureImage(r.Context(), req.SignatureDataURL, user.ID)
+		if uploadErr != nil {
+			if claimed {
+				_ = s.store.ReleaseIdempotencyKey(context.Background(), scope, r.Header.Get("Idempotency-Key"), user.ID)
+			}
+			writeError(w, http.StatusBadRequest, "invalid_signature", uploadErr.Error())
+			return
+		}
+		signature = store.SignTaskSignature{FileID: uploaded.ID, Source: "drawn", Version: uploaded.SHA256, UserID: user.ID}
+	default:
 		if claimed {
 			_ = s.store.ReleaseIdempotencyKey(context.Background(), scope, r.Header.Get("Idempotency-Key"), user.ID)
 		}
-		writeError(w, http.StatusBadRequest, "invalid_signature", err.Error())
+		writeError(w, http.StatusBadRequest, "signature_mode_required", "Please choose a signature method.")
 		return
 	}
-	result, err := s.store.SignInternalTask(r.Context(), taskID, user.Username, uploaded.ID, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion, signNote, signNoteBoxes)
+	result, err := s.store.SignInternalTaskWithSignature(r.Context(), taskID, user.Username, signature, req.DeviceID, clientIP(r), r.UserAgent(), signingLegalTextVersion, signNote, signNoteBoxes)
 	s.writeTaskMutationResult(w, r, scope, user.ID, result, err)
 }
 
@@ -3147,6 +3243,16 @@ func (s *Server) writeTaskMutationResult(w http.ResponseWriter, r *http.Request,
 	if errors.Is(err, store.ErrRequiredAttachmentsMissing) {
 		s.releaseIdempotency(idempotencyScope, actorUserID, r)
 		writeError(w, http.StatusConflict, "required_attachments_missing", "กรุณาแนบเอกสารที่กำหนดให้ครบก่อนเซ็น")
+		return
+	}
+	if errors.Is(err, store.ErrSavedSignatureChanged) {
+		s.releaseIdempotency(idempotencyScope, actorUserID, r)
+		writeError(w, http.StatusConflict, "saved_signature_changed", "Saved signature changed. Please review it again.")
+		return
+	}
+	if errors.Is(err, store.ErrSavedSignatureUnavailable) {
+		s.releaseIdempotency(idempotencyScope, actorUserID, r)
+		writeError(w, http.StatusConflict, "saved_signature_unavailable", "Saved signature is not available.")
 		return
 	}
 	if err != nil {

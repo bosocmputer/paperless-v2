@@ -35,16 +35,25 @@ type smlUserSyncCandidatesResponse struct {
 			Tenant       string `json:"tenant"`
 		} `json:"database"`
 		Users []struct {
-			UserCode       string `json:"userCode"`
-			UserName       string `json:"userName"`
-			PasswordHash   string `json:"passwordHash"`
-			PasswordSynced bool   `json:"passwordSynced"`
+			UserCode           string `json:"userCode"`
+			UserName           string `json:"userName"`
+			PasswordHash       string `json:"passwordHash"`
+			PasswordSynced     bool   `json:"passwordSynced"`
+			SignatureAvailable bool   `json:"signatureAvailable"`
+			SignatureVersion   string `json:"signatureVersion"`
+			SignatureBytes     int    `json:"signatureBytes"`
+			SignatureWidth     int    `json:"signatureWidth"`
+			SignatureHeight    int    `json:"signatureHeight"`
+			SignatureIssue     string `json:"signatureIssue"`
 		} `json:"users"`
 		Summary struct {
-			TotalAllowed      int `json:"totalAllowed"`
-			Active            int `json:"active"`
-			SkippedInactive   int `json:"skippedInactive"`
-			PasswordNotSynced int `json:"passwordNotSynced"`
+			TotalAllowed       int `json:"totalAllowed"`
+			Active             int `json:"active"`
+			SkippedInactive    int `json:"skippedInactive"`
+			PasswordNotSynced  int `json:"passwordNotSynced"`
+			SignatureAvailable int `json:"signatureAvailable"`
+			SignatureMissing   int `json:"signatureMissing"`
+			SignatureInvalid   int `json:"signatureInvalid"`
 		} `json:"summary"`
 	} `json:"data"`
 	Error   *smlAPIError `json:"error"`
@@ -78,6 +87,21 @@ func (s *Server) syncSMLUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
+	var releaseSyncLock func()
+	if !req.DryRun && s.cfg.SMLSignatureSync {
+		var locked bool
+		var err error
+		releaseSyncLock, locked, err = s.store.TryAdvisoryLock(r.Context(), "paperless:sml-signature-sync:"+store.NormalizeSMLTenant(session.SMLTenant))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "sml_signature_sync_failed", "Cannot prepare SML signature sync right now.")
+			return
+		}
+		if !locked {
+			writeError(w, http.StatusConflict, "sml_signature_sync_busy", "SML user and signature sync is already running for this database.")
+			return
+		}
+		defer releaseSyncLock()
+	}
 	candidates, summary, syncDatabase, err := s.fetchSMLUserSyncCandidates(r.Context(), session)
 	if errors.Is(err, errSMLConfigMissing) {
 		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML PaperLess API is not configured.")
@@ -86,6 +110,10 @@ func (s *Server) syncSMLUsers(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Warn("SML user sync candidates failed", "error", err, "tenant", session.SMLTenant, "actor", actor.Username)
 		writeError(w, http.StatusBadGateway, "sml_user_sync_failed", "Cannot load users from SML right now.")
+		return
+	}
+	if store.NormalizeSMLTenant(syncDatabase.Tenant) != store.NormalizeSMLTenant(session.SMLTenant) {
+		writeError(w, http.StatusBadGateway, "sml_sync_tenant_mismatch", "SML returned a different database scope.")
 		return
 	}
 
@@ -139,20 +167,44 @@ func (s *Server) syncSMLUsers(w http.ResponseWriter, r *http.Request) {
 		PasswordNotSynced: result.PasswordNotSynced,
 		Users:             result.Users,
 	}
+	if s.cfg.SMLSignatureSync {
+		signatureResult, syncErr := s.syncSMLSavedSignatures(r.Context(), candidates, session, syncDatabase.Tenant, actor.ID, req.DryRun)
+		if syncErr != nil {
+			s.logger.Error("sync SML saved signatures failed", "error", syncErr, "tenant", syncDatabase.Tenant)
+			response.SignatureError = "sml_signature_sync_failed"
+		} else {
+			response.SignatureAvailable = signatureResult.Available
+			response.SignatureNew = signatureResult.New
+			response.SignatureChanged = signatureResult.Changed
+			response.SignatureUnchanged = signatureResult.Unchanged
+			response.SignatureMissing = signatureResult.Missing
+			response.SignatureInvalid = signatureResult.Invalid
+			response.SignatureSynced = signatureResult.Synced
+			response.SignatureFailed = signatureResult.Failed
+			response.Signatures = signatureResult.Items
+		}
+	}
 
 	if !req.DryRun {
 		if err := s.store.WriteAuditWithMetadata(r.Context(), actor.ID, "user.sml_sync", "tenant", syncDatabase.Tenant, clientIP(r), r.UserAgent(), map[string]any{
-			"tenant":            syncDatabase.Tenant,
-			"dataCode":          syncDatabase.DataCode,
-			"totalAllowed":      response.TotalAllowed,
-			"active":            response.Active,
-			"existing":          response.Existing,
-			"toActivate":        response.ToActivate,
-			"created":           response.Created,
-			"activated":         response.Activated,
-			"skippedInactive":   response.SkippedInactive,
-			"passwordNotSynced": response.PasswordNotSynced,
-			"elapsedMs":         time.Since(start).Milliseconds(),
+			"tenant":             syncDatabase.Tenant,
+			"dataCode":           syncDatabase.DataCode,
+			"totalAllowed":       response.TotalAllowed,
+			"active":             response.Active,
+			"existing":           response.Existing,
+			"toActivate":         response.ToActivate,
+			"created":            response.Created,
+			"activated":          response.Activated,
+			"skippedInactive":    response.SkippedInactive,
+			"passwordNotSynced":  response.PasswordNotSynced,
+			"signatureAvailable": response.SignatureAvailable,
+			"signatureNew":       response.SignatureNew,
+			"signatureChanged":   response.SignatureChanged,
+			"signatureUnchanged": response.SignatureUnchanged,
+			"signatureSynced":    response.SignatureSynced,
+			"signatureFailed":    response.SignatureFailed,
+			"signatureError":     response.SignatureError,
+			"elapsedMs":          time.Since(start).Milliseconds(),
 		}); err != nil {
 			s.logger.Warn("write SML user sync audit failed", "error", err, "tenant", syncDatabase.Tenant)
 		}
@@ -268,10 +320,16 @@ func (s *Server) fetchSMLUserSyncCandidates(ctx context.Context, session models.
 			displayName = username
 		}
 		candidates = append(candidates, models.SMLUserSyncCandidate{
-			Username:       username,
-			DisplayName:    displayName,
-			PasswordHash:   strings.TrimSpace(item.PasswordHash),
-			PasswordSynced: item.PasswordSynced,
+			Username:           username,
+			DisplayName:        displayName,
+			PasswordHash:       strings.TrimSpace(item.PasswordHash),
+			PasswordSynced:     item.PasswordSynced,
+			SignatureAvailable: item.SignatureAvailable,
+			SignatureVersion:   strings.TrimSpace(item.SignatureVersion),
+			SignatureBytes:     item.SignatureBytes,
+			SignatureWidth:     item.SignatureWidth,
+			SignatureHeight:    item.SignatureHeight,
+			SignatureIssue:     strings.TrimSpace(item.SignatureIssue),
 		})
 	}
 	summary := struct {

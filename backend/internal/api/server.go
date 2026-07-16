@@ -91,6 +91,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/my/signing-history/{taskId}/pdf", s.requireAuth(http.HandlerFunc(s.getMySigningHistoryPDF)))
 	mux.Handle("GET /api/my/signing-history/{taskId}", s.requireAuth(http.HandlerFunc(s.getMySigningHistory)))
 	mux.Handle("GET /api/my/signing-tasks/{taskId}", s.requireAuth(http.HandlerFunc(s.getMySigningTask)))
+	mux.Handle("GET /api/my/signing-tasks/{taskId}/saved-signature", s.requireAuth(http.HandlerFunc(s.getMySigningTaskSavedSignature)))
 	mux.Handle("GET /api/my/signing-tasks/{taskId}/related-documents", s.requireAuth(http.HandlerFunc(s.getMySigningTaskRelatedDocuments)))
 	mux.Handle("GET /api/my/signing-tasks/{taskId}/reference-check", s.requireAuth(http.HandlerFunc(s.getMySigningTaskReferenceCheck)))
 	mux.Handle("GET /api/my/signing-tasks/{taskId}/reference-status", s.requireAuth(http.HandlerFunc(s.getMySigningTaskReferenceStatus)))

@@ -13,6 +13,7 @@ const toast = useToast();
 const document = ref(null);
 const task = ref(null);
 const legal = ref(null);
+const signatureOptions = ref(null);
 const loading = ref(false);
 const saving = ref(false);
 const referenceStatus = ref(null);
@@ -33,6 +34,7 @@ async function loadTask() {
     const requestSeq = ++referenceStatusRequestSeq;
     loading.value = true;
     referenceStatus.value = null;
+    signatureOptions.value = null;
     attachments.value = [];
     attachmentsError.value = '';
     try {
@@ -40,6 +42,7 @@ async function loadTask() {
         document.value = result.document;
         task.value = result.task;
         legal.value = result.legal;
+        signatureOptions.value = result.signatureOptions || null;
         loadReferenceStatus(route.params.taskId, requestSeq);
         loadAttachments(route.params.taskId);
     } catch (err) {
@@ -72,11 +75,17 @@ async function signTask(payload) {
         toast.add({ severity: 'success', summary: 'เซ็นเอกสารแล้ว', life: 2600 });
         goBackToTasks();
     } catch (err) {
-        toast.add({ severity: 'error', summary: 'เซ็นไม่สำเร็จ', detail: err.message, life: 4200 });
+        if (err?.payload?.error !== 'saved_signature_changed' && err?.payload?.error !== 'saved_signature_unavailable') {
+            toast.add({ severity: 'error', summary: 'เซ็นไม่สำเร็จ', detail: err.message, life: 4200 });
+        }
         throw err;
     } finally {
         saving.value = false;
     }
+}
+
+function loadSavedSignature(version) {
+    return api.getMySavedSignatureBlob(route.params.taskId, version);
 }
 
 async function rejectTask(payload) {
@@ -153,6 +162,8 @@ function goBackToTasks() {
         :document="document"
         :task="task"
         :legal="legal"
+        :signature-options="signatureOptions"
+        :saved-signature-loader="loadSavedSignature"
         :pdf-url="pdfUrl"
         :pdf-headers="api.authHeaders()"
         :loading="loading"

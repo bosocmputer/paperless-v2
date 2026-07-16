@@ -12,6 +12,7 @@ func TestDeleteUploadedFileIfUnreferencedChecksAllKnownReferences(t *testing.T) 
 		"signing_documents",
 		"signing_document_versions",
 		"signing_document_signers",
+		"user_saved_signatures",
 		"signing_document_attachments",
 		"signing_document_print_events",
 	} {

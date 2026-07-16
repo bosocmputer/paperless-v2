@@ -122,6 +122,14 @@ Expected login behavior:
 6. PaperLess creates a local user if it does not exist yet.
 7. SML `superadmin` maps to PaperLess `superadmin`; other SML users map to PaperLess `admin`. PaperLess-local users remain `user`.
 
+## SML Saved Signature Rollout
+
+The saved-signature feature reads `erp_user.signature_1` from the tenant selected in the JWT session. Enable `SML_SIGNATURE_SYNC_ENABLED=true` only after deploying the SML API endpoints for signature metadata and binary retrieval. Deployment order is SML API, PaperLess backend migration, frontend, then feature flag.
+
+After deployment, sign in as superadmin, select the target database, open `/admin/users`, and run `Sync จาก SML`. Verify the preview summary before confirming. Test with one internal signer first: select `ลายเซ็นที่บันทึกไว้`, review the lazily loaded image, sign a new document, and verify the current/final PDF. Existing completed documents must retain their original signature file/version.
+
+If sync reports a missing or invalid signature, PaperLess preserves the previous saved signature and records a warning. Set `SML_SIGNATURE_SYNC_ENABLED=false` for immediate rollback to draw-only signing; no schema rollback is required.
+
 Development default credentials are not assumed to work on the customer server.
 
 ## Deploy Checklist
@@ -136,6 +144,7 @@ Development default credentials are not assumed to work on the customer server.
 8. Select the customer tenant database.
 9. Run SML tenant image DB preflight for every allowed tenant.
 10. Smoke test dashboard, workflow config, document search, PDF preview, signer queue, SML image upload, and SML lock.
+11. If saved signatures are enabled, sync one known SML signature and verify explicit saved/drawn selection on a new internal task.
 
 ## Smoke Commands
 

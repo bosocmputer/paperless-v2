@@ -75,6 +75,8 @@ var (
 	ErrIdempotencyInProgress          = errors.New("idempotency key is already in progress")
 	ErrSMLUserSyncBatchTooLarge       = errors.New("SML user sync batch is too large")
 	ErrSMLUserPasswordHashMissing     = errors.New("SML user password hash is missing")
+	ErrSavedSignatureUnavailable      = errors.New("saved signature is unavailable")
+	ErrSavedSignatureChanged          = errors.New("saved signature version changed")
 )
 
 type IdempotencyClaim struct {
@@ -227,6 +229,22 @@ ALTER TABLE uploaded_files
 ADD COLUMN IF NOT EXISTS page_count INTEGER NOT NULL DEFAULT 0 CHECK (page_count >= 0);
 
 CREATE INDEX IF NOT EXISTS uploaded_files_sha256_idx ON uploaded_files (sha256);
+
+CREATE TABLE IF NOT EXISTS user_saved_signatures (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    sml_tenant TEXT NOT NULL,
+    file_id UUID REFERENCES uploaded_files(id),
+    sml_user_code TEXT NOT NULL,
+    source_version TEXT NOT NULL DEFAULT '',
+    synced_at TIMESTAMPTZ,
+    last_error TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, sml_tenant)
+);
+
+CREATE INDEX IF NOT EXISTS user_saved_signatures_tenant_idx
+ON user_saved_signatures (sml_tenant, lower(sml_user_code));
 
 CREATE TABLE IF NOT EXISTS signing_document_uploads (
     file_id UUID PRIMARY KEY REFERENCES uploaded_files(id) ON DELETE CASCADE,
@@ -461,6 +479,8 @@ CREATE TABLE IF NOT EXISTS signing_document_signers (
     height_ratio DOUBLE PRECISION NOT NULL,
     label TEXT NOT NULL DEFAULT '',
     signature_file_id UUID REFERENCES uploaded_files(id),
+    signature_source TEXT NOT NULL DEFAULT 'drawn' CHECK (signature_source IN ('drawn', 'sml_saved')),
+    signature_version TEXT NOT NULL DEFAULT '',
     signed_at TIMESTAMPTZ,
     rejected_at TIMESTAMPTZ,
     reject_reason TEXT NOT NULL DEFAULT '',
@@ -482,6 +502,19 @@ ADD COLUMN IF NOT EXISTS sign_note_boxes JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 ALTER TABLE signing_document_signers
 ADD COLUMN IF NOT EXISTS attachment_requirements_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE signing_document_signers
+ADD COLUMN IF NOT EXISTS signature_source TEXT NOT NULL DEFAULT 'drawn';
+
+ALTER TABLE signing_document_signers
+ADD COLUMN IF NOT EXISTS signature_version TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE signing_document_signers
+DROP CONSTRAINT IF EXISTS signing_document_signers_signature_source_check;
+
+ALTER TABLE signing_document_signers
+ADD CONSTRAINT signing_document_signers_signature_source_check
+CHECK (signature_source IN ('drawn', 'sml_saved'));
 
 CREATE INDEX IF NOT EXISTS signing_document_signers_user_idx
 ON signing_document_signers (lower(signer_user), status, sequence_no);
@@ -663,7 +696,33 @@ ORDER BY created_at DESC
 		}
 		users = append(users, user)
 	}
-	return users, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	tenant := tenantFilterValue(ctx)
+	if tenant == "" || len(users) == 0 {
+		return users, nil
+	}
+	usernames := make([]string, 0, len(users))
+	for _, user := range users {
+		usernames = append(usernames, user.Username)
+	}
+	signatures, err := s.ListSavedSignaturesByUsernames(ctx, tenant, usernames)
+	if err != nil {
+		return nil, err
+	}
+	for i := range users {
+		state, ok := signatures[strings.ToLower(strings.TrimSpace(users[i].Username))]
+		summary := &models.SavedSignatureSummary{}
+		if ok {
+			summary.Available = state.FileID != "" && state.File.ID != ""
+			summary.SyncedAt = state.SyncedAt
+			summary.LastError = state.LastError
+		}
+		users[i].SavedSignature = summary
+	}
+	return users, nil
 }
 
 func (s *Store) CreateUser(ctx context.Context, req models.CreateUserRequest) (models.User, error) {
@@ -1308,6 +1367,7 @@ WHERE f.id = $1
   AND NOT EXISTS (SELECT 1 FROM signing_documents d WHERE d.original_file_id = f.id OR d.current_file_id = f.id OR d.final_file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM signing_document_versions v WHERE v.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM signing_document_signers sg WHERE sg.signature_file_id = f.id)
+  AND NOT EXISTS (SELECT 1 FROM user_saved_signatures us WHERE us.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM signing_document_attachments a WHERE a.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM signing_document_print_events p WHERE p.file_id = f.id)
 RETURNING f.storage_path
