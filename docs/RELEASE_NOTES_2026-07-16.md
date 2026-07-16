@@ -22,18 +22,18 @@
 
 ## Customer Deployment
 
-- PaperLess API release: `20260716161907` from commit `dadab7f`.
-- PaperLess Web release: `20260716164008` from commit `2f9fb78`.
+- PaperLess API/Web release: `20260716170545` from commit `902df1b`.
 - SML API hotfix release: `20260716155654` from commit `4232d27`.
 - The SML hotfix includes the login-capable built-in `superadmin` in sync even when an installation stores it with `active_status=0`; ordinary inactive users remain excluded.
 - Production login and database selection passed for `STPT`.
 - The customer sync created the current `superadmin` saved signature for `STPT`.
 - Production QA opened that signature from `/admin/users`; the protected PNG loaded at `1600x912`, the dialog closed cleanly, and the browser console had no errors.
 - Production QA confirmed users without an SML signature now show `ไม่มีลายเซ็นใน SML`, while `superadmin` remains `พร้อมใช้`; the former blanket `Sync ไม่สำเร็จ` label is no longer shown in the users table.
+- Production migration classified all 18 existing accounts as `SML` from verified audit/sync evidence. Browser QA confirmed the new `แหล่งบัญชี` column and source search, while a rolled-back transaction confirmed a newly created local account defaults to `PaperLess`.
 - An unauthenticated saved-signature request returned `401` as expected.
 - Build cache and obsolete PaperLess images were cleaned while retaining each active image and its immediate rollback image.
 
-Evidence is stored at `/data/paperless/releases/20260716164008/postdeploy-checks.txt` on the customer server.
+Evidence is stored at `/data/paperless/releases/20260716170545/postdeploy-checks.txt` on the customer server.
 
 ## Customer Test
 
