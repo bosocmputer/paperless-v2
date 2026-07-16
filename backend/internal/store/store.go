@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('superadmin', 'admin', 'user')),
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    account_source TEXT NOT NULL DEFAULT 'paperless' CHECK (account_source IN ('paperless', 'sml')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -128,6 +129,16 @@ DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users
 ADD CONSTRAINT users_role_check
 CHECK (role IN ('superadmin', 'admin', 'user'));
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS account_source TEXT NOT NULL DEFAULT 'paperless';
+
+ALTER TABLE users
+DROP CONSTRAINT IF EXISTS users_account_source_check;
+
+ALTER TABLE users
+ADD CONSTRAINT users_account_source_check
+CHECK (account_source IN ('paperless', 'sml'));
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (lower(username));
 
@@ -245,6 +256,41 @@ CREATE TABLE IF NOT EXISTS user_saved_signatures (
 
 CREATE INDEX IF NOT EXISTS user_saved_signatures_tenant_idx
 ON user_saved_signatures (sml_tenant, lower(sml_user_code));
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE key = '20260716_user_account_source') THEN
+        UPDATE users u
+        SET account_source = 'sml', updated_at = now()
+        WHERE EXISTS (
+                  SELECT 1
+                  FROM audit_logs a
+                  WHERE a.target_type = 'user'
+                    AND a.target_id = u.id::text
+                    AND a.action IN ('auth.user_auto_provisioned', 'auth.sml_login')
+              )
+           OR EXISTS (
+                  SELECT 1
+                  FROM user_saved_signatures us
+                  WHERE us.user_id = u.id
+              )
+           OR EXISTS (
+                  SELECT 1
+                  FROM audit_logs a
+                  WHERE a.action = 'user.sml_sync'
+                    AND COALESCE(a.metadata->>'created', '') ~ '^[0-9]+$'
+                    AND (a.metadata->>'created')::integer > 0
+                    AND u.created_at BETWEEN a.created_at - interval '30 seconds' AND a.created_at
+                    AND (
+                        SELECT count(*)
+                        FROM users batch_user
+                        WHERE batch_user.created_at BETWEEN a.created_at - interval '30 seconds' AND a.created_at
+                    ) = (a.metadata->>'created')::integer
+              );
+
+        INSERT INTO schema_migrations (key) VALUES ('20260716_user_account_source');
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS signing_document_uploads (
     file_id UUID PRIMARY KEY REFERENCES uploaded_files(id) ON DELETE CASCADE,
@@ -663,7 +709,7 @@ VALUES ($1, $2, $3, $4, 'active')
 
 func (s *Store) FindUserByUsername(ctx context.Context, username string) (models.User, error) {
 	return scanUser(s.pool.QueryRow(ctx, `
-SELECT id::text, display_name, username, password_hash, role, status, created_at
+SELECT id::text, display_name, username, password_hash, role, status, account_source, created_at
 FROM users
 WHERE lower(username) = lower($1)
 `, strings.TrimSpace(username)))
@@ -671,15 +717,25 @@ WHERE lower(username) = lower($1)
 
 func (s *Store) FindUserByID(ctx context.Context, id string) (models.User, error) {
 	return scanUser(s.pool.QueryRow(ctx, `
-SELECT id::text, display_name, username, password_hash, role, status, created_at
+SELECT id::text, display_name, username, password_hash, role, status, account_source, created_at
 FROM users
 WHERE id = $1
 `, id))
 }
 
+func (s *Store) MarkUserSMLSource(ctx context.Context, id string) error {
+	_, err := s.pool.Exec(ctx, `
+UPDATE users
+SET account_source = 'sml', updated_at = now()
+WHERE id = $1
+  AND account_source <> 'sml'
+`, id)
+	return err
+}
+
 func (s *Store) ListUsers(ctx context.Context) ([]models.User, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT id::text, display_name, username, password_hash, role, status, created_at
+SELECT id::text, display_name, username, password_hash, role, status, account_source, created_at
 FROM users
 ORDER BY created_at DESC
 `)
@@ -726,16 +782,27 @@ ORDER BY created_at DESC
 }
 
 func (s *Store) CreateUser(ctx context.Context, req models.CreateUserRequest) (models.User, error) {
+	return s.createUserWithSource(ctx, req, "paperless")
+}
+
+func (s *Store) CreateSMLUser(ctx context.Context, req models.CreateUserRequest) (models.User, error) {
+	return s.createUserWithSource(ctx, req, "sml")
+}
+
+func (s *Store) createUserWithSource(ctx context.Context, req models.CreateUserRequest, accountSource string) (models.User, error) {
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		return models.User{}, err
 	}
+	if accountSource != "sml" {
+		accountSource = "paperless"
+	}
 
 	user, err := scanUser(s.pool.QueryRow(ctx, `
-INSERT INTO users (display_name, username, password_hash, role, status)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id::text, display_name, username, password_hash, role, status, created_at
-`, req.DisplayName, req.Username, hash, req.Role, req.Status))
+INSERT INTO users (display_name, username, password_hash, role, status, account_source)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id::text, display_name, username, password_hash, role, status, account_source, created_at
+`, req.DisplayName, req.Username, hash, req.Role, req.Status, accountSource))
 	if err != nil {
 		if strings.Contains(err.Error(), "users_username_lower_idx") {
 			return models.User{}, ErrUsernameTaken
@@ -753,7 +820,7 @@ func (s *Store) UpdateUser(ctx context.Context, id string, req models.UpdateUser
 UPDATE users
 SET display_name = $1, username = $2, role = $3, status = $4, updated_at = now()
 WHERE id = $5
-RETURNING id::text, display_name, username, password_hash, role, status, created_at
+RETURNING id::text, display_name, username, password_hash, role, status, account_source, created_at
 `, req.DisplayName, req.Username, req.Role, req.Status, id))
 	} else {
 		hash, hashErr := auth.HashPassword(req.Password)
@@ -764,7 +831,7 @@ RETURNING id::text, display_name, username, password_hash, role, status, created
 UPDATE users
 SET display_name = $1, username = $2, password_hash = $3, role = $4, status = $5, updated_at = now()
 WHERE id = $6
-RETURNING id::text, display_name, username, password_hash, role, status, created_at
+RETURNING id::text, display_name, username, password_hash, role, status, account_source, created_at
 `, req.DisplayName, req.Username, hash, req.Role, req.Status, id))
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -822,8 +889,8 @@ func (s *Store) SyncSMLUsers(ctx context.Context, input models.SMLUserSyncInput)
 			displayName = candidate.Username
 		}
 		_, err := tx.Exec(ctx, `
-INSERT INTO users (display_name, username, password_hash, role, status)
-VALUES ($1, $2, $3, 'admin', 'active')
+INSERT INTO users (display_name, username, password_hash, role, status, account_source)
+VALUES ($1, $2, $3, 'admin', 'active', 'sml')
 `, displayName, candidate.Username, candidate.PasswordHash)
 		if err != nil {
 			if strings.Contains(err.Error(), "users_username_lower_idx") {
@@ -1861,6 +1928,7 @@ func scanUser(row rowScanner) (models.User, error) {
 		&user.PasswordHash,
 		&user.Role,
 		&user.Status,
+		&user.AccountSource,
 		&user.CreatedAt,
 	)
 	return user, err

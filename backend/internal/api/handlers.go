@@ -249,6 +249,11 @@ func tenantReadinessCanSelfProvision(readiness models.SMLTenantReadiness) bool {
 func (s *Server) findOrProvisionSMLUser(ctx context.Context, username string, result smlAuthResult) (models.User, error) {
 	user, err := s.store.FindUserByUsername(ctx, username)
 	if err == nil {
+		if sourceErr := s.store.MarkUserSMLSource(ctx, user.ID); sourceErr != nil {
+			s.logger.Warn("mark existing user as SML source failed", "error", sourceErr, "userID", user.ID)
+		} else {
+			user.AccountSource = "sml"
+		}
 		return user, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -263,7 +268,7 @@ func (s *Server) findOrProvisionSMLUser(ctx context.Context, username string, re
 	if displayName == "" {
 		displayName = username
 	}
-	created, err := s.store.CreateUser(ctx, models.CreateUserRequest{
+	created, err := s.store.CreateSMLUser(ctx, models.CreateUserRequest{
 		DisplayName: displayName,
 		Username:    username,
 		Password:    randomLocalPassword(),
@@ -271,7 +276,15 @@ func (s *Server) findOrProvisionSMLUser(ctx context.Context, username string, re
 		Status:      "active",
 	})
 	if errors.Is(err, store.ErrUsernameTaken) {
-		return s.store.FindUserByUsername(ctx, username)
+		user, findErr := s.store.FindUserByUsername(ctx, username)
+		if findErr == nil {
+			if sourceErr := s.store.MarkUserSMLSource(ctx, user.ID); sourceErr != nil {
+				s.logger.Warn("mark raced user as SML source failed", "error", sourceErr, "userID", user.ID)
+			} else {
+				user.AccountSource = "sml"
+			}
+		}
+		return user, findErr
 	}
 	if err != nil {
 		return models.User{}, err

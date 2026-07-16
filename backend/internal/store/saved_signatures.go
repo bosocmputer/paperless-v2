@@ -24,7 +24,7 @@ func (s *Store) FindUsersByUsernames(ctx context.Context, usernames []string) (m
 		return map[string]models.User{}, nil
 	}
 	rows, err := s.pool.Query(ctx, `
-SELECT id::text, display_name, username, password_hash, role, status, created_at
+SELECT id::text, display_name, username, password_hash, role, status, account_source, created_at
 FROM users
 WHERE lower(trim(username)) = ANY($1::text[])
 `, keys)

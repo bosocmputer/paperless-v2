@@ -1,5 +1,13 @@
 # PaperLess Release Notes - 2026-07-16
 
+## User Account Source
+
+- `/admin/users` now shows whether each account is linked from `SML` or was created inside `PaperLess`.
+- Account source is stored explicitly in `users.account_source`; the UI does not infer it from role or saved-signature availability.
+- New users created by SML login/auto-provision/batch Sync are stored as `sml`; users created from the PaperLess user form are stored as `paperless`.
+- Existing accounts are backfilled once from per-user SML login/provision audits, saved-signature links, and verified historical batch-Sync transactions.
+- A successful SML login promotes an existing account source to `sml`; local fallback does not change account source.
+
 ## SML Saved Signatures
 
 - Superadmin can sync tenant-scoped saved signatures from `erp_user.signature_1` together with SML users.

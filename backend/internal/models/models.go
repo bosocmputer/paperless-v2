@@ -8,6 +8,7 @@ type User struct {
 	Username       string                 `json:"username"`
 	Role           string                 `json:"role"`
 	Status         string                 `json:"status"`
+	AccountSource  string                 `json:"accountSource"`
 	CreatedAt      time.Time              `json:"createdAt"`
 	PasswordHash   string                 `json:"-"`
 	SavedSignature *SavedSignatureSummary `json:"savedSignature,omitempty"`

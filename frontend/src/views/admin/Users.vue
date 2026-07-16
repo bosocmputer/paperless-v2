@@ -50,7 +50,7 @@ const filteredUsers = computed(() => {
     const query = normalizeSearch(searchQuery.value);
     if (!query) return users.value;
     return users.value.filter((user) =>
-        normalizeSearch(`${user.displayName} ${user.username} ${user.role} ${user.status}`).includes(query)
+        normalizeSearch(`${user.displayName} ${user.username} ${user.role} ${user.status} ${user.accountSource} ${accountSourceLabel(user.accountSource)}`).includes(query)
     );
 });
 
@@ -258,6 +258,22 @@ function statusSeverity(status) {
     return status === 'active' ? 'success' : 'secondary';
 }
 
+function accountSourceLabel(source) {
+    return source === 'sml' ? 'SML' : 'PaperLess';
+}
+
+function accountSourceSeverity(source) {
+    return source === 'sml' ? 'info' : 'secondary';
+}
+
+function accountSourceIcon(source) {
+    return source === 'sml' ? 'pi pi-database' : 'pi pi-file-edit';
+}
+
+function accountSourceHint(source) {
+    return source === 'sml' ? 'บัญชีที่เชื่อมต่อหรือ Sync มาจาก SML' : 'บัญชีที่สร้างภายใน PaperLess';
+}
+
 function savedSignatureLabel(user) {
     if (user?.savedSignature?.available && user?.savedSignature?.lastError) return 'พร้อมใช้ (รูปเดิม)';
     if (user?.savedSignature?.available) return 'พร้อมใช้';
@@ -327,7 +343,7 @@ function normalizeSearch(value) {
                 <p class="text-muted-color m-0">จัดการชื่อผู้ใช้ รหัสผ่าน และระดับสิทธิ์ superadmin/admin/user</p>
             </div>
             <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
-                <InputText v-model="searchQuery" type="search" placeholder="ค้นหา user, ชื่อ, สิทธิ์" class="w-full sm:w-72" />
+                <InputText v-model="searchQuery" type="search" placeholder="ค้นหา user, ชื่อ, สิทธิ์, แหล่งบัญชี" class="w-full sm:w-80" />
                 <Button label="Sync จาก SML" icon="pi pi-sync" severity="secondary" outlined :loading="syncLoading" @click="openSyncDialog" />
                 <Button label="เพิ่มผู้ใช้" icon="pi pi-plus" @click="openCreate" />
             </div>
@@ -354,6 +370,16 @@ function normalizeSearch(value) {
             <Column field="status" header="สถานะ" sortable>
                 <template #body="{ data }">
                     <Tag :value="data.status" :severity="statusSeverity(data.status)" />
+                </template>
+            </Column>
+            <Column field="accountSource" header="แหล่งบัญชี" sortable>
+                <template #body="{ data }">
+                    <Tag
+                        :value="accountSourceLabel(data.accountSource)"
+                        :severity="accountSourceSeverity(data.accountSource)"
+                        :icon="accountSourceIcon(data.accountSource)"
+                        :title="accountSourceHint(data.accountSource)"
+                    />
                 </template>
             </Column>
             <Column header="ลายเซ็น SML">
