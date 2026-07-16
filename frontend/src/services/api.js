@@ -140,6 +140,9 @@ export const api = {
             body: JSON.stringify(payload)
         });
     },
+    getUserSavedSignatureBlob(id, options = {}) {
+        return requestBlob(`/api/users/${encodeURIComponent(id)}/saved-signature`, options);
+    },
     createUser(payload) {
         return request('/api/users', {
             method: 'POST',

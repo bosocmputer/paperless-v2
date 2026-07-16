@@ -36,6 +36,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/users", s.requireSuperAdmin(http.HandlerFunc(s.listUsers)))
 	mux.Handle("POST /api/users/sync-sml", s.requireSuperAdmin(http.HandlerFunc(s.syncSMLUsers)))
 	mux.Handle("POST /api/users", s.requireSuperAdmin(http.HandlerFunc(s.createUser)))
+	mux.Handle("GET /api/users/{id}/saved-signature", s.requireSuperAdmin(http.HandlerFunc(s.getUserSavedSignature)))
 	mux.Handle("PUT /api/users/{id}", s.requireSuperAdmin(http.HandlerFunc(s.updateUser)))
 	mux.Handle("DELETE /api/users/{id}", s.requireSuperAdmin(http.HandlerFunc(s.deactivateUser)))
 	mux.Handle("GET /api/sml/screen-codes", s.requireAdmin(http.HandlerFunc(s.listSMLScreenCodes)))

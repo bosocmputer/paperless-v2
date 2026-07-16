@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +70,59 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": users})
+}
+
+func (s *Server) getUserSavedSignature(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.SMLSignatureSync {
+		writeError(w, http.StatusNotFound, "saved_signature_unavailable", "Saved signature is not available.")
+		return
+	}
+
+	session, ok := currentSession(r)
+	if !ok || strings.TrimSpace(session.SMLTenant) == "" {
+		writeError(w, http.StatusBadRequest, "missing_sml_session", "Please login with an SML database before viewing saved signatures.")
+		return
+	}
+
+	userID := strings.TrimSpace(r.PathValue("id"))
+	saved, err := s.store.FindUserSavedSignature(r.Context(), userID, session.SMLTenant)
+	if errors.Is(err, store.ErrSavedSignatureUnavailable) || (err == nil && (saved.File.ID == "" || saved.File.StoragePath == "")) {
+		writeError(w, http.StatusNotFound, "saved_signature_unavailable", "Saved signature is not available.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("load user saved signature failed", "error", err, "tenant", session.SMLTenant, "targetUserID", userID)
+		writeError(w, http.StatusInternalServerError, "saved_signature_failed", "Cannot load saved signature right now.")
+		return
+	}
+
+	file, err := os.Open(saved.File.StoragePath)
+	if err != nil {
+		s.logger.Warn("open user saved signature failed", "error", err, "tenant", session.SMLTenant, "targetUserID", userID)
+		writeError(w, http.StatusNotFound, "saved_signature_unavailable", "Saved signature is not available.")
+		return
+	}
+	defer file.Close()
+
+	actor, _ := currentUser(r)
+	if err := s.store.WriteAuditWithMetadata(r.Context(), actor.ID, "user.saved_signature.view", "user_saved_signature", userID, clientIP(r), r.UserAgent(), map[string]any{
+		"tenant":       store.NormalizeSMLTenant(session.SMLTenant),
+		"targetUserID": userID,
+		"smlUserCode":  saved.SMLUserCode,
+		"syncedAt":     saved.SyncedAt,
+	}); err != nil {
+		s.logger.Warn("write saved signature view audit failed", "error", err, "tenant", session.SMLTenant, "targetUserID", userID)
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Disposition", `inline; filename="saved-signature.png"`)
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if saved.File.SizeBytes > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(saved.File.SizeBytes, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, file)
 }
 
 func (s *Server) syncSMLUsers(w http.ResponseWriter, r *http.Request) {

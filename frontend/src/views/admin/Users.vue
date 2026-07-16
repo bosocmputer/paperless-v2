@@ -1,6 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
@@ -13,12 +13,19 @@ const syncLoading = ref(false);
 const syncSaving = ref(false);
 const syncDialogVisible = ref(false);
 const syncPreview = ref(null);
+const signatureDialogVisible = ref(false);
+const signaturePreviewUser = ref(null);
+const signaturePreviewUrl = ref('');
+const signaturePreviewLoading = ref(false);
+const signaturePreviewError = ref('');
 const dialogVisible = ref(false);
 const editingUser = ref(null);
 const error = ref('');
 const syncError = ref('');
 const searchQuery = ref('');
 const form = ref(emptyForm());
+let signaturePreviewRequestSeq = 0;
+let signaturePreviewController = null;
 
 const roleOptions = [
     { label: 'superadmin', value: 'superadmin' },
@@ -48,6 +55,7 @@ const filteredUsers = computed(() => {
 });
 
 onMounted(loadUsers);
+onBeforeUnmount(cleanupSignaturePreview);
 
 function emptyForm() {
     return {
@@ -119,6 +127,42 @@ async function confirmSyncSMLUsers() {
     } finally {
         syncSaving.value = false;
     }
+}
+
+async function openSignaturePreview(user) {
+    if (!user?.savedSignature?.available) return;
+    cleanupSignaturePreview();
+    const requestSeq = ++signaturePreviewRequestSeq;
+    signaturePreviewUser.value = user;
+    signatureDialogVisible.value = true;
+    signaturePreviewLoading.value = true;
+    signaturePreviewError.value = '';
+    signaturePreviewController = new AbortController();
+    try {
+        const blob = await api.getUserSavedSignatureBlob(user.id, { signal: signaturePreviewController.signal });
+        if (requestSeq !== signaturePreviewRequestSeq) return;
+        signaturePreviewUrl.value = URL.createObjectURL(blob);
+    } catch (err) {
+        if (err?.name === 'AbortError' || requestSeq !== signaturePreviewRequestSeq) return;
+        signaturePreviewError.value = err.message || 'โหลดลายเซ็นไม่สำเร็จ';
+    } finally {
+        if (requestSeq === signaturePreviewRequestSeq) signaturePreviewLoading.value = false;
+    }
+}
+
+function closeSignaturePreview() {
+    signatureDialogVisible.value = false;
+}
+
+function cleanupSignaturePreview() {
+    signaturePreviewRequestSeq += 1;
+    signaturePreviewController?.abort();
+    signaturePreviewController = null;
+    if (signaturePreviewUrl.value) URL.revokeObjectURL(signaturePreviewUrl.value);
+    signaturePreviewUrl.value = '';
+    signaturePreviewLoading.value = false;
+    signaturePreviewError.value = '';
+    signaturePreviewUser.value = null;
 }
 
 function openCreate() {
@@ -297,7 +341,20 @@ function normalizeSearch(value) {
             <Column header="ลายเซ็น SML">
                 <template #body="{ data }">
                     <div class="flex flex-col gap-1 items-start">
-                        <Tag :value="savedSignatureLabel(data)" :severity="savedSignatureSeverity(data)" />
+                        <div class="flex items-center gap-1">
+                            <Tag :value="savedSignatureLabel(data)" :severity="savedSignatureSeverity(data)" />
+                            <Button
+                                v-if="data.savedSignature?.available"
+                                icon="pi pi-eye"
+                                severity="secondary"
+                                text
+                                rounded
+                                size="small"
+                                :aria-label="`ดูลายเซ็นของ ${data.displayName}`"
+                                title="ดูลายเซ็น"
+                                @click="openSignaturePreview(data)"
+                            />
+                        </div>
                         <small v-if="data.savedSignature?.syncedAt" class="text-muted-color">{{ formatDate(data.savedSignature.syncedAt) }}</small>
                         <small v-if="data.savedSignature?.available && data.savedSignature?.lastError" class="text-orange-600">Sync ล่าสุดมีปัญหา จึงคงรูปเดิมไว้</small>
                     </div>
@@ -470,6 +527,35 @@ function normalizeSearch(value) {
         <template #footer>
             <Button label="ปิด" icon="pi pi-times" text severity="secondary" :disabled="syncSaving" @click="syncDialogVisible = false" />
             <Button label="ยืนยัน Sync" icon="pi pi-check" :loading="syncSaving" :disabled="!canConfirmSync" @click="confirmSyncSMLUsers" />
+        </template>
+    </Dialog>
+
+    <Dialog
+        v-model:visible="signatureDialogVisible"
+        modal
+        :header="`ลายเซ็นของ ${signaturePreviewUser?.displayName || ''}`"
+        :style="{ width: 'min(46rem, 94vw)' }"
+        @hide="cleanupSignaturePreview"
+    >
+        <div class="flex flex-col gap-3">
+            <div v-if="signaturePreviewLoading" class="flex items-center justify-center surface-ground border-round min-h-64">
+                <ProgressSpinner aria-label="กำลังโหลดลายเซ็น" />
+            </div>
+            <Message v-else-if="signaturePreviewError" severity="error" :closable="false">{{ signaturePreviewError }}</Message>
+            <div v-else-if="signaturePreviewUrl" class="flex items-center justify-center surface-ground border-round p-4 min-h-64">
+                <img
+                    :src="signaturePreviewUrl"
+                    :alt="`ลายเซ็นของ ${signaturePreviewUser?.displayName || ''}`"
+                    class="max-w-full object-contain"
+                    style="max-height: 55vh"
+                />
+            </div>
+            <div v-if="signaturePreviewUser?.savedSignature?.syncedAt" class="text-sm text-muted-color">
+                Sync ล่าสุด {{ formatDate(signaturePreviewUser.savedSignature.syncedAt) }} · {{ signaturePreviewUser.username }}
+            </div>
+        </div>
+        <template #footer>
+            <Button label="ปิด" severity="secondary" outlined @click="closeSignaturePreview" />
         </template>
     </Dialog>
 </template>
