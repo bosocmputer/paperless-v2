@@ -86,7 +86,9 @@ func (s *Server) verifySMLTenantReadinessForLogin(w http.ResponseWriter, r *http
 		return
 	}
 
-	smlResult, err := s.verifySMLLogin(r.Context(), req.Username, req.Password, req.DatabaseName)
+	// Authenticate against the central registry first. Passing an unavailable
+	// tenant here would make SML fail before its readiness can be inspected.
+	smlResult, err := s.verifySMLLogin(r.Context(), req.Username, req.Password, "")
 	if errors.Is(err, errSMLAuthInvalidCredentials) {
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Username or password is incorrect.")
 		return
@@ -104,12 +106,13 @@ func (s *Server) verifySMLTenantReadinessForLogin(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadGateway, "sml_login_failed", "Cannot verify SML login right now.")
 		return
 	}
-	if smlResult.SelectedDatabase == nil {
+	selectedDatabase := findSMLAuthDatabase(smlResult.Databases, req.DatabaseName)
+	if selectedDatabase == nil {
 		writeError(w, http.StatusForbidden, "database_not_allowed", "Database is not allowed for this user.")
 		return
 	}
 
-	tenant := smlResult.SelectedDatabase.Tenant
+	tenant := selectedDatabase.Tenant
 	readiness, err := s.fetchSMLTenantReadiness(r.Context(), tenant)
 	if err != nil {
 		s.logger.Warn("SML tenant readiness verification failed", "error", err, "tenant", tenant, "username", req.Username)

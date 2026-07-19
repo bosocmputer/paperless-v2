@@ -246,6 +246,20 @@ func normalizeSMLAuthDatabases(items []models.SMLAuthDatabase) []models.SMLAuthD
 	return out
 }
 
+func findSMLAuthDatabase(items []models.SMLAuthDatabase, databaseName string) *models.SMLAuthDatabase {
+	tenant := store.NormalizeSMLTenant(databaseName)
+	if tenant == "" {
+		return nil
+	}
+	for i := range items {
+		if items[i].Tenant == tenant {
+			selected := items[i]
+			return &selected
+		}
+	}
+	return nil
+}
+
 func normalizeSMLAuthDatabase(item models.SMLAuthDatabase) models.SMLAuthDatabase {
 	item.DataGroup = strings.TrimSpace(item.DataGroup)
 	item.DataCode = strings.TrimSpace(item.DataCode)

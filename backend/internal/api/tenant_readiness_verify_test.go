@@ -29,7 +29,7 @@ func TestVerifySMLTenantReadinessForLoginReturnsLatestReadiness(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode SML auth request: %v", err)
 			}
-			if request.Provider != "data" || request.DataGroup != "sml" || request.DatabaseName != "VRH" {
+			if request.Provider != "data" || request.DataGroup != "sml" || request.DatabaseName != "" {
 				t.Errorf("unexpected SML auth scope: %#v", request)
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
@@ -133,5 +133,50 @@ func TestVerifySMLTenantReadinessForLoginRejectsInvalidCredentials(t *testing.T)
 	}
 	if readinessCalls.Load() != 0 {
 		t.Fatalf("readiness calls = %d, want 0 after failed authentication", readinessCalls.Load())
+	}
+}
+
+func TestVerifySMLTenantReadinessForLoginRejectsDatabaseOutsideUserScope(t *testing.T) {
+	var readinessCalls atomic.Int32
+	smlAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/sml/login":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"provider": "data", "dataGroup": "sml",
+					"user": map[string]any{"userCode": "limited-user", "userName": "Limited User"},
+					"databases": []map[string]any{{
+						"dataGroup": "sml", "dataCode": "VRH", "dataName": "VRH", "databaseName": "VRH", "tenant": "vrh",
+					}},
+				},
+			})
+		case "/api/v1/tenants/readiness":
+			readinessCalls.Add(1)
+			writeJSON(w, http.StatusOK, map[string]any{"success": true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(smlAPI.Close)
+
+	server := NewServer(config.Config{
+		SMLPaperlessBaseURL: smlAPI.URL,
+		SMLPaperlessAPIKey:  "internal-test-key",
+		SMLPaperlessTimeout: 2 * time.Second,
+		SMLAuthProvider:     "data",
+		SMLAuthDataGroup:    "sml",
+	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	body := []byte(`{"username":"limited-user","password":"secret","databaseName":"OTHER"}`)
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/sml/verify-database", bytes.NewReader(body))
+	response := httptest.NewRecorder()
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", response.Code, response.Body.String())
+	}
+	if readinessCalls.Load() != 0 {
+		t.Fatalf("readiness calls = %d, want 0 for an unauthorized database", readinessCalls.Load())
 	}
 }
