@@ -52,7 +52,7 @@ func Load() (Config, error) {
 		),
 		SMLPaperlessAPIKey: getenv("SML_PAPERLESS_API_KEY", ""),
 		SMLPaperlessTenant: strings.ToLower(getenv("SML_PAPERLESS_TENANT", "sml1_2026")),
-		SMLAuthProvider:    strings.ToLower(getenv("SML_AUTH_PROVIDER", "smlgoh")),
+		SMLAuthProvider:    strings.ToLower(getenv("SML_AUTH_PROVIDER", "data")),
 		SMLAuthDataGroup:   strings.ToLower(getenv("SML_AUTH_DATAGROUP", "sml")),
 		LocalAuthFallback:  parseBool(getenv("PAPERLESS_LOCAL_AUTH_FALLBACK_ENABLED", "false")),
 		SMLSignatureSync:   parseBool(getenv("SML_SIGNATURE_SYNC_ENABLED", "true")),

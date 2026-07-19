@@ -74,6 +74,7 @@ Required groups:
 - `SML_PAPERLESS_BASE_URL`
 - `SML_AUTH_PROVIDER`
 - `SML_AUTH_DATAGROUP`
+- `SML_IMAGE_TEMPLATE_DATABASE` ต้องชี้ไปยัง `_images` database มาตรฐานของลูกค้ารายนั้น เช่น `vrh_images` ห้ามใช้ค่าจากลูกค้ารายอื่น
 - `SML_PAPERLESS_TENANT` default tenant
 - `PAPERLESS_LOCAL_AUTH_FALLBACK_ENABLED`
 - `PUBLIC_BASE_URL`
@@ -90,19 +91,21 @@ Every selectable SML tenant must have a matching image database. For example, te
 
 Both databases must contain `public.sml_doc_images` with the same schema. Tenants created directly in PostgreSQL can miss the `_images` database, which causes PaperLess auto-finalization to stop at `completed_image_failed`.
 
-Run from the deployed SML API source/container before customer testing:
+กำหนด `SML_IMAGE_TEMPLATE_DATABASE` ใน production env ให้ตรงกับลูกค้าก่อนเริ่ม SML API แล้ว run จาก container ก่อนให้ลูกค้าทดสอบ:
 
 ```bash
-docker exec paperless-prod-sml-api ./verify-sml-tenant --all-allowed --template iampcoffee_images
+docker exec <sml-api-container> ./verify-sml-tenant --all-allowed --template <template_images_db>
 ```
 
 If a tenant image DB is missing, create only that image DB with dry-run first, then apply after customer approval:
 
 ```bash
-docker exec paperless-prod-sml-api ./provision-sml-image-db --tenant stpt --template iampcoffee_images
-docker exec paperless-prod-sml-api ./provision-sml-image-db --tenant stpt --template iampcoffee_images --apply
-docker exec paperless-prod-sml-api ./verify-sml-tenant --tenant stpt --template iampcoffee_images
+docker exec <sml-api-container> ./provision-sml-image-db --tenant <tenant> --template <template_images_db>
+docker exec <sml-api-container> ./provision-sml-image-db --tenant <tenant> --template <template_images_db> --apply
+docker exec <sml-api-container> ./verify-sml-tenant --tenant <tenant> --template <template_images_db>
 ```
+
+หน้าเลือก database มีปุ่ม `ตรวจสอบอีกครั้ง` สำหรับอ่าน readiness ล่าสุดหลังผู้ดูแลแก้ config/schema แล้ว ปุ่มนี้ไม่แก้ schema และไม่สร้าง database; การ provision ยังต้องผ่านสถานะที่ระบบรองรับและ approval ตาม runbook นี้
 
 For day-to-day use, PaperLess also supports self-service image DB setup from the login page. If SML reports that a selected database is missing `<tenant>_images` or the `public.sml_doc_images` table is absent, the user can click `ตั้งค่า image DB`; PaperLess verifies the same SML username/password/database permission again, then creates only the missing image database/table through `paperless-prod-sml-api`. Main DB missing or existing schema mismatch cases remain blocked and require admin review.
 

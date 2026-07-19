@@ -71,6 +71,56 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusBadGateway, "sml_login_failed", "Cannot verify SML login right now.")
 }
 
+func (s *Server) verifySMLTenantReadinessForLogin(w http.ResponseWriter, r *http.Request) {
+	setNoStoreHeaders(w)
+
+	var req models.LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	req.DatabaseName = strings.TrimSpace(req.DatabaseName)
+	if req.Username == "" || req.Password == "" || req.DatabaseName == "" {
+		writeError(w, http.StatusBadRequest, "missing_credentials", "Username, password, and database are required.")
+		return
+	}
+
+	smlResult, err := s.verifySMLLogin(r.Context(), req.Username, req.Password, req.DatabaseName)
+	if errors.Is(err, errSMLAuthInvalidCredentials) {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Username or password is incorrect.")
+		return
+	}
+	if errors.Is(err, errSMLAuthDatabaseDenied) {
+		writeError(w, http.StatusForbidden, "database_not_allowed", "Database is not allowed for this user.")
+		return
+	}
+	if errors.Is(err, errSMLConfigMissing) {
+		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML PaperLess API is not configured.")
+		return
+	}
+	if err != nil {
+		s.logger.Warn("SML login check before tenant readiness verification failed", "error", err, "username", req.Username)
+		writeError(w, http.StatusBadGateway, "sml_login_failed", "Cannot verify SML login right now.")
+		return
+	}
+	if smlResult.SelectedDatabase == nil {
+		writeError(w, http.StatusForbidden, "database_not_allowed", "Database is not allowed for this user.")
+		return
+	}
+
+	tenant := smlResult.SelectedDatabase.Tenant
+	readiness, err := s.fetchSMLTenantReadiness(r.Context(), tenant)
+	if err != nil {
+		s.logger.Warn("SML tenant readiness verification failed", "error", err, "tenant", tenant, "username", req.Username)
+		writeError(w, http.StatusBadGateway, "tenant_readiness_failed", "Cannot verify selected database readiness right now.")
+		return
+	}
+
+	s.logger.Info("SML tenant readiness verified during login", "tenant", tenant, "status", readiness.Status, "ready", readiness.OK, "username", req.Username)
+	writeJSON(w, http.StatusOK, models.SMLTenantVerifyResponse{Readiness: readiness})
+}
+
 func (s *Server) provisionSMLTenantImageDatabaseForLogin(w http.ResponseWriter, r *http.Request) {
 	var req models.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

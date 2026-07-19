@@ -919,6 +919,10 @@ type SMLTenantProvisionResponse struct {
 	Readiness   SMLTenantReadiness `json:"readiness"`
 }
 
+type SMLTenantVerifyResponse struct {
+	Readiness SMLTenantReadiness `json:"readiness"`
+}
+
 type APIError struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`

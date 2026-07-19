@@ -64,7 +64,7 @@ function handleUnauthorized(path) {
 }
 
 function shouldSkipUnauthorizedRedirect(path) {
-    return path.startsWith('/api/auth/login') || path.startsWith('/api/auth/logout') || path.startsWith('/api/public/');
+    return path.startsWith('/api/auth/login') || path.startsWith('/api/auth/logout') || path.startsWith('/api/auth/sml/') || path.startsWith('/api/public/');
 }
 
 function withQuery(path, params = {}) {
@@ -115,6 +115,12 @@ function splitIdempotencyPayload(payload = {}) {
 export const api = {
     login(username, password, databaseName = '', authSource = '') {
         return request('/api/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ username, password, databaseName, authSource })
+        });
+    },
+    verifySMLDatabaseReadiness(username, password, databaseName = '', authSource = '') {
+        return request('/api/auth/sml/verify-database', {
             method: 'POST',
             body: JSON.stringify({ username, password, databaseName, authSource })
         });
