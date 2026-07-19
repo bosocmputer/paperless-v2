@@ -906,12 +906,20 @@ type SMLTenantReadiness struct {
 	ImageDatabase string                `json:"imageDatabase"`
 	Template      string                `json:"template,omitempty"`
 	Checks        []SMLTenantReadyCheck `json:"checks,omitempty"`
+	Issues        []SMLTenantReadyIssue `json:"issues,omitempty"`
 }
 
 type SMLTenantReadyCheck struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"`
 	Message string `json:"message"`
+}
+
+type SMLTenantReadyIssue struct {
+	Code     string `json:"code"`
+	Database string `json:"database,omitempty"`
+	Owner    string `json:"owner"`
+	Message  string `json:"message"`
 }
 
 type SMLTenantProvisionResponse struct {

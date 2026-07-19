@@ -180,3 +180,55 @@ func TestVerifySMLTenantReadinessForLoginRejectsDatabaseOutsideUserScope(t *test
 		t.Fatalf("readiness calls = %d, want 0 for an unauthorized database", readinessCalls.Load())
 	}
 }
+
+func TestVerifySMLTenantReadinessForLoginExplainsReadinessServiceFailure(t *testing.T) {
+	smlAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/auth/sml/login":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": true,
+				"data": map[string]any{
+					"provider": "data", "dataGroup": "sml",
+					"user": map[string]any{"userCode": "superadmin", "userName": "System Administrator"},
+					"databases": []map[string]any{{
+						"dataGroup": "sml", "dataCode": "TEST", "dataName": "TEST", "databaseName": "TEST", "tenant": "test",
+					}},
+				},
+			})
+		case "/api/v1/tenants/readiness":
+			writeJSON(w, http.StatusInternalServerError, map[string]any{
+				"success": false,
+				"error":   map[string]any{"code": "tenant_readiness_template_missing", "message": "template is not configured"},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(smlAPI.Close)
+
+	server := NewServer(config.Config{
+		SMLPaperlessBaseURL: smlAPI.URL,
+		SMLPaperlessAPIKey:  "internal-test-key",
+		SMLPaperlessTimeout: 2 * time.Second,
+		SMLAuthProvider:     "data",
+		SMLAuthDataGroup:    "sml",
+	}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	request := httptest.NewRequest(http.MethodPost, "/api/auth/sml/verify-database", bytes.NewReader([]byte(`{"username":"superadmin","password":"secret","databaseName":"TEST"}`)))
+	response := httptest.NewRecorder()
+	server.Routes().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 diagnostic response; body=%s", response.Code, response.Body.String())
+	}
+	var payload models.SMLTenantVerifyResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Readiness.Status != "template_not_ready" || len(payload.Readiness.Issues) != 1 {
+		t.Fatalf("readiness = %#v", payload.Readiness)
+	}
+	if payload.Readiness.Issues[0].Owner != "paperless" {
+		t.Fatalf("issue = %#v", payload.Readiness.Issues[0])
+	}
+}

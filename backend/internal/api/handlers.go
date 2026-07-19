@@ -116,7 +116,7 @@ func (s *Server) verifySMLTenantReadinessForLogin(w http.ResponseWriter, r *http
 	readiness, err := s.fetchSMLTenantReadiness(r.Context(), tenant)
 	if err != nil {
 		s.logger.Warn("SML tenant readiness verification failed", "error", err, "tenant", tenant, "username", req.Username)
-		writeError(w, http.StatusBadGateway, "tenant_readiness_failed", "Cannot verify selected database readiness right now.")
+		writeJSON(w, http.StatusOK, models.SMLTenantVerifyResponse{Readiness: tenantReadinessFromVerificationError(tenant, err)})
 		return
 	}
 
@@ -269,6 +269,17 @@ func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, r
 }
 
 func tenantReadinessLoginMessage(readiness models.SMLTenantReadiness) string {
+	if len(readiness.Issues) > 0 {
+		messages := make([]string, 0, len(readiness.Issues))
+		for _, issue := range readiness.Issues {
+			if message := strings.TrimSpace(issue.Message); message != "" {
+				messages = append(messages, message)
+			}
+		}
+		if len(messages) > 0 {
+			return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: " + strings.Join(messages, "; ")
+		}
+	}
 	imageDatabase := strings.TrimSpace(readiness.ImageDatabase)
 	switch readiness.Status {
 	case "image_db_missing":
@@ -288,6 +299,43 @@ func tenantReadinessLoginMessage(readiness models.SMLTenantReadiness) string {
 		}
 		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess กรุณาแจ้งผู้ดูแลระบบ"
 	}
+}
+
+func tenantReadinessFromVerificationError(tenant string, err error) models.SMLTenantReadiness {
+	tenant = store.NormalizeSMLTenant(tenant)
+	readiness := models.SMLTenantReadiness{
+		OK:            false,
+		Status:        "readiness_service_unavailable",
+		Message:       "ระบบตรวจสอบความพร้อมของฐานข้อมูลใช้งานไม่ได้",
+		Tenant:        tenant,
+		ImageDatabase: tenant + "_images",
+		Issues: []models.SMLTenantReadyIssue{{
+			Code:    "readiness_service_unavailable",
+			Owner:   "infrastructure",
+			Message: "ระบบตรวจสอบความพร้อมของฐานข้อมูลใช้งานไม่ได้ กรุณาแจ้งผู้ดูแล PaperLess หรือ Server",
+		}},
+	}
+	var requestErr *smlRequestError
+	if errors.As(err, &requestErr) && requestErr.Code == "tenant_readiness_template_missing" {
+		readiness.Status = "template_not_ready"
+		readiness.Message = "ระบบยังไม่ได้กำหนดฐานข้อมูลต้นแบบสำหรับตรวจ schema"
+		readiness.Issues[0] = models.SMLTenantReadyIssue{
+			Code:    "template_not_ready",
+			Owner:   "paperless",
+			Message: "PaperLess ยังไม่ได้กำหนดฐานข้อมูลต้นแบบสำหรับตรวจ schema กรุณาแจ้งผู้ดูแล PaperLess",
+		}
+		return readiness
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		readiness.Status = "verification_timeout"
+		readiness.Message = "การตรวจสอบฐานข้อมูลใช้เวลานานเกินกำหนด"
+		readiness.Issues[0] = models.SMLTenantReadyIssue{
+			Code:    "verification_timeout",
+			Owner:   "infrastructure",
+			Message: "การตรวจสอบฐานข้อมูลหมดเวลา กรุณาแจ้งผู้ดูแล SML ERP หรือ Server",
+		}
+	}
+	return readiness
 }
 
 func tenantReadinessCanSelfProvision(readiness models.SMLTenantReadiness) bool {

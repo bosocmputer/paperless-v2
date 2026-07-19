@@ -40,7 +40,7 @@ PaperLess authenticates against the SML auth API. The provider and data group ar
 Login is always two steps:
 
 1. User enters SML username/password.
-2. PaperLess verifies SML, shows every allowed database with tenant readiness status, and requires the user to choose one.
+2. PaperLess verifies SML, shows every allowed database, and requires the user to choose one. A database found in `pg_database` is shown as `ต้องตรวจสอบ` until the user runs the full connection/schema check; name existence alone is never shown as ready.
 3. If the selected database is missing `<tenant>_images` or the `public.sml_doc_images` table, the user can click **ตั้งค่า image DB** on the login page. PaperLess re-verifies the SML username/password/database permission before asking the SML API to create only the missing image database/table.
 
 The selected database is checked again before JWT issuance. Databases missing `<tenant>_images` or a compatible `public.sml_doc_images` schema are blocked at login so users do not reach a broken SML finalization/upload flow.

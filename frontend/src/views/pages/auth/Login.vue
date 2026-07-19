@@ -30,9 +30,11 @@ const databaseOptions = computed(() =>
 );
 const selectedDatabaseOption = computed(() => databaseOptions.value.find((option) => option.value === selectedDatabase.value) || null);
 const selectedReadiness = computed(() => selectedDatabaseOption.value?.readiness || null);
-const selectedDatabaseReady = computed(() => !selectedReadiness.value || selectedReadiness.value.ok || selectedReadiness.value.status === 'unknown');
-const canProvisionSelectedDatabase = computed(() => step.value === 'database' && Boolean(selectedDatabase.value) && ['image_db_missing', 'doc_images_table_missing'].includes(selectedReadiness.value?.status));
-const canVerifySelectedDatabase = computed(() => step.value === 'database' && Boolean(selectedDatabase.value) && !selectedReadiness.value?.ok);
+const selectedDatabaseReady = computed(() => authSource.value === 'local' || selectedReadiness.value?.ok === true);
+const canProvisionSelectedDatabase = computed(
+    () => authSource.value !== 'local' && step.value === 'database' && Boolean(selectedDatabase.value) && ['image_db_missing', 'doc_images_table_missing'].includes(selectedReadiness.value?.status)
+);
+const canVerifySelectedDatabase = computed(() => authSource.value !== 'local' && step.value === 'database' && Boolean(selectedDatabase.value) && !selectedReadiness.value?.ok);
 const credentialsComplete = computed(() => username.value.trim() !== '' && password.value !== '');
 const canSubmit = computed(() => !provisioning.value && !verifying.value && (step.value === 'database' ? Boolean(selectedDatabase.value) && selectedDatabaseReady.value : credentialsComplete.value));
 let readinessRequestSequence = 0;
@@ -52,10 +54,23 @@ function databaseLabel(database) {
 function readinessLabel(readiness) {
     if (!readiness) return 'รอตรวจ';
     if (readiness.ok) return 'พร้อมใช้งาน';
-    if (readiness.status === 'image_db_missing') return 'ไม่พบ image DB';
-    if (readiness.status === 'doc_images_table_missing') return 'ไม่พบตารางรูป';
-    if (readiness.status === 'main_db_missing') return 'ไม่พบ DB หลัก';
-    if (readiness.status === 'schema_mismatch') return 'schema ไม่พร้อม';
+    const status = readiness.status || '';
+    if (status === 'unknown') return 'ต้องตรวจสอบ';
+    if (status === 'image_db_missing') return 'ไม่พบ image DB';
+    if (status === 'doc_images_table_missing') return 'ไม่พบตารางรูป';
+    if (status === 'main_db_missing') return 'ไม่พบ DB หลัก';
+    if (status === 'main_db_unreachable') return 'DB หลักเปิดไม่ได้';
+    if (status === 'image_db_unreachable') return 'image DB เปิดไม่ได้';
+    if (status === 'main_db_corrupted') return 'DB หลักเสียหาย';
+    if (status === 'image_db_corrupted') return 'image DB เสียหาย';
+    if (status.endsWith('_permission_denied')) return 'สิทธิ์ DB ไม่เพียงพอ';
+    if (status.endsWith('_connection_limit')) return 'connection เต็ม';
+    if (status.endsWith('_temporarily_unavailable')) return 'DB ยังไม่พร้อม';
+    if (status === 'main_schema_inspection_failed' || status === 'image_schema_inspection_failed') return 'ตรวจ schema ไม่ได้';
+    if (status === 'verification_timeout') return 'ตรวจสอบหมดเวลา';
+    if (status === 'template_not_ready') return 'ระบบมาตรฐานไม่พร้อม';
+    if (status === 'readiness_service_unavailable') return 'ระบบตรวจสอบขัดข้อง';
+    if (status === 'schema_mismatch') return 'schema ไม่พร้อม';
     return 'ตรวจไม่ได้';
 }
 
@@ -69,11 +84,24 @@ function readinessSeverity(readiness) {
 function readinessDetail(readiness) {
     if (!readiness) return '';
     if (readiness.ok) return `ตรวจแล้วพร้อมใช้งาน${readiness.imageDatabase ? ` · ${readiness.imageDatabase}` : ''}`;
+    if (readiness.status === 'unknown') return 'พบชื่อฐานข้อมูลแล้ว แต่ยังไม่ได้ตรวจการเชื่อมต่อและ schema กรุณากด “ตรวจสอบอีกครั้ง”';
+    if (Array.isArray(readiness.issues) && readiness.issues.length > 0) return `ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess · พบ ${readiness.issues.length} ปัญหา`;
     if (readiness.status === 'image_db_missing') return `ไม่พบฐานข้อมูล ${readiness.imageDatabase || `${readiness.tenant || 'ฐานนี้'}_images`} กรุณาแจ้งผู้ดูแลระบบ SML`;
     if (readiness.status === 'doc_images_table_missing') return `ฐานข้อมูล ${readiness.imageDatabase || 'รูปเอกสาร'} ยังไม่มีตาราง public.sml_doc_images กรุณาแจ้งผู้ดูแลระบบ SML`;
     if (readiness.status === 'main_db_missing') return `ไม่พบฐานข้อมูล SML หลัก${readiness.tenant ? ` ${readiness.tenant}` : ''} กรุณาแจ้งผู้ดูแลระบบ SML`;
     if (readiness.status === 'schema_mismatch') return `schema ตารางรูปเอกสาร${readiness.imageDatabase ? ` ของ ${readiness.imageDatabase}` : ''} ไม่ตรงกับมาตรฐาน กรุณาแจ้งผู้ดูแลระบบ SML แล้วกดตรวจสอบอีกครั้ง`;
     return readiness.message || 'ยังตรวจความพร้อมไม่ได้ในขณะนี้';
+}
+
+function readinessOwnerLabel(owner) {
+    if (owner === 'sml_erp') return 'แจ้งผู้ดูแล SML ERP';
+    if (owner === 'paperless') return 'แจ้งผู้ดูแล PaperLess';
+    if (owner === 'infrastructure') return 'แจ้งผู้ดูแล Server/PaperLess หรือ SML ERP';
+    return 'แจ้งผู้ดูแลระบบ';
+}
+
+function readinessIssues(readiness) {
+    return Array.isArray(readiness?.issues) ? readiness.issues : [];
 }
 
 function updateDatabaseReadiness(databaseName, readiness) {
@@ -261,7 +289,15 @@ async function provisionSelectedDatabase() {
                                 </template>
                             </Select>
                             <Message v-if="selectedReadiness" :severity="selectedReadiness.ok ? 'success' : selectedReadiness.status === 'unknown' ? 'warn' : 'error'" class="mb-4">
-                                {{ readinessDetail(selectedReadiness) }}
+                                <div class="flex flex-col gap-2">
+                                    <div class="font-medium">{{ readinessDetail(selectedReadiness) }}</div>
+                                    <ul v-if="readinessIssues(selectedReadiness).length" class="m-0 pl-5 flex flex-col gap-2">
+                                        <li v-for="issue in readinessIssues(selectedReadiness)" :key="`${issue.code}-${issue.database || ''}`">
+                                            <div>{{ issue.message }}</div>
+                                            <small class="opacity-80">{{ readinessOwnerLabel(issue.owner) }}</small>
+                                        </li>
+                                    </ul>
+                                </div>
                             </Message>
                         </template>
 
