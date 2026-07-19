@@ -52,8 +52,8 @@ function databaseLabel(database) {
 function readinessLabel(readiness) {
     if (!readiness) return 'รอตรวจ';
     if (readiness.ok) return 'พร้อมใช้งาน';
-    if (readiness.status === 'image_db_missing') return 'ต้องตั้งค่า image DB';
-    if (readiness.status === 'doc_images_table_missing') return 'ต้องตั้งค่า image DB';
+    if (readiness.status === 'image_db_missing') return 'ไม่พบ image DB';
+    if (readiness.status === 'doc_images_table_missing') return 'ไม่พบตารางรูป';
     if (readiness.status === 'main_db_missing') return 'ไม่พบ DB หลัก';
     if (readiness.status === 'schema_mismatch') return 'schema ไม่พร้อม';
     return 'ตรวจไม่ได้';
@@ -69,10 +69,10 @@ function readinessSeverity(readiness) {
 function readinessDetail(readiness) {
     if (!readiness) return '';
     if (readiness.ok) return `ตรวจแล้วพร้อมใช้งาน${readiness.imageDatabase ? ` · ${readiness.imageDatabase}` : ''}`;
-    if (readiness.status === 'image_db_missing') return `ฐานข้อมูลนี้ยังไม่มีฐานรูป ${readiness.imageDatabase || ''} กดตั้งค่า image DB เพื่อให้ระบบสร้างให้อัตโนมัติ`;
-    if (readiness.status === 'doc_images_table_missing') return 'ฐานข้อมูลนี้ยังไม่มีตารางรูปเอกสาร กดตั้งค่า image DB เพื่อให้ระบบสร้างให้อัตโนมัติ';
-    if (readiness.status === 'main_db_missing') return 'ไม่พบฐานข้อมูล SML หลัก กรุณาแจ้งผู้ดูแลระบบ';
-    if (readiness.status === 'schema_mismatch') return 'schema ตารางรูปเอกสารไม่ตรงกับมาตรฐาน หากผู้ดูแลเพิ่งแก้ไขแล้ว ให้กดตรวจสอบอีกครั้ง';
+    if (readiness.status === 'image_db_missing') return `ไม่พบฐานข้อมูล ${readiness.imageDatabase || `${readiness.tenant || 'ฐานนี้'}_images`} กรุณาแจ้งผู้ดูแลระบบ SML`;
+    if (readiness.status === 'doc_images_table_missing') return `ฐานข้อมูล ${readiness.imageDatabase || 'รูปเอกสาร'} ยังไม่มีตาราง public.sml_doc_images กรุณาแจ้งผู้ดูแลระบบ SML`;
+    if (readiness.status === 'main_db_missing') return `ไม่พบฐานข้อมูล SML หลัก${readiness.tenant ? ` ${readiness.tenant}` : ''} กรุณาแจ้งผู้ดูแลระบบ SML`;
+    if (readiness.status === 'schema_mismatch') return `schema ตารางรูปเอกสาร${readiness.imageDatabase ? ` ของ ${readiness.imageDatabase}` : ''} ไม่ตรงกับมาตรฐาน กรุณาแจ้งผู้ดูแลระบบ SML แล้วกดตรวจสอบอีกครั้ง`;
     return readiness.message || 'ยังตรวจความพร้อมไม่ได้ในขณะนี้';
 }
 

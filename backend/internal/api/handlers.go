@@ -273,15 +273,15 @@ func tenantReadinessLoginMessage(readiness models.SMLTenantReadiness) string {
 	switch readiness.Status {
 	case "image_db_missing":
 		if imageDatabase != "" {
-			return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูลรูป " + imageDatabase + " กรุณากดตั้งค่า image DB"
+			return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูล " + imageDatabase + " กรุณาแจ้งผู้ดูแลระบบ SML"
 		}
-		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูลรูป กรุณากดตั้งค่า image DB"
+		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูล _images กรุณาแจ้งผู้ดูแลระบบ SML"
 	case "doc_images_table_missing":
-		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ยังไม่มีตารางรูปเอกสาร กรุณากดตั้งค่า image DB"
+		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบตาราง public.sml_doc_images กรุณาแจ้งผู้ดูแลระบบ SML"
 	case "main_db_missing":
-		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูล SML หลัก กรุณาแจ้งผู้ดูแลระบบ"
+		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูล SML หลัก กรุณาแจ้งผู้ดูแลระบบ SML"
 	case "schema_mismatch":
-		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: schema ตารางรูปเอกสารไม่ตรงกับมาตรฐาน กรุณาแจ้งผู้ดูแลระบบ"
+		return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: schema ตารางรูปเอกสารไม่ตรงกับมาตรฐาน กรุณาแจ้งผู้ดูแลระบบ SML"
 	default:
 		if strings.TrimSpace(readiness.Message) != "" {
 			return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: " + readiness.Message

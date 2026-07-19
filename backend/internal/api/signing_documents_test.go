@@ -495,8 +495,8 @@ func TestTenantReadinessLoginMessageExplainsMissingImageDatabase(t *testing.T) {
 	if strings.Contains(strings.ToLower(message), "failed") {
 		t.Fatalf("message should be user-facing Thai copy, got %q", message)
 	}
-	if !strings.Contains(message, "ตั้งค่า image DB") {
-		t.Fatalf("message = %q, want self-service action copy", message)
+	if !strings.Contains(message, "ผู้ดูแลระบบ SML") {
+		t.Fatalf("message = %q, want SML administrator guidance", message)
 	}
 }
 
