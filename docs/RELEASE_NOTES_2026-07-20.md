@@ -21,3 +21,11 @@
 - Existing PaperLess DB and SML API containers were not restarted.
 - Database backups, before/after container evidence, Compose snapshots, and smoke results are stored under `/data/paperless/releases/20260720101905/` on each server.
 - Previous API/Web images tagged `2aba190` remain available for rollback.
+
+## Central Container Build Pipeline
+
+- Added GitHub Actions pipelines for PaperLess Web and API images.
+- Images are built as `linux/amd64` on GitHub and published to GHCR with immutable Git commit tags.
+- Frontend build and backend tests are release gates before image publication.
+- Customer servers pull the same published image; source code and Docker build cache are no longer copied to or generated on either production server.
+- Production deployment remains manual and service-scoped so an ordinary push cannot restart customer systems automatically.

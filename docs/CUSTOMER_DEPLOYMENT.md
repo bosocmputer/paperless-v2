@@ -160,6 +160,34 @@ Development default credentials are not assumed to work on the customer server.
 10. Smoke test dashboard, workflow config, document search, PDF preview, signer queue, SML image upload, and SML lock.
 11. If saved signatures are enabled, sync one known SML signature and verify explicit saved/drawn selection on a new internal task.
 
+## Container Release Pipeline
+
+PaperLess Web and API images are built by GitHub Actions, not on a developer computer or customer server.
+
+- Web image: `ghcr.io/bosocmputer/paperless-web:<commit-sha>`
+- API image: `ghcr.io/bosocmputer/paperless-api:<commit-sha>`
+- Target platform: `linux/amd64`
+- Release tags are immutable short Git commit SHAs. The `main` tag is informational and must not be used in production Compose.
+- GitHub Actions must pass the frontend build or backend test suite before publishing its image.
+
+Production deployment remains a controlled manual step. For each customer:
+
+1. Save the current Compose file and container evidence under `/data/paperless/releases/<timestamp>/`.
+2. Replace only the target service image with the immutable GHCR SHA tag.
+3. Run `docker compose pull <service>`.
+4. Run `docker compose up -d --no-deps <service>`.
+5. Verify public URL, `/health/live`, `/health/ready`, container IDs, restart counts, and logs.
+6. Keep the previous image and Compose snapshot for rollback.
+
+Example for a Web-only release:
+
+```bash
+docker compose --env-file /data/paperless/config/.env.prod pull web
+docker compose --env-file /data/paperless/config/.env.prod up -d --no-deps web
+```
+
+Do not run `docker build`, `docker system prune`, or a full-stack restart on customer servers. If a release fails, restore the saved Compose file and recreate only the affected service.
+
 ## Smoke Commands
 
 From the customer server:
