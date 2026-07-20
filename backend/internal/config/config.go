@@ -14,28 +14,29 @@ import (
 const defaultJWTSecret = "change-this-before-production"
 
 type Config struct {
-	AppName             string
-	Env                 string
-	Port                string
-	DatabaseURL         string
-	JWTSecret           string
-	JWTTTL              time.Duration
-	CORSOrigins         []string
-	SMLPaperlessBaseURL string
-	SMLPaperlessAPIKey  string
-	SMLPaperlessTenant  string
-	SMLPaperlessTimeout time.Duration
-	SMLAuthProvider     string
-	SMLAuthDataGroup    string
-	LocalAuthFallback   bool
-	SMLSignatureSync    bool
-	FileStorageDir      string
-	MaxUploadMB         int64
-	MaxAttachmentMB     int64
-	MaxTemplatePages    int
-	PublicBaseURL       string
-	TelegramBotToken    string
-	SeedSuperAdmin      models.SeedUser
+	AppName              string
+	Env                  string
+	Port                 string
+	DatabaseURL          string
+	JWTSecret            string
+	JWTTTL               time.Duration
+	CORSOrigins          []string
+	SMLPaperlessBaseURL  string
+	SMLPaperlessAPIKey   string
+	SMLPaperlessTenant   string
+	SMLPaperlessTimeout  time.Duration
+	SMLAuthProvider      string
+	SMLAuthDataGroup     string
+	LocalAuthFallback    bool
+	SMLSignatureSync     bool
+	SMLReadinessRegistry bool
+	FileStorageDir       string
+	MaxUploadMB          int64
+	MaxAttachmentMB      int64
+	MaxTemplatePages     int
+	PublicBaseURL        string
+	TelegramBotToken     string
+	SeedSuperAdmin       models.SeedUser
 }
 
 func Load() (Config, error) {
@@ -50,15 +51,16 @@ func Load() (Config, error) {
 			getenv("SML_PAPERLESS_BASE_URL", "http://192.168.2.109:8201"),
 			"/",
 		),
-		SMLPaperlessAPIKey: getenv("SML_PAPERLESS_API_KEY", ""),
-		SMLPaperlessTenant: strings.ToLower(getenv("SML_PAPERLESS_TENANT", "sml1_2026")),
-		SMLAuthProvider:    strings.ToLower(getenv("SML_AUTH_PROVIDER", "data")),
-		SMLAuthDataGroup:   strings.ToLower(getenv("SML_AUTH_DATAGROUP", "sml")),
-		LocalAuthFallback:  parseBool(getenv("PAPERLESS_LOCAL_AUTH_FALLBACK_ENABLED", "false")),
-		SMLSignatureSync:   parseBool(getenv("SML_SIGNATURE_SYNC_ENABLED", "true")),
-		FileStorageDir:     getenv("FILE_STORAGE_DIR", "/app/uploads"),
-		PublicBaseURL:      strings.TrimRight(getenv("PUBLIC_BASE_URL", ""), "/"),
-		TelegramBotToken:   getenv("TELEGRAM_BOT_TOKEN", ""),
+		SMLPaperlessAPIKey:   getenv("SML_PAPERLESS_API_KEY", ""),
+		SMLPaperlessTenant:   strings.ToLower(getenv("SML_PAPERLESS_TENANT", "sml1_2026")),
+		SMLAuthProvider:      strings.ToLower(getenv("SML_AUTH_PROVIDER", "data")),
+		SMLAuthDataGroup:     strings.ToLower(getenv("SML_AUTH_DATAGROUP", "sml")),
+		LocalAuthFallback:    parseBool(getenv("PAPERLESS_LOCAL_AUTH_FALLBACK_ENABLED", "false")),
+		SMLSignatureSync:     parseBool(getenv("SML_SIGNATURE_SYNC_ENABLED", "true")),
+		SMLReadinessRegistry: parseBool(getenv("SML_TENANT_READINESS_REGISTRY_ENABLED", "true")),
+		FileStorageDir:       getenv("FILE_STORAGE_DIR", "/app/uploads"),
+		PublicBaseURL:        strings.TrimRight(getenv("PUBLIC_BASE_URL", ""), "/"),
+		TelegramBotToken:     getenv("TELEGRAM_BOT_TOKEN", ""),
 		SeedSuperAdmin: models.SeedUser{
 			DisplayName: getenv("SEED_SUPERADMIN_NAME", "System Administrator"),
 			Username:    getenv("SEED_SUPERADMIN_USERNAME", "superadmin"),

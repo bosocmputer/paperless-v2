@@ -1,28 +1,54 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/config"
+	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 	"github.com/bosocmputer/paperless-v2/backend/internal/store"
 )
+
+type tenantReadinessRegistryStore interface {
+	ListSMLTenantReadiness(context.Context, string, string, []string) (map[string]models.SMLTenantReadinessRegistryEntry, error)
+	GetSMLTenantReadiness(context.Context, string, string, string) (models.SMLTenantReadinessRegistryEntry, bool, error)
+	MarkSMLTenantReadinessChecking(context.Context, string, string, string, int) error
+	SaveSMLTenantReadiness(context.Context, string, string, string, models.SMLTenantReadiness, int) (models.SMLTenantReadinessRegistryEntry, error)
+	ListSMLTenantReadinessChecksForResume(context.Context, int) ([]models.SMLTenantReadinessRegistryKey, error)
+	InvalidateSMLTenantReadiness(context.Context, string, string, string, models.SMLTenantReadiness, int) error
+	TryAdvisoryLock(context.Context, string) (func(), bool, error)
+}
 
 type Server struct {
 	cfg        config.Config
 	store      *store.Store
 	logger     *slog.Logger
 	httpClient *http.Client
+
+	readinessStore       tenantReadinessRegistryStore
+	readinessQueue       chan tenantReadinessJob
+	readinessPriority    chan tenantReadinessJob
+	readinessSlots       chan struct{}
+	readinessPendingMu   sync.Mutex
+	readinessPending     map[string]struct{}
+	readinessWorkersOnce sync.Once
 }
 
 func NewServer(cfg config.Config, store *store.Store, logger *slog.Logger) *Server {
-	return &Server{
+	server := &Server{
 		cfg:        cfg,
 		store:      store,
 		logger:     logger,
 		httpClient: &http.Client{Timeout: cfg.SMLPaperlessTimeout},
 	}
+	if store != nil {
+		server.readinessStore = store
+	}
+	server.initTenantReadinessQueue()
+	return server
 }
 
 func (s *Server) Routes() http.Handler {
@@ -34,6 +60,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/sml/provision-image-db", s.provisionSMLTenantImageDatabaseForLogin)
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.me)))
 	mux.Handle("POST /api/auth/logout", s.requireAuth(http.HandlerFunc(s.logout)))
+	mux.Handle("POST /api/admin/sml/tenant-readiness/recheck", s.requireSuperAdmin(http.HandlerFunc(s.recheckCurrentSMLTenantReadiness)))
 	mux.Handle("GET /api/users", s.requireSuperAdmin(http.HandlerFunc(s.listUsers)))
 	mux.Handle("POST /api/users/sync-sml", s.requireSuperAdmin(http.HandlerFunc(s.syncSMLUsers)))
 	mux.Handle("POST /api/users", s.requireSuperAdmin(http.HandlerFunc(s.createUser)))

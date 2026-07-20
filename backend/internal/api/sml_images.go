@@ -91,10 +91,14 @@ func (s *Server) replaceSMLDocumentImages(ctx context.Context, docNo string, ren
 		return nil, fmt.Errorf("cannot parse SML response")
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, newSMLRequestError(payload.Error, payload.Message, resp.Status)
+		requestErr := newSMLRequestError(payload.Error, payload.Message, resp.Status)
+		s.invalidateTenantReadinessForStructuralError(ctx, requestErr)
+		return nil, requestErr
 	}
 	if !payload.Success {
-		return nil, newSMLRequestError(payload.Error, payload.Message, "SML request failed")
+		requestErr := newSMLRequestError(payload.Error, payload.Message, "SML request failed")
+		s.invalidateTenantReadinessForStructuralError(ctx, requestErr)
+		return nil, requestErr
 	}
 
 	return map[string]any{

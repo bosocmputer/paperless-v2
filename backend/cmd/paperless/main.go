@@ -45,6 +45,7 @@ func main() {
 
 	apiServer := api.NewServer(cfg, db, logger)
 	apiServer.StartAutoFinalizeSweeper(ctx)
+	apiServer.StartTenantReadinessRegistry(ctx)
 
 	readTimeout := 30 * time.Second
 	writeTimeout := cfg.SMLPaperlessTimeout + 15*time.Second

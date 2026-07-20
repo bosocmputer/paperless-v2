@@ -59,7 +59,25 @@ func TestLoadAllowsDevelopmentDefaults(t *testing.T) {
 	t.Setenv("APP_CORS_ORIGINS", "*")
 	t.Setenv("PAPERLESS_LOCAL_AUTH_FALLBACK_ENABLED", "true")
 
-	if _, err := Load(); err != nil {
+	cfg, err := Load()
+	if err != nil {
 		t.Fatalf("expected development defaults to load, got %v", err)
+	}
+	if !cfg.SMLReadinessRegistry {
+		t.Fatal("SML tenant readiness registry should be enabled by default")
+	}
+}
+
+func TestLoadCanDisableSMLTenantReadinessRegistry(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", "postgres://paperless:paperless@localhost:5432/paperless?sslmode=disable")
+	t.Setenv("SML_TENANT_READINESS_REGISTRY_ENABLED", "false")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SMLReadinessRegistry {
+		t.Fatal("SML tenant readiness registry should respect the disabled feature flag")
 	}
 }

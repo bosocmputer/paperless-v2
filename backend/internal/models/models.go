@@ -899,14 +899,34 @@ type SMLAuthDatabase struct {
 }
 
 type SMLTenantReadiness struct {
-	OK            bool                  `json:"ok"`
-	Status        string                `json:"status"`
-	Message       string                `json:"message"`
-	Tenant        string                `json:"tenant"`
-	ImageDatabase string                `json:"imageDatabase"`
-	Template      string                `json:"template,omitempty"`
-	Checks        []SMLTenantReadyCheck `json:"checks,omitempty"`
-	Issues        []SMLTenantReadyIssue `json:"issues,omitempty"`
+	OK                  bool                  `json:"ok"`
+	Status              string                `json:"status"`
+	Message             string                `json:"message"`
+	Tenant              string                `json:"tenant"`
+	ImageDatabase       string                `json:"imageDatabase"`
+	Template            string                `json:"template,omitempty"`
+	Checks              []SMLTenantReadyCheck `json:"checks,omitempty"`
+	Issues              []SMLTenantReadyIssue `json:"issues,omitempty"`
+	RegistryStatus      string                `json:"registryStatus,omitempty"`
+	VerifiedAt          *time.Time            `json:"verifiedAt,omitempty"`
+	IsChecking          bool                  `json:"isChecking,omitempty"`
+	Source              string                `json:"source,omitempty"`
+	VerificationVersion int                   `json:"verificationVersion,omitempty"`
+}
+
+type SMLTenantReadinessRegistryKey struct {
+	Provider  string
+	DataGroup string
+	Tenant    string
+}
+
+type SMLTenantReadinessRegistryEntry struct {
+	SMLTenantReadinessRegistryKey
+	RegistryStatus      string
+	Readiness           SMLTenantReadiness
+	VerificationVersion int
+	VerifiedAt          *time.Time
+	UpdatedAt           time.Time
 }
 
 type SMLTenantReadyCheck struct {

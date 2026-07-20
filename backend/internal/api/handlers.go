@@ -113,8 +113,34 @@ func (s *Server) verifySMLTenantReadinessForLogin(w http.ResponseWriter, r *http
 	}
 
 	tenant := selectedDatabase.Tenant
-	readiness, err := s.fetchSMLTenantReadiness(r.Context(), tenant)
+	if !s.cfg.SMLReadinessRegistry || s.readinessStore == nil {
+		readiness, readinessErr := s.fetchSMLTenantReadiness(r.Context(), tenant)
+		if readinessErr != nil {
+			s.logger.Warn("SML tenant readiness verification failed", "error", readinessErr, "tenant", tenant, "username", req.Username)
+			writeJSON(w, http.StatusOK, models.SMLTenantVerifyResponse{Readiness: tenantReadinessFromVerificationError(tenant, readinessErr)})
+			return
+		}
+		s.logger.Info("SML tenant readiness verified during login", "tenant", tenant, "status", readiness.Status, "ready", readiness.OK, "username", req.Username)
+		writeJSON(w, http.StatusOK, models.SMLTenantVerifyResponse{Readiness: readiness})
+		return
+	}
+
+	job := tenantReadinessJob{SMLTenantReadinessRegistryKey: models.SMLTenantReadinessRegistryKey{
+		Provider:  firstNonEmpty(smlResult.Provider, s.cfg.SMLAuthProvider),
+		DataGroup: firstNonEmpty(selectedDatabase.DataGroup, smlResult.DataGroup, s.cfg.SMLAuthDataGroup),
+		Tenant:    tenant,
+	}}
+	current, exists, err := s.readinessStore.GetSMLTenantReadiness(r.Context(), job.Provider, job.DataGroup, job.Tenant)
 	if err != nil {
+		s.logger.Warn("load SML tenant readiness registry failed", "error", err, "tenant", tenant, "username", req.Username)
+		writeError(w, http.StatusServiceUnavailable, "tenant_readiness_registry_failed", "Cannot load database readiness right now.")
+		return
+	}
+	job.Force = exists && current.RegistryStatus == "not_ready"
+	checkCtx, cancel := context.WithTimeout(r.Context(), s.tenantReadinessCheckTimeout())
+	defer cancel()
+	readiness, err := s.verifyAndPersistTenantReadiness(checkCtx, job, true)
+	if err != nil && readiness.RegistryStatus != "checking" {
 		s.logger.Warn("SML tenant readiness verification failed", "error", err, "tenant", tenant, "username", req.Username)
 		writeJSON(w, http.StatusOK, models.SMLTenantVerifyResponse{Readiness: tenantReadinessFromVerificationError(tenant, err)})
 		return
@@ -168,6 +194,13 @@ func (s *Server) provisionSMLTenantImageDatabaseForLogin(w http.ResponseWriter, 
 		return
 	}
 	if readiness.OK {
+		if s.cfg.SMLReadinessRegistry && s.readinessStore != nil {
+			if _, saveErr := s.readinessStore.SaveSMLTenantReadiness(r.Context(), smlResult.Provider, smlResult.SelectedDatabase.DataGroup, tenant, readiness, tenantReadinessVerificationVersion); saveErr != nil {
+				s.logger.Error("save ready tenant after provision check failed", "error", saveErr, "tenant", tenant)
+				writeError(w, http.StatusServiceUnavailable, "tenant_readiness_registry_failed", "Database is ready, but PaperLess could not save the readiness result.")
+				return
+			}
+		}
 		writeJSON(w, http.StatusOK, models.SMLTenantProvisionResponse{
 			Provisioned: false,
 			Readiness:   readiness,
@@ -186,8 +219,18 @@ func (s *Server) provisionSMLTenantImageDatabaseForLogin(w http.ResponseWriter, 
 		return
 	}
 	if !provision.Readiness.OK {
+		if s.cfg.SMLReadinessRegistry && s.readinessStore != nil {
+			_, _ = s.readinessStore.SaveSMLTenantReadiness(r.Context(), smlResult.Provider, smlResult.SelectedDatabase.DataGroup, tenant, provision.Readiness, tenantReadinessVerificationVersion)
+		}
 		writeError(w, http.StatusFailedDependency, "tenant_still_not_ready", tenantReadinessLoginMessage(provision.Readiness))
 		return
+	}
+	if s.cfg.SMLReadinessRegistry && s.readinessStore != nil {
+		if _, saveErr := s.readinessStore.SaveSMLTenantReadiness(r.Context(), smlResult.Provider, smlResult.SelectedDatabase.DataGroup, tenant, provision.Readiness, tenantReadinessVerificationVersion); saveErr != nil {
+			s.logger.Error("save provisioned tenant readiness failed", "error", saveErr, "tenant", tenant)
+			writeError(w, http.StatusServiceUnavailable, "tenant_readiness_registry_failed", "Image database was prepared, but PaperLess could not save the readiness result.")
+			return
+		}
 	}
 	s.logger.Info("SML tenant image DB provisioned", "tenant", tenant, "imageDatabase", provision.Readiness.ImageDatabase, "username", req.Username, "provisioned", provision.Provisioned)
 	writeJSON(w, http.StatusOK, provision)
@@ -195,6 +238,11 @@ func (s *Server) provisionSMLTenantImageDatabaseForLogin(w http.ResponseWriter, 
 
 func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, req models.LoginRequest, result smlAuthResult) {
 	if req.DatabaseName == "" {
+		if err := s.mergeSMLDatabaseReadiness(r.Context(), &result); err != nil {
+			s.logger.Error("load shared SML tenant readiness failed", "error", err, "username", req.Username)
+			writeError(w, http.StatusServiceUnavailable, "tenant_readiness_registry_failed", "Cannot load database readiness right now.")
+			return
+		}
 		writeJSON(w, http.StatusOK, models.LoginResponse{
 			DatabaseRequired: true,
 			Databases:        result.Databases,
@@ -206,7 +254,12 @@ func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, r
 		writeError(w, http.StatusForbidden, "database_not_allowed", "Database is not allowed for this user.")
 		return
 	}
-	readiness, err := s.fetchSMLTenantReadiness(r.Context(), result.SelectedDatabase.Tenant)
+	readiness, err := s.selectedTenantReadiness(
+		r.Context(),
+		firstNonEmpty(result.Provider, s.cfg.SMLAuthProvider),
+		firstNonEmpty(result.SelectedDatabase.DataGroup, result.DataGroup, s.cfg.SMLAuthDataGroup),
+		result.SelectedDatabase.Tenant,
+	)
 	if err != nil {
 		s.logger.Warn("SML tenant readiness check failed", "error", err, "tenant", result.SelectedDatabase.Tenant)
 		writeError(w, http.StatusBadGateway, "tenant_readiness_failed", "Cannot verify selected database readiness right now.")
@@ -282,6 +335,10 @@ func tenantReadinessLoginMessage(readiness models.SMLTenantReadiness) string {
 	}
 	imageDatabase := strings.TrimSpace(readiness.ImageDatabase)
 	switch readiness.Status {
+	case "unverified":
+		return "ฐานข้อมูลนี้ยังไม่เคยตรวจ ระบบกำลังตรวจสอบให้อัตโนมัติ"
+	case "checking":
+		return "กำลังตรวจสอบความพร้อมของฐานข้อมูล กรุณารอสักครู่"
 	case "image_db_missing":
 		if imageDatabase != "" {
 			return "ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess: ไม่พบฐานข้อมูล " + imageDatabase + " กรุณาแจ้งผู้ดูแลระบบ SML"

@@ -2,7 +2,7 @@
 import FloatingConfigurator from '@/components/FloatingConfigurator.vue';
 import { api } from '@/services/api';
 import { authStore } from '@/stores/auth';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 
@@ -30,14 +30,22 @@ const databaseOptions = computed(() =>
 );
 const selectedDatabaseOption = computed(() => databaseOptions.value.find((option) => option.value === selectedDatabase.value) || null);
 const selectedReadiness = computed(() => selectedDatabaseOption.value?.readiness || null);
-const selectedDatabaseReady = computed(() => authSource.value === 'local' || selectedReadiness.value?.ok === true);
+const selectedDatabaseReady = computed(() => authSource.value.startsWith('local') || selectedReadiness.value?.ok === true);
 const canProvisionSelectedDatabase = computed(
     () => authSource.value !== 'local' && step.value === 'database' && Boolean(selectedDatabase.value) && ['image_db_missing', 'doc_images_table_missing'].includes(selectedReadiness.value?.status)
 );
-const canVerifySelectedDatabase = computed(() => authSource.value !== 'local' && step.value === 'database' && Boolean(selectedDatabase.value) && !selectedReadiness.value?.ok);
+const canVerifySelectedDatabase = computed(
+    () =>
+        authSource.value !== 'local' &&
+        step.value === 'database' &&
+        Boolean(selectedDatabase.value) &&
+        (automaticVerificationFailed.value || ['not_ready', 'legacy_unknown'].includes(readinessState(selectedReadiness.value)))
+);
 const credentialsComplete = computed(() => username.value.trim() !== '' && password.value !== '');
 const canSubmit = computed(() => !provisioning.value && !verifying.value && (step.value === 'database' ? Boolean(selectedDatabase.value) && selectedDatabaseReady.value : credentialsComplete.value));
 let readinessRequestSequence = 0;
+let automaticVerificationKey = '';
+const automaticVerificationFailed = ref(false);
 
 function databaseValue(database) {
     return database.databaseName || database.tenant || database.dataCode;
@@ -52,10 +60,13 @@ function databaseLabel(database) {
 }
 
 function readinessLabel(readiness) {
-    if (!readiness) return 'รอตรวจ';
-    if (readiness.ok) return 'พร้อมใช้งาน';
+    const state = readinessState(readiness);
+    if (state === 'ready') return 'พร้อมใช้งาน';
+    if (state === 'checking') return 'กำลังตรวจสอบ';
+    if (state === 'unverified') return 'ยังไม่เคยตรวจ';
+    if (state === 'legacy_unknown') return 'ต้องตรวจสอบ';
+    if (!readiness) return 'ยังไม่เคยตรวจ';
     const status = readiness.status || '';
-    if (status === 'unknown') return 'ต้องตรวจสอบ';
     if (status === 'image_db_missing') return 'ไม่พบ image DB';
     if (status === 'doc_images_table_missing') return 'ไม่พบตารางรูป';
     if (status === 'main_db_missing') return 'ไม่พบ DB หลัก';
@@ -75,22 +86,45 @@ function readinessLabel(readiness) {
 }
 
 function readinessSeverity(readiness) {
-    if (!readiness) return 'secondary';
-    if (readiness.ok) return 'success';
-    if (readiness.status === 'unknown') return 'warn';
+    const state = readinessState(readiness);
+    if (state === 'ready') return 'success';
+    if (state === 'checking') return 'info';
+    if (state === 'unverified') return 'secondary';
+    if (state === 'legacy_unknown') return 'warn';
     return 'danger';
 }
 
 function readinessDetail(readiness) {
+    const state = readinessState(readiness);
+    if (state === 'ready') return `พร้อมใช้งาน${readiness.imageDatabase ? ` · ${readiness.imageDatabase}` : ''}`;
+    if (state === 'checking') return 'กำลังตรวจสอบความพร้อมครั้งแรก กรุณารอสักครู่';
+    if (state === 'unverified') return 'ฐานข้อมูลนี้ยังไม่เคยตรวจ ระบบจะตรวจให้อัตโนมัติ';
+    if (state === 'legacy_unknown') return 'พบชื่อฐานข้อมูลแล้ว แต่ยังไม่ได้ตรวจการเชื่อมต่อและ schema กรุณากด “ตรวจสอบอีกครั้ง”';
     if (!readiness) return '';
-    if (readiness.ok) return `ตรวจแล้วพร้อมใช้งาน${readiness.imageDatabase ? ` · ${readiness.imageDatabase}` : ''}`;
-    if (readiness.status === 'unknown') return 'พบชื่อฐานข้อมูลแล้ว แต่ยังไม่ได้ตรวจการเชื่อมต่อและ schema กรุณากด “ตรวจสอบอีกครั้ง”';
     if (Array.isArray(readiness.issues) && readiness.issues.length > 0) return `ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess · พบ ${readiness.issues.length} ปัญหา`;
     if (readiness.status === 'image_db_missing') return `ไม่พบฐานข้อมูล ${readiness.imageDatabase || `${readiness.tenant || 'ฐานนี้'}_images`} กรุณาแจ้งผู้ดูแลระบบ SML`;
     if (readiness.status === 'doc_images_table_missing') return `ฐานข้อมูล ${readiness.imageDatabase || 'รูปเอกสาร'} ยังไม่มีตาราง public.sml_doc_images กรุณาแจ้งผู้ดูแลระบบ SML`;
     if (readiness.status === 'main_db_missing') return `ไม่พบฐานข้อมูล SML หลัก${readiness.tenant ? ` ${readiness.tenant}` : ''} กรุณาแจ้งผู้ดูแลระบบ SML`;
     if (readiness.status === 'schema_mismatch') return `schema ตารางรูปเอกสาร${readiness.imageDatabase ? ` ของ ${readiness.imageDatabase}` : ''} ไม่ตรงกับมาตรฐาน กรุณาแจ้งผู้ดูแลระบบ SML แล้วกดตรวจสอบอีกครั้ง`;
     return readiness.message || 'ยังตรวจความพร้อมไม่ได้ในขณะนี้';
+}
+
+function readinessState(readiness) {
+    if (readiness?.ok || readiness?.registryStatus === 'ready') return 'ready';
+    if (readiness?.registryStatus === 'checking' || readiness?.isChecking || readiness?.status === 'checking') return 'checking';
+    if (readiness?.registryStatus === 'unverified' || readiness?.status === 'unverified') return 'unverified';
+    if (readiness?.status === 'unknown' && !readiness?.registryStatus && readiness?.source !== 'registry') return 'legacy_unknown';
+    if (!readiness) return 'unverified';
+    return 'not_ready';
+}
+
+function readinessMessageSeverity(readiness) {
+    const state = readinessState(readiness);
+    if (state === 'ready') return 'success';
+    if (state === 'checking') return 'info';
+    if (state === 'unverified') return 'secondary';
+    if (state === 'legacy_unknown') return 'warn';
+    return 'error';
 }
 
 function readinessOwnerLabel(owner) {
@@ -130,6 +164,8 @@ function resetDatabaseStep() {
     databases.value = [];
     selectedDatabase.value = '';
     authSource.value = '';
+    automaticVerificationKey = '';
+    automaticVerificationFailed.value = false;
     error.value = '';
 }
 
@@ -166,24 +202,36 @@ async function submit() {
     }
 }
 
-async function verifySelectedDatabase() {
+async function verifySelectedDatabase({ automatic = false } = {}) {
     error.value = '';
-    if (!canVerifySelectedDatabase.value) return;
+    const state = readinessState(selectedReadiness.value);
+    if (automatic) {
+        if (!['unverified', 'checking'].includes(state)) return;
+    } else if (!canVerifySelectedDatabase.value) {
+        return;
+    }
     const databaseName = selectedDatabase.value;
+    const verificationKey = `${databaseName}:${state}`;
+    if (automatic && automaticVerificationKey === verificationKey) return;
+    if (automatic) automaticVerificationKey = verificationKey;
+    automaticVerificationFailed.value = false;
     const requestSequence = ++readinessRequestSequence;
     verifying.value = true;
     try {
         const result = await api.verifySMLDatabaseReadiness(username.value.trim(), password.value, databaseName, authSource.value || 'sml');
         if (requestSequence !== readinessRequestSequence || databaseName !== selectedDatabase.value) return;
         if (result.readiness) updateDatabaseReadiness(databaseName, result.readiness);
-        toast.add({
-            severity: result.readiness?.ok ? 'success' : 'warn',
-            summary: result.readiness?.ok ? 'Database พร้อมใช้งาน' : 'ตรวจสอบแล้ว แต่ยังไม่พร้อม',
-            detail: readinessDetail(result.readiness),
-            life: 4000
-        });
+        if (!automatic) {
+            toast.add({
+                severity: result.readiness?.ok ? 'success' : 'warn',
+                summary: result.readiness?.ok ? 'Database พร้อมใช้งาน' : 'ตรวจสอบแล้ว แต่ยังไม่พร้อม',
+                detail: readinessDetail(result.readiness),
+                life: 4000
+            });
+        }
     } catch (err) {
         if (requestSequence !== readinessRequestSequence || databaseName !== selectedDatabase.value) return;
+        automaticVerificationFailed.value = true;
         error.value = err.message;
         toast.add({
             severity: 'error',
@@ -195,6 +243,13 @@ async function verifySelectedDatabase() {
         if (requestSequence === readinessRequestSequence) verifying.value = false;
     }
 }
+
+watch(selectedDatabase, () => {
+    automaticVerificationKey = '';
+    automaticVerificationFailed.value = false;
+    if (step.value !== 'database' || !selectedDatabase.value) return;
+    void verifySelectedDatabase({ automatic: true });
+});
 
 async function provisionSelectedDatabase() {
     error.value = '';
@@ -288,7 +343,7 @@ async function provisionSelectedDatabase() {
                                     <span v-else>{{ placeholder || value }}</span>
                                 </template>
                             </Select>
-                            <Message v-if="selectedReadiness" :severity="selectedReadiness.ok ? 'success' : selectedReadiness.status === 'unknown' ? 'warn' : 'error'" class="mb-4">
+                            <Message v-if="selectedReadiness" :severity="readinessMessageSeverity(selectedReadiness)" class="mb-4">
                                 <div class="flex flex-col gap-2">
                                     <div class="font-medium">{{ readinessDetail(selectedReadiness) }}</div>
                                     <ul v-if="readinessIssues(selectedReadiness).length" class="m-0 pl-5 flex flex-col gap-2">

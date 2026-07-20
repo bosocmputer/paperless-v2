@@ -159,6 +159,23 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS sml_tenant_readiness_registry (
+    provider TEXT NOT NULL,
+    data_group TEXT NOT NULL,
+    sml_tenant TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'unverified'
+        CHECK (status IN ('unverified', 'checking', 'ready', 'not_ready')),
+    result JSONB NOT NULL DEFAULT '{}'::jsonb,
+    verification_version INTEGER NOT NULL DEFAULT 1 CHECK (verification_version > 0),
+    verified_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (provider, data_group, sml_tenant)
+);
+
+CREATE INDEX IF NOT EXISTS sml_tenant_readiness_registry_status_idx
+ON sml_tenant_readiness_registry (status, updated_at);
+
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE key = '20260705_sml_role_redesign') THEN

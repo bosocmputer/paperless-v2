@@ -304,10 +304,14 @@ func (s *Server) fetchSMLDocFormats(ctx context.Context, screenCode string) ([]m
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, errors.New(smlErrorMessage(payload.Error, payload.Message, resp.Status))
+		requestErr := newSMLRequestError(payload.Error, payload.Message, resp.Status)
+		s.invalidateTenantReadinessForStructuralError(ctx, requestErr)
+		return nil, requestErr
 	}
 	if !payload.Success {
-		return nil, errors.New(smlErrorMessage(payload.Error, payload.Message, "SML request failed"))
+		requestErr := newSMLRequestError(payload.Error, payload.Message, "SML request failed")
+		s.invalidateTenantReadinessForStructuralError(ctx, requestErr)
+		return nil, requestErr
 	}
 
 	for i := range payload.Data {
@@ -526,10 +530,14 @@ func (s *Server) lockSMLDocument(ctx context.Context, docNo string) (map[string]
 		return nil, fmt.Errorf("cannot parse SML response")
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, errors.New(smlErrorMessage(payload.Error, payload.Message, resp.Status))
+		requestErr := newSMLRequestError(payload.Error, payload.Message, resp.Status)
+		s.invalidateTenantReadinessForStructuralError(ctx, requestErr)
+		return nil, requestErr
 	}
 	if !payload.Success {
-		return nil, errors.New(smlErrorMessage(payload.Error, payload.Message, "SML request failed"))
+		requestErr := newSMLRequestError(payload.Error, payload.Message, "SML request failed")
+		s.invalidateTenantReadinessForStructuralError(ctx, requestErr)
+		return nil, requestErr
 	}
 	return map[string]any{
 		"docNo":         payload.Data.DocNo,

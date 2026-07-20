@@ -63,6 +63,8 @@ When a saved signature is available, an internal signer must explicitly choose e
 
 Set `SML_SIGNATURE_SYNC_ENABLED=false` to disable SML signature sync and saved-signature selection without affecting the normal drawing flow. Deploy the SML API before the PaperLess backend/frontend when enabling this feature.
 
+`SML_TENANT_READINESS_REGISTRY_ENABLED=true` stores each SML database readiness result once in the PaperLess database and shares it with every authorized SML user in that store. A ready result does not expire; credentials and database permissions are still checked against SML on every login. Set the flag to `false` to restore the legacy live-check behavior.
+
 ## Tenant Model
 
 The selected SML database becomes the active tenant in the JWT/session:
