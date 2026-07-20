@@ -12,22 +12,23 @@
 
 The server has other projects. Keep PaperLess isolated and expose only the approved port.
 
-## Current Customer Status - 2026-07-16
+The same release is also deployed for Wirat Home Mart at `http://43.240.113.44:8691`, using stack path `/data/paperless` and Compose project/container prefix `paperless-wirat`.
 
-- PaperLess API/Web release: `20260716153839` (`fac91c7`)
-- SML API hotfix release: `20260716155654` (`4232d27`)
-- Status: deployed with SML saved-signature sync enabled; waiting for customer confirmation sync and signing test
-- Post-deploy evidence: `/data/paperless/releases/20260716155654/postdeploy-checks.txt`
+## Current Customer Status - 2026-07-20
+
+- PaperLess API/Web release: `20260720101905` (`d13867f`) on both customer installations
+- SML API release retained: `a51c7e9`; it was not restarted by this deployment
+- Shared SML tenant readiness registry is enabled independently in each PaperLess database
+- Post-deploy evidence: `/data/paperless/releases/20260720101905/postdeploy-checks.txt` on each server
 
 Latest smoke results:
 
-- Web container was running; PaperLess API, SML API, and PaperLess DB containers were healthy.
-- `http://45.122.49.250:8095/` and `http://45.122.49.250:8095/health/ready` returned HTTP 200.
-- Login returned 27 SML databases and selected tenant `STPT` successfully.
-- Saved-signature dry-run found one valid new signature for `superadmin`; no sync was applied during deployment QA.
-- The protected SML binary endpoint returned the real JPEG (`9000x5284`) successfully without exposing it in list responses or logs.
-- Browser smoke confirmed the Sync button and SML signature column on `/admin/users`, with no console errors.
-- Build cache was removed after deployment; current and immediate previous service images remain for rollback.
+- Both public URLs and `/health/ready` returned HTTP 200 after deployment.
+- PaperLess API and DB were healthy; existing DB and SML API container IDs/restart counts were unchanged on both servers.
+- The additive `sml_tenant_readiness_registry` migration and feature flag were verified on both installations.
+- On the Pui installation, STPT moved from `unverified` to `ready`; a second login returned `source=registry`, and selected-database login issued a valid session without another full schema check.
+- All 27 databases visible to the test account received their first registry result with no fatal/panic log entries. Non-ready databases remain blocked with their stored SML issue until a user retries after SML repair.
+- The active `d13867f` and previous `2aba190` API/Web images remain tagged for rollback. Temporary build artifacts were removed after the release.
 
 Known tenant readiness note: `PTTP-TAX` was still missing its main tenant DB during the latest login smoke and must remain blocked until SML/admin database setup is complete.
 
