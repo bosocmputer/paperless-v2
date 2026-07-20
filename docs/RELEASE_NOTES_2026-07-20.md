@@ -29,3 +29,14 @@
 - Frontend build and backend tests are release gates before image publication.
 - Customer servers pull the same published image; source code and Docker build cache are no longer copied to or generated on either production server.
 - Production deployment remains manual and service-scoped so an ordinary push cannot restart customer systems automatically.
+
+## Central Pipeline Deployment
+
+- Commit: `c3acecb`
+- Release ID: `20260720112943`
+- Web image: `ghcr.io/bosocmputer/paperless-web:c3acecb`
+- Web digest: `sha256:1ea21b709330d22a0c80a87283e611c5a3f81f9ee602e05815ad2f7db95289f8`
+- Deployed the same `linux/amd64` Web image to Pui and Wirat Home Mart by `docker pull`; PaperLess API, DB, and SML API were not restarted.
+- Root, live, and ready checks returned HTTP 200 on both installations.
+- Browser QA passed on desktop and 390px mobile with no horizontal overflow or console errors.
+- Deployment evidence and rollback Compose snapshots are stored under `/data/paperless/releases/20260720112943/` on each server.
