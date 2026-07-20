@@ -2,7 +2,7 @@
 import FloatingConfigurator from '@/components/FloatingConfigurator.vue';
 import { api } from '@/services/api';
 import { authStore } from '@/stores/auth';
-import { computed, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 
@@ -19,6 +19,11 @@ const step = ref('credentials');
 const databases = ref([]);
 const selectedDatabase = ref('');
 const authSource = ref('');
+const verificationCompleted = ref(0);
+const verificationTotal = ref(0);
+const verificationCurrent = ref([]);
+const verificationFailed = ref(0);
+const verificationHasRun = ref(false);
 
 const databaseOptions = computed(() =>
     databases.value.map((database) => ({
@@ -34,18 +39,25 @@ const selectedDatabaseReady = computed(() => authSource.value.startsWith('local'
 const canProvisionSelectedDatabase = computed(
     () => authSource.value !== 'local' && step.value === 'database' && Boolean(selectedDatabase.value) && ['image_db_missing', 'doc_images_table_missing'].includes(selectedReadiness.value?.status)
 );
-const canVerifySelectedDatabase = computed(
-    () =>
-        authSource.value !== 'local' &&
-        step.value === 'database' &&
-        Boolean(selectedDatabase.value) &&
-        (automaticVerificationFailed.value || ['not_ready', 'legacy_unknown'].includes(readinessState(selectedReadiness.value)))
-);
+const canVerifyDatabases = computed(() => authSource.value !== 'local' && step.value === 'database' && databaseOptions.value.length > 0);
+const verificationProgress = computed(() => {
+    if (verificationTotal.value > 0) return Math.round((verificationCompleted.value / verificationTotal.value) * 100);
+    return verificationHasRun.value ? 100 : 0;
+});
+const verificationCurrentLabel = computed(() => verificationCurrent.value.map((item) => item.label).join(' และ '));
+const verificationSummary = computed(() => {
+    const summary = { ready: 0, notReady: 0, unchecked: 0 };
+    for (const option of databaseOptions.value) {
+        const state = readinessState(option.readiness);
+        if (state === 'ready') summary.ready += 1;
+        else if (state === 'unverified' || state === 'checking' || state === 'legacy_unknown') summary.unchecked += 1;
+        else summary.notReady += 1;
+    }
+    return summary;
+});
 const credentialsComplete = computed(() => username.value.trim() !== '' && password.value !== '');
 const canSubmit = computed(() => !provisioning.value && !verifying.value && (step.value === 'database' ? Boolean(selectedDatabase.value) && selectedDatabaseReady.value : credentialsComplete.value));
 let readinessRequestSequence = 0;
-let automaticVerificationKey = '';
-const automaticVerificationFailed = ref(false);
 
 function databaseValue(database) {
     return database.databaseName || database.tenant || database.dataCode;
@@ -98,8 +110,8 @@ function readinessDetail(readiness) {
     const state = readinessState(readiness);
     if (state === 'ready') return `พร้อมใช้งาน${readiness.imageDatabase ? ` · ${readiness.imageDatabase}` : ''}`;
     if (state === 'checking') return 'กำลังตรวจสอบความพร้อมครั้งแรก กรุณารอสักครู่';
-    if (state === 'unverified') return 'ฐานข้อมูลนี้ยังไม่เคยตรวจ ระบบจะตรวจให้อัตโนมัติ';
-    if (state === 'legacy_unknown') return 'พบชื่อฐานข้อมูลแล้ว แต่ยังไม่ได้ตรวจการเชื่อมต่อและ schema กรุณากด “ตรวจสอบอีกครั้ง”';
+    if (state === 'unverified') return 'ฐานข้อมูลนี้ยังไม่เคยตรวจ กด “ตรวจสอบฐานข้อมูลทั้งหมด” เพื่อตรวจครั้งเดียว';
+    if (state === 'legacy_unknown') return 'พบชื่อฐานข้อมูลแล้ว แต่ยังไม่ได้ตรวจการเชื่อมต่อและ schema';
     if (!readiness) return '';
     if (Array.isArray(readiness.issues) && readiness.issues.length > 0) return `ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess · พบ ${readiness.issues.length} ปัญหา`;
     if (readiness.status === 'image_db_missing') return `ไม่พบฐานข้อมูล ${readiness.imageDatabase || `${readiness.tenant || 'ฐานนี้'}_images`} กรุณาแจ้งผู้ดูแลระบบ SML`;
@@ -164,9 +176,16 @@ function resetDatabaseStep() {
     databases.value = [];
     selectedDatabase.value = '';
     authSource.value = '';
-    automaticVerificationKey = '';
-    automaticVerificationFailed.value = false;
+    resetVerificationProgress();
     error.value = '';
+}
+
+function resetVerificationProgress() {
+    verificationCompleted.value = 0;
+    verificationTotal.value = 0;
+    verificationCurrent.value = [];
+    verificationFailed.value = 0;
+    verificationHasRun.value = false;
 }
 
 async function submit() {
@@ -178,6 +197,7 @@ async function submit() {
         if (result.databaseRequired) {
             databases.value = result.databases || [];
             authSource.value = result.authSource || 'sml';
+            resetVerificationProgress();
             selectedDatabase.value = databaseOptions.value.find((option) => option.value === 'sml1_2026')?.value || databaseOptions.value[0]?.value || '';
             step.value = 'database';
             if (!selectedDatabase.value) {
@@ -202,54 +222,84 @@ async function submit() {
     }
 }
 
-async function verifySelectedDatabase({ automatic = false } = {}) {
+async function verifyAllDatabases() {
     error.value = '';
-    const state = readinessState(selectedReadiness.value);
-    if (automatic) {
-        if (!['unverified', 'checking'].includes(state)) return;
-    } else if (!canVerifySelectedDatabase.value) {
+    if (!canVerifyDatabases.value || verifying.value) return;
+
+    const targets = databaseOptions.value.filter((option) => readinessState(option.readiness) !== 'ready');
+    verificationHasRun.value = true;
+    verificationCompleted.value = 0;
+    verificationTotal.value = targets.length;
+    verificationCurrent.value = [];
+    verificationFailed.value = 0;
+
+    if (targets.length === 0) {
+        toast.add({
+            severity: 'success',
+            summary: 'Database พร้อมใช้งานครบแล้ว',
+            detail: `ตรวจสอบแล้ว ${databaseOptions.value.length} database`,
+            life: 3000
+        });
         return;
     }
-    const databaseName = selectedDatabase.value;
-    const verificationKey = `${databaseName}:${state}`;
-    if (automatic && automaticVerificationKey === verificationKey) return;
-    if (automatic) automaticVerificationKey = verificationKey;
-    automaticVerificationFailed.value = false;
+
     const requestSequence = ++readinessRequestSequence;
+    const queue = [...targets];
     verifying.value = true;
-    try {
-        const result = await api.verifySMLDatabaseReadiness(username.value.trim(), password.value, databaseName, authSource.value || 'sml');
-        if (requestSequence !== readinessRequestSequence || databaseName !== selectedDatabase.value) return;
-        if (result.readiness) updateDatabaseReadiness(databaseName, result.readiness);
-        if (!automatic) {
-            toast.add({
-                severity: result.readiness?.ok ? 'success' : 'warn',
-                summary: result.readiness?.ok ? 'Database พร้อมใช้งาน' : 'ตรวจสอบแล้ว แต่ยังไม่พร้อม',
-                detail: readinessDetail(result.readiness),
-                life: 4000
+
+    async function worker() {
+        while (requestSequence === readinessRequestSequence) {
+            const target = queue.shift();
+            if (!target) return;
+            const databaseName = target.value;
+            verificationCurrent.value = [...verificationCurrent.value, { value: target.value, label: target.label }];
+            updateDatabaseReadiness(databaseName, {
+                ...(target.readiness || {}),
+                ok: false,
+                status: 'checking',
+                registryStatus: 'checking',
+                isChecking: true,
+                message: 'กำลังตรวจสอบความพร้อมของฐานข้อมูล'
             });
+            try {
+                const result = await api.verifySMLDatabaseReadiness(username.value.trim(), password.value, databaseName, authSource.value || 'sml');
+                if (requestSequence !== readinessRequestSequence) return;
+                if (!result.readiness) throw new Error('ระบบไม่ได้ส่งผลตรวจสอบ Database กลับมา');
+                updateDatabaseReadiness(databaseName, result.readiness);
+                if (!result.readiness.ok) verificationFailed.value += 1;
+            } catch (err) {
+                if (requestSequence !== readinessRequestSequence) return;
+                verificationFailed.value += 1;
+                updateDatabaseReadiness(databaseName, {
+                    ...(target.readiness || {}),
+                    ok: false,
+                    status: 'readiness_service_unavailable',
+                    registryStatus: 'not_ready',
+                    isChecking: false,
+                    message: err.message || 'ยังตรวจความพร้อมไม่ได้ในขณะนี้'
+                });
+            } finally {
+                if (requestSequence === readinessRequestSequence) {
+                    verificationCurrent.value = verificationCurrent.value.filter((item) => item.value !== target.value);
+                    verificationCompleted.value += 1;
+                }
+            }
         }
-    } catch (err) {
-        if (requestSequence !== readinessRequestSequence || databaseName !== selectedDatabase.value) return;
-        automaticVerificationFailed.value = true;
-        error.value = err.message;
-        toast.add({
-            severity: 'error',
-            summary: 'ตรวจสอบ Database ไม่สำเร็จ',
-            detail: err.message,
-            life: 4500
-        });
+    }
+
+    try {
+        await Promise.all([worker(), worker()]);
     } finally {
         if (requestSequence === readinessRequestSequence) verifying.value = false;
     }
+    if (requestSequence !== readinessRequestSequence) return;
+    toast.add({
+        severity: verificationFailed.value > 0 ? 'warn' : 'success',
+        summary: 'ตรวจสอบ Database ครบแล้ว',
+        detail: verificationFailed.value > 0 ? `พร้อมใช้งาน ${verificationSummary.value.ready} จาก ${databaseOptions.value.length} database` : `พร้อมใช้งานครบ ${databaseOptions.value.length} database`,
+        life: 4500
+    });
 }
-
-watch(selectedDatabase, () => {
-    automaticVerificationKey = '';
-    automaticVerificationFailed.value = false;
-    if (step.value !== 'database' || !selectedDatabase.value) return;
-    void verifySelectedDatabase({ automatic: true });
-});
 
 async function provisionSelectedDatabase() {
     error.value = '';
@@ -284,7 +334,7 @@ async function provisionSelectedDatabase() {
 
 <template>
     <FloatingConfigurator />
-    <div class="bg-surface-50 dark:bg-surface-950 flex items-center justify-center min-h-screen min-w-[100vw] overflow-hidden px-4 py-6">
+    <div class="bg-surface-50 dark:bg-surface-950 flex items-center justify-center min-h-screen min-w-[100vw] overflow-x-hidden overflow-y-auto px-4 py-6">
         <div class="flex flex-col items-center justify-center w-full">
             <div class="w-full max-w-[38rem]" style="border-radius: 24px; padding: 0.25rem; background: linear-gradient(180deg, var(--primary-color) 8%, rgba(33, 150, 243, 0) 32%)">
                 <div class="w-full bg-surface-0 dark:bg-surface-900 py-10 px-5 sm:px-8 md:py-14 md:px-14" style="border-radius: 20px">
@@ -343,6 +393,39 @@ async function provisionSelectedDatabase() {
                                     <span v-else>{{ placeholder || value }}</span>
                                 </template>
                             </Select>
+
+                            <div v-if="canVerifyDatabases" class="mb-4 flex flex-col gap-3">
+                                <Button
+                                    type="button"
+                                    label="ตรวจสอบฐานข้อมูลทั้งหมด"
+                                    icon="pi pi-database"
+                                    severity="secondary"
+                                    outlined
+                                    class="w-full"
+                                    :loading="verifying"
+                                    :disabled="loading || provisioning"
+                                    @click="verifyAllDatabases"
+                                />
+
+                                <div v-if="verifying || verificationHasRun" class="rounded-md border border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-800 p-3 flex flex-col gap-3" aria-live="polite">
+                                    <div class="flex items-center justify-between gap-3 text-sm">
+                                        <span v-if="verificationTotal" class="font-medium">ตรวจสอบแล้ว {{ verificationCompleted }}/{{ verificationTotal }}</span>
+                                        <span v-else class="font-medium">พร้อมใช้งานครบ {{ databaseOptions.length }} database</span>
+                                        <span class="text-muted-color">{{ verificationProgress }}%</span>
+                                    </div>
+                                    <ProgressBar :value="verificationProgress" :showValue="false" class="h-2" />
+                                    <div v-if="verifying && verificationCurrent.length" class="flex items-start gap-2 text-sm text-color">
+                                        <i class="pi pi-spin pi-spinner mt-1 text-primary" aria-hidden="true"></i>
+                                        <span class="min-w-0 break-words">กำลังตรวจสอบ {{ verificationCurrentLabel }}</span>
+                                    </div>
+                                    <div v-else class="flex flex-wrap gap-2">
+                                        <Tag :value="`พร้อม ${verificationSummary.ready}`" severity="success" />
+                                        <Tag v-if="verificationSummary.notReady" :value="`ไม่พร้อม ${verificationSummary.notReady}`" severity="danger" />
+                                        <Tag v-if="verificationSummary.unchecked" :value="`ยังไม่ได้ตรวจ ${verificationSummary.unchecked}`" severity="secondary" />
+                                    </div>
+                                </div>
+                            </div>
+
                             <Message v-if="selectedReadiness" :severity="readinessMessageSeverity(selectedReadiness)" class="mb-4">
                                 <div class="flex flex-col gap-2">
                                     <div class="font-medium">{{ readinessDetail(selectedReadiness) }}</div>
@@ -358,21 +441,8 @@ async function provisionSelectedDatabase() {
 
                         <Message v-if="error" severity="error" class="mb-4">{{ error }}</Message>
 
-                        <div v-if="step === 'database' && (canVerifySelectedDatabase || canProvisionSelectedDatabase)" class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                        <div v-if="step === 'database' && canProvisionSelectedDatabase" class="mb-3">
                             <Button
-                                v-if="canVerifySelectedDatabase"
-                                type="button"
-                                label="ตรวจสอบอีกครั้ง"
-                                icon="pi pi-refresh"
-                                severity="secondary"
-                                outlined
-                                class="w-full"
-                                :loading="verifying"
-                                :disabled="loading || provisioning"
-                                @click="verifySelectedDatabase"
-                            />
-                            <Button
-                                v-if="canProvisionSelectedDatabase"
                                 type="button"
                                 label="ตั้งค่า image DB"
                                 icon="pi pi-database"
