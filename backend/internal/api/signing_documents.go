@@ -1027,6 +1027,10 @@ func (s *Server) writeSigningDocumentTransitionError(w http.ResponseWriter, err 
 		writeError(w, http.StatusConflict, "signing_document_status_invalid", "Document status does not allow this action.")
 		return true
 	}
+	if errors.Is(err, store.ErrInternalDocumentPrintRequired) {
+		writeError(w, http.StatusConflict, "internal_document_print_required", "กรุณาพิมพ์ PDF revision ล่าสุดก่อนส่ง")
+		return true
+	}
 	s.logger.Error(message, "error", err)
 	writeError(w, http.StatusInternalServerError, code, message)
 	return true
@@ -1851,6 +1855,10 @@ func (s *Server) retrySigningDocumentLock(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
+	if !requiresSMLFinalization(document) {
+		writeError(w, http.StatusBadRequest, "sml_action_not_applicable", "เอกสารภายในไม่ใช้ SML Lock")
+		return
+	}
 	if document.Status != "completed_lock_failed" && document.Status != "completed" {
 		writeError(w, http.StatusBadRequest, "document_not_completed", "Document is not ready for SML lock retry.")
 		return
@@ -1887,6 +1895,10 @@ func (s *Server) retrySigningDocumentImages(w http.ResponseWriter, r *http.Reque
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	if !requiresSMLFinalization(document) {
+		writeError(w, http.StatusBadRequest, "sml_action_not_applicable", "เอกสารภายในไม่ส่งรูปเข้า SML")
 		return
 	}
 	if !canRetrySigningDocumentImagesStatus(document.Status) {
@@ -3586,6 +3598,11 @@ func (s *Server) uploadCompletedDocumentImages(ctx context.Context, documentID s
 func (s *Server) finalizeCompletedDocument(ctx context.Context, documentID, ipAddress, userAgent string) completedDocumentFinalizeResult {
 	start := time.Now()
 	result := completedDocumentFinalizeResult{}
+	document, err := s.store.FindSigningDocumentByID(ctx, documentID)
+	if err != nil {
+		s.logger.Error("load document before finalization failed", "error", err, "documentID", documentID)
+		return result
+	}
 	if err := s.refreshStampedPDF(ctx, documentID, true); err != nil {
 		s.logger.Error("final pdf evidence failed", "error", err, "documentID", documentID)
 		_ = s.store.MarkDocumentEvidenceFailed(context.Background(), documentID, map[string]any{
@@ -3595,6 +3612,20 @@ func (s *Server) finalizeCompletedDocument(ctx context.Context, documentID, ipAd
 		return result
 	}
 	result.FinalOK = true
+	if document.DocumentSource == "internal" {
+		if err := s.store.MarkInternalDocumentCompleted(context.Background(), documentID); err != nil {
+			s.logger.Error("complete internal document failed", "error", err, "documentID", documentID)
+			return result
+		}
+		result.ImageOK = true
+		result.LockOK = true
+		_ = s.store.AddSigningEvent(context.Background(), documentID, "", "", "final_pdf_metrics", "บันทึก metric การสร้าง final PDF", ipAddress, userAgent, map[string]any{
+			"elapsedMs":      time.Since(start).Milliseconds(),
+			"documentSource": "internal",
+			"smlCalls":       0,
+		})
+		return result
+	}
 	result.ImageOK, result.ImageMetadata = s.uploadCompletedDocumentImages(ctx, documentID)
 	if result.ImageOK {
 		result.LockOK, result.LockMetadata = s.lockCompletedDocument(ctx, documentID, "")
@@ -3605,6 +3636,10 @@ func (s *Server) finalizeCompletedDocument(ctx context.Context, documentID, ipAd
 		"lockOk":    result.LockOK,
 	})
 	return result
+}
+
+func requiresSMLFinalization(document models.SigningDocument) bool {
+	return !strings.EqualFold(strings.TrimSpace(document.DocumentSource), "internal")
 }
 
 func normalizePrintCopyRequest(req models.CreatePrintCopyRequest) models.CreatePrintCopyRequest {

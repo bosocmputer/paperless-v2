@@ -5,6 +5,7 @@ import { computed } from 'vue';
 import AppMenuItem from './AppMenuItem.vue';
 
 const isSuperAdmin = computed(() => authStore.user?.role === 'superadmin');
+const internalDocumentsEnabled = computed(() => authStore.features?.internalDocuments === true);
 
 const model = computed(() => {
     if (authStore.user?.role === 'user') {
@@ -43,6 +44,15 @@ const model = computed(() => {
                     menuKey: SIGNING_DOCUMENT_MENU_KEYS.draft,
                     activeMatch: '/signing/documents/drafts'
                 },
+                ...(internalDocumentsEnabled.value
+                    ? [
+                          {
+                              label: 'สร้างเอกสารภายใน',
+                              icon: 'pi pi-fw pi-file-edit',
+                              to: '/signing/internal-documents/new'
+                          }
+                      ]
+                    : []),
                 {
                     label: 'เอกสารรอเซ็น',
                     icon: 'pi pi-fw pi-send',
@@ -87,7 +97,16 @@ const model = computed(() => {
                     icon: 'pi pi-fw pi-file-edit',
                     to: '/config/documents',
                     activeMatch: '/config/documents'
-                }
+                },
+                ...(internalDocumentsEnabled.value
+                    ? [
+                          {
+                              label: 'Master เอกสารภายใน',
+                              icon: 'pi pi-fw pi-list-check',
+                              to: '/config/internal-document-masters'
+                          }
+                      ]
+                    : [])
             ]
         });
     }

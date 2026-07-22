@@ -74,6 +74,13 @@ type smlDocumentCandidatesBatchResponse struct {
 	Message       string                        `json:"message"`
 }
 
+type smlCompanyProfileResponse struct {
+	Success bool                     `json:"success"`
+	Data    models.SMLCompanyProfile `json:"data"`
+	Error   *smlAPIError             `json:"error"`
+	Message string                   `json:"message"`
+}
+
 type smlLockResponse struct {
 	Success bool `json:"success"`
 	Data    struct {
@@ -318,6 +325,39 @@ func (s *Server) fetchSMLDocFormats(ctx context.Context, screenCode string) ([]m
 		if payload.Data[i].ScreenCode == "" {
 			payload.Data[i].ScreenCode = screenCode
 		}
+	}
+	return payload.Data, nil
+}
+
+func (s *Server) fetchSMLCompanyProfile(ctx context.Context) (models.SMLCompanyProfile, error) {
+	tenant, ok := s.hasSMLAPIConfig(ctx)
+	if !ok {
+		return models.SMLCompanyProfile{}, errSMLConfigMissing
+	}
+	endpoint := s.cfg.SMLPaperlessBaseURL + "/api/v1/company-profile"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return models.SMLCompanyProfile{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
+	req.Header.Set("X-Tenant", tenant)
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return models.SMLCompanyProfile{}, err
+	}
+	defer resp.Body.Close()
+	var payload smlCompanyProfileResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return models.SMLCompanyProfile{}, fmt.Errorf("cannot parse SML company profile response")
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices || !payload.Success {
+		requestErr := newSMLRequestError(payload.Error, payload.Message, "cannot load SML company profile")
+		s.invalidateTenantReadinessForStructuralError(ctx, requestErr)
+		return models.SMLCompanyProfile{}, requestErr
+	}
+	if strings.TrimSpace(payload.Data.DisplayName) == "" {
+		return models.SMLCompanyProfile{}, &smlRequestError{Code: "company_profile_name_missing", Message: "company profile has no company name"}
 	}
 	return payload.Data, nil
 }

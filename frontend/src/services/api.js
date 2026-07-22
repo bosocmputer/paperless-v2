@@ -170,6 +170,49 @@ export const api = {
     listSMLDocFormats(screenCode) {
         return request(withQuery('/api/sml/doc-formats', { screen_code: screenCode }));
     },
+    listDocumentTypes() {
+        return request('/api/document-types');
+    },
+    listInternalDocumentMasters() {
+        return request('/api/internal-document-masters');
+    },
+    createInternalDocumentMaster(payload) {
+        return request('/api/internal-document-masters', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+    },
+    updateInternalDocumentMaster(id, payload) {
+        return request(`/api/internal-document-masters/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    },
+    deleteInternalDocumentMaster(id) {
+        return request(`/api/internal-document-masters/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+    createInternalDocument(payload, idempotencyKey) {
+        return request('/api/internal-documents', {
+            method: 'POST',
+            headers: { 'Idempotency-Key': idempotencyKey },
+            body: JSON.stringify(payload)
+        });
+    },
+    getInternalDocument(id) {
+        return request(`/api/internal-documents/${encodeURIComponent(id)}`);
+    },
+    updateInternalDocument(id, payload) {
+        return request(`/api/internal-documents/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    },
+    printInternalDocument(id) {
+        return request(`/api/internal-documents/${encodeURIComponent(id)}/print`, { method: 'POST' });
+    },
+    internalDocumentPDFUrl(id, revision = '') {
+        return withQuery(`/api/internal-documents/${encodeURIComponent(id)}/pdf`, { v: revision });
+    },
     getSMLDocFormat(docFormatCode) {
         return request(withQuery('/api/sml/doc-format', { doc_format_code: docFormatCode }));
     },

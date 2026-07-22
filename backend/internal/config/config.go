@@ -30,6 +30,7 @@ type Config struct {
 	LocalAuthFallback    bool
 	SMLSignatureSync     bool
 	SMLReadinessRegistry bool
+	InternalDocuments    bool
 	FileStorageDir       string
 	MaxUploadMB          int64
 	MaxAttachmentMB      int64
@@ -58,6 +59,7 @@ func Load() (Config, error) {
 		LocalAuthFallback:    parseBool(getenv("PAPERLESS_LOCAL_AUTH_FALLBACK_ENABLED", "false")),
 		SMLSignatureSync:     parseBool(getenv("SML_SIGNATURE_SYNC_ENABLED", "true")),
 		SMLReadinessRegistry: parseBool(getenv("SML_TENANT_READINESS_REGISTRY_ENABLED", "true")),
+		InternalDocuments:    parseBool(getenv("INTERNAL_DOCUMENTS_ENABLED", "false")),
 		FileStorageDir:       getenv("FILE_STORAGE_DIR", "/app/uploads"),
 		PublicBaseURL:        strings.TrimRight(getenv("PUBLIC_BASE_URL", ""), "/"),
 		TelegramBotToken:     getenv("TELEGRAM_BOT_TOKEN", ""),

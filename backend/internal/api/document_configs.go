@@ -50,6 +50,16 @@ func (s *Server) listDocumentConfigWorkflows(w http.ResponseWriter, r *http.Requ
 			formatsByCode[strings.ToUpper(strings.TrimSpace(format.Code))] = format
 		}
 	}
+	if s.cfg.InternalDocuments {
+		masters, masterErr := s.store.ListInternalDocumentMasters(r.Context())
+		if masterErr != nil {
+			s.logger.Warn("load internal document masters for workflow summary failed", "error", masterErr)
+		} else {
+			for _, master := range masters {
+				formatsByCode[strings.ToUpper(master.Code)] = models.SMLDocFormat{Code: master.Code, Name1: master.Name, Format: master.RunningPattern, ScreenCode: internalDocumentScreenCode, Source: "internal"}
+			}
+		}
+	}
 
 	grouped := map[string][]models.DocumentConfigStep{}
 	for _, step := range steps {
@@ -103,7 +113,7 @@ func (s *Server) saveDocumentConfigWorkflow(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	format, err := s.fetchSMLDocFormatByCode(r.Context(), docFormatCode)
+	format, err := s.resolveConfigDocumentFormat(r.Context(), docFormatCode)
 	if err != nil {
 		s.writeDocFormatValidationError(w, err)
 		return
@@ -183,12 +193,12 @@ func (s *Server) copyDocumentConfigWorkflow(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	sourceFormat, err := s.fetchSMLDocFormatByCode(r.Context(), sourceDocFormatCode)
+	sourceFormat, err := s.resolveConfigDocumentFormat(r.Context(), sourceDocFormatCode)
 	if err != nil {
 		s.writeDocFormatValidationError(w, err)
 		return
 	}
-	targetFormat, err := s.fetchSMLDocFormatByCode(r.Context(), targetDocFormatCode)
+	targetFormat, err := s.resolveConfigDocumentFormat(r.Context(), targetDocFormatCode)
 	if err != nil {
 		s.writeDocFormatValidationError(w, err)
 		return
@@ -444,7 +454,7 @@ func (s *Server) writeDocFormatValidationError(w http.ResponseWriter, err error)
 }
 
 func (s *Server) resolveDocumentConfigStep(ctx context.Context, req models.DocumentConfigStepRequest) (models.DocumentConfigStepRequest, error) {
-	format, err := s.fetchSMLDocFormatByCode(ctx, req.DocFormatCode)
+	format, err := s.resolveConfigDocumentFormat(ctx, req.DocFormatCode)
 	if err != nil {
 		return req, err
 	}
@@ -458,7 +468,7 @@ func (s *Server) resolveDocumentConfigStep(ctx context.Context, req models.Docum
 }
 
 func (s *Server) loadDocumentConfigWorkflow(ctx context.Context, docFormatCode string) (models.DocumentConfigWorkflow, error) {
-	format, err := s.fetchSMLDocFormatByCode(ctx, docFormatCode)
+	format, err := s.resolveConfigDocumentFormat(ctx, docFormatCode)
 	if err != nil {
 		return models.DocumentConfigWorkflow{}, err
 	}

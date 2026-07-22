@@ -318,6 +318,7 @@ func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, r
 		Session:         &session,
 		AuthSource:      "sml",
 		TenantReadiness: &readiness,
+		Features:        s.clientFeatureFlags(),
 	})
 }
 
@@ -507,6 +508,7 @@ func (s *Server) handleLocalFallbackLogin(w http.ResponseWriter, r *http.Request
 		User:       &user,
 		Session:    &session,
 		AuthSource: "local_fallback",
+		Features:   s.clientFeatureFlags(),
 	})
 	return true
 }
@@ -514,7 +516,11 @@ func (s *Server) handleLocalFallbackLogin(w http.ResponseWriter, r *http.Request
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r)
 	session, _ := currentSession(r)
-	writeJSON(w, http.StatusOK, map[string]any{"user": user, "session": session})
+	writeJSON(w, http.StatusOK, map[string]any{"user": user, "session": session, "features": s.clientFeatureFlags()})
+}
+
+func (s *Server) clientFeatureFlags() map[string]bool {
+	return map[string]bool{"internalDocuments": s.cfg.InternalDocuments}
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {

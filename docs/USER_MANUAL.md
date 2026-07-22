@@ -46,7 +46,26 @@ To prepare many documents of the same type:
 
 Batch import uses the Active Template automatically and does not open the placement designer. The combined PDFs in one batch may contain at most 100 pages. Closing and discarding a batch removes unconsumed staged files.
 
-### 4. Track Active Documents
+### 4. Create An Internal Document
+
+Superadmin prepares an internal document once:
+
+1. Open `Master เอกสารภายใน` and configure the name, code, prefix, and running pattern.
+2. Configure its Workflow and Active Template. Signature boxes for internal documents are placed on the last PDF page.
+3. Activate the Master only after both configurations are ready.
+
+Admin or superadmin then creates the real document:
+
+1. Open `สร้างเอกสารภายใน` and select an active Master.
+2. Enter the requester, position, department, purpose, required date, and at least one expense row.
+3. Save once. PaperLess reserves the document number, creates the PDF, and creates the draft automatically; no PDF upload is required.
+4. Use `แก้ไขแบบฟอร์ม` while the document is still a draft. Each save creates a new immutable revision.
+5. Open `พิมพ์ PDF` for the latest revision. Editing afterward requires printing the new revision again.
+6. Send the draft to the normal signing Workflow.
+
+Internal documents use the company profile from the selected SML database only at creation time. They finish entirely in PaperLess and never upload images or lock transactions in SML.
+
+### 5. Track Active Documents
 
 Open `เอกสารรอเซ็น`.
 
@@ -54,13 +73,14 @@ The list shows document status and who the document is waiting for. For document
 
 Use `Flow เอกสาร` to inspect related SML flow without leaving the current page.
 
-### 5. Completed Signing And SML
+### 6. Completed Signing
 
-After all required signers are complete, PaperLess automatically generates the final audit PDF, uploads JPEG snapshots to SML, and locks the ERP document in the background.
+After all required signers are complete, PaperLess automatically generates the signed document and final audit PDF.
 
-Use the document list/detail to monitor `กำลังส่งเข้า SML`. If image upload fails, use retry. If lock fails after images succeed, retry lock from the detail page.
+- SML documents then upload JPEG snapshots and lock the ERP transaction. If upload or lock fails, admin uses the corresponding retry action.
+- Internal documents finish in PaperLess. They do not show SML Flow/reference checks or SML retry actions.
 
-### 6. Review History And Evidence
+### 7. Review History And Evidence
 
 Open `ประวัติเอกสารเซ็น`.
 
@@ -115,6 +135,9 @@ External signers only see the signing task. They do not see attachments, admin t
 | PDF preview fails | Refresh/reopen the page; if it persists, report document number to admin |
 | SML image upload failed | Admin uses retry SML images |
 | SML lock failed | Admin retries lock after image upload is successful |
+| Internal document cannot be sent | Open/print the latest PDF revision, then send again |
+| Internal Master cannot be activated | Complete its Running pattern, Workflow, and Active Template |
+| Company profile unavailable | Ask SML ERP support to verify one usable row in `public.erp_company_profile` |
 | External link already used | Generate a new external link/OTP from admin detail if business allows |
 
 ## Safety Notes

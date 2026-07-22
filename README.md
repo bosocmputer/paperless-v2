@@ -1,7 +1,6 @@
 # PaperLess
 
-PaperLess is a controlled e-signature workflow for SML-originated PDF documents.
-It receives document metadata and PDFs from SML, routes them through configured signing workflows, records audit evidence, writes signed PDF snapshots back to SML, and locks the ERP document automatically after the final signature.
+PaperLess is a controlled e-signature workflow for SML-originated PDFs and PaperLess internal documents. SML documents return signed snapshots and lock state to ERP. Internal documents are generated, signed, audited, and completed entirely inside PaperLess.
 
 ## Stack
 
@@ -21,6 +20,7 @@ It receives document metadata and PDFs from SML, routes them through configured 
 - Superadmin user management, workflow configuration, and signature template design
 - Admin document operations with locked signature/template placements
 - Batch PDF import into the draft queue with filename-to-SML validation, duplicate checks, partial retry, and staged-file cleanup
+- Internal document Master, concurrency-safe running numbers, generated Thai/Lao PDF revisions, automatic drafts, and print-before-send control
 - Multi-page document creation with cloned signature/legal-notice placements that remain editable per page
 - Internal signer task queue, waiting queue, and signing history
 - External sign-only flow with OTP and sanitized public API surface
@@ -30,6 +30,7 @@ It receives document metadata and PDFs from SML, routes them through configured 
 - Read-only PDF dialogs without browser download/print controls
 - Official print-copy flow with print events before opening printable PDF
 - Automatic finalization after the last signature: signed PDF, SML JPEG snapshots, SML lock, retry states
+- Source-aware finalization: internal documents complete without SML image or lock calls
 - SML image upload writes JPEG bytes to both tenant DB and tenant `_images` DB
 - In-app admin/user guides with QA screenshots
 
@@ -108,6 +109,14 @@ Before enabling a new SML tenant, verify that both the main database and matchin
 Admins can open `เอกสารเตรียมส่ง` and choose `นำเข้าหลายไฟล์` to stage up to 30 PDFs for one document format. Each filename must equal the SML document number, for example `QT26070001.pdf`. PaperLess validates Workflow, Active Template, PDF integrity, a combined 100-page limit, SML exact matches, PaperLess duplicates, and SML lock state before creating anything.
 
 Valid items are created as independent drafts with concurrency capped at two. Successful items remain saved if another item fails; retry reuses the same idempotency key and cannot create a duplicate after a network timeout. Removing a row or discarding the dialog deletes unconsumed staged uploads, with the 24-hour cleanup job retained as a fallback.
+
+## Internal Documents
+
+Set `INTERNAL_DOCUMENTS_ENABLED=true` to enable PaperLess-only request forms. Superadmins configure an internal document Master, running pattern, Workflow, and Active Template. Admins then enter the requester, department, purpose, required date, and expense rows once. PaperLess reserves the number atomically, snapshots the SML company profile, generates an immutable A4 PDF revision, and creates the signing draft automatically.
+
+An internal draft must open its latest printable PDF before it can be sent. Editing creates a new immutable revision and invalidates the earlier print readiness. After sending, the form can no longer be edited. Internal documents reuse normal signers, attachments, required attachments, saved signatures, runtime notes, history, evidence, and official-print behavior.
+
+Internal documents never upload images to SML and never lock an SML transaction. The SML API is used only to read `public.erp_company_profile` when the internal document is first created. Company data and each PDF revision remain immutable audit snapshots.
 
 ## Local Development
 

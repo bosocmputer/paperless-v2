@@ -1,5 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
+import { authStore } from '@/stores/auth';
 import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity, smlImageFailureDetail } from '@/utils/signingFormatters';
 import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
 import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
@@ -42,6 +43,7 @@ const batchImportDialog = ref(false);
 let searchTimer = null;
 
 const queue = computed(() => route.meta.queue || 'active');
+const internalDocumentsEnabled = computed(() => authStore.features?.internalDocuments === true);
 const pageConfig = computed(() => {
     if (queue.value === 'draft') {
         return {
@@ -56,7 +58,7 @@ const pageConfig = computed(() => {
     if (queue.value === 'history') {
         return {
             title: 'ประวัติเอกสารเซ็น',
-            subtitle: 'เอกสารที่ยืนยันแล้ว สร้างหลักฐานและ Lock SML สำเร็จ',
+            subtitle: 'เอกสารที่เซ็นครบและจัดเก็บเสร็จสมบูรณ์',
             empty: 'ยังไม่มีประวัติเอกสารเซ็น',
             searchPlaceholder: 'ค้นหาเลขเอกสาร หรือคู่ค้า',
             countSeverity: 'success',
@@ -144,6 +146,15 @@ async function loadPage() {
 
 function openCreate() {
     router.push({ name: 'signing-document-new' });
+}
+
+function openInternalCreate() {
+    router.push({ name: 'internal-document-new' });
+}
+
+function openInternalEdit(doc) {
+    if (!doc?.internalDocumentId) return;
+    router.push({ name: 'internal-document-edit', params: { id: doc.internalDocumentId } });
 }
 
 function openBatchImport() {
@@ -253,6 +264,10 @@ function attachmentFileUrlForDialog(attachment) {
 }
 
 function confirmSend(doc) {
+    if (isInternalDocument(doc) && !doc.internalCurrentRevisionPrinted) {
+        toast.add({ severity: 'warn', summary: 'กรุณาพิมพ์ PDF ก่อนส่ง', detail: 'ต้องพิมพ์ revision ล่าสุดของเอกสารภายในก่อนส่งเข้า Workflow', life: 3500 });
+        return;
+    }
     confirm.require({
         header: 'ส่งเอกสารไปเซ็น',
         message: `ต้องการส่ง ${doc.docNo} ให้ผู้เซ็นใช่ไหม? หลังส่งแล้วเอกสารจะย้ายไปเมนูเอกสารรอเซ็น`,
@@ -263,10 +278,35 @@ function confirmSend(doc) {
     });
 }
 
+async function printInternalDraft(doc) {
+    if (!doc?.internalDocumentId) return;
+    const popup = window.open('', '_blank');
+    setTransitioning(doc.id, true);
+    try {
+        const result = await api.printInternalDocument(doc.internalDocumentId);
+        const response = await fetch(result.pdfUrl || api.internalDocumentPDFUrl(doc.internalDocumentId, doc.internalRevision), { headers: api.authHeaders(), cache: 'no-store' });
+        if (!response.ok) throw new Error('โหลด PDF สำหรับพิมพ์ไม่สำเร็จ');
+        const objectUrl = URL.createObjectURL(await response.blob());
+        if (popup) popup.location.href = objectUrl;
+        else window.open(objectUrl, '_blank');
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+        toast.add({ severity: 'success', summary: 'PDF revision ล่าสุดพร้อมพิมพ์แล้ว', life: 2600 });
+        await loadPage();
+    } catch (error) {
+        if (popup) popup.close();
+        toast.add({ severity: 'error', summary: 'พิมพ์ PDF ไม่สำเร็จ', detail: error.message, life: 4200 });
+    } finally {
+        setTransitioning(doc.id, false);
+    }
+}
+
 function confirmAdminConfirm(doc) {
+    const message = isInternalDocument(doc)
+        ? `ต้องการยืนยัน ${doc.docNo} ใช่ไหม? ระบบจะสร้าง PDF ฉบับสมบูรณ์และหลักฐานการลงนามใน PaperLess`
+        : `ต้องการยืนยัน ${doc.docNo} ใช่ไหม? ระบบจะสร้าง final PDF/evidence ส่งรูปเข้า SML และ Lock SML`;
     confirm.require({
         header: 'ยืนยันเอกสาร',
-        message: `ต้องการยืนยัน ${doc.docNo} ใช่ไหม? ระบบจะสร้าง final PDF/evidence ส่งรูปเข้า SML และ Lock SML`,
+        message,
         icon: 'pi pi-check-circle',
         acceptLabel: 'ยืนยันเอกสาร',
         rejectLabel: 'ยกเลิก',
@@ -407,13 +447,23 @@ function waitingSummary(doc) {
         const first = signerDisplayName(signers[0]);
         return signers.length > 1 ? `รอ: ${first} +${signers.length - 1} คน` : `รอ: ${first}`;
     }
-    if (doc?.status === 'pending_confirm') return 'เซ็นครบแล้ว รอระบบส่งเข้า SML';
-    if (doc?.status === 'auto_confirming') return 'กำลังสร้าง PDF และส่งเข้า SML';
+    if (doc?.status === 'pending_confirm') return isInternalDocument(doc) ? 'เซ็นครบแล้ว รอระบบสร้างเอกสารฉบับสมบูรณ์' : 'เซ็นครบแล้ว รอระบบส่งเข้า SML';
+    if (doc?.status === 'auto_confirming') return isInternalDocument(doc) ? 'กำลังสร้าง PDF ฉบับสมบูรณ์' : 'กำลังสร้าง PDF และส่งเข้า SML';
     if (doc?.status === 'completed_evidence_failed') return 'ต้องสร้าง PDF หลักฐานอีกครั้ง';
     if (doc?.status === 'completed_image_failed') return 'ต้องส่งรูปเอกสารเข้า SML อีกครั้ง';
     if (doc?.status === 'completed_lock_failed') return 'ต้อง Lock SML อีกครั้ง';
     if (doc?.status === 'rejected') return 'workflow หยุดแล้ว';
     return '';
+}
+
+function isInternalDocument(doc) {
+    return doc?.documentSource === 'internal';
+}
+
+function documentStatusLabel(doc) {
+    if (isInternalDocument(doc) && doc?.status === 'pending_confirm') return 'รอสร้างเอกสารสมบูรณ์';
+    if (isInternalDocument(doc) && doc?.status === 'auto_confirming') return 'กำลังสร้าง PDF';
+    return signingStatusLabel(doc?.status);
 }
 
 function signerDisplayName(signer) {
@@ -536,7 +586,8 @@ function selectInput(event) {
                 </IconField>
                 <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
                 <Button v-if="pageConfig.showCreate" label="นำเข้าหลายไฟล์" icon="pi pi-upload" severity="secondary" outlined @click="openBatchImport" />
-                <Button v-if="pageConfig.showCreate" label="สร้างเอกสารใหม่" icon="pi pi-plus" @click="openCreate" />
+                <Button v-if="pageConfig.showCreate && internalDocumentsEnabled" label="สร้างเอกสารภายใน" icon="pi pi-file-edit" severity="secondary" outlined @click="openInternalCreate" />
+                <Button v-if="pageConfig.showCreate" label="สร้างจาก SML" icon="pi pi-plus" @click="openCreate" />
             </div>
         </div>
 
@@ -552,6 +603,7 @@ function selectInput(event) {
                     <Button link class="p-0 font-bold text-left" @click="openDetail(data)">
                         <span class="whitespace-nowrap">{{ documentLine(data) }}</span>
                     </Button>
+                    <Tag v-if="isInternalDocument(data)" value="เอกสารภายใน" severity="info" class="ml-2" />
                 </template>
             </Column>
             <Column field="docDate" header="วันที่เอกสาร" sortable style="min-width: 10rem">
@@ -563,7 +615,7 @@ function selectInput(event) {
             <Column field="status" header="สถานะ" sortable style="min-width: 18rem">
                 <template #body="{ data }">
                     <div class="status-cell">
-                        <Tag :value="signingStatusLabel(data.status)" :severity="signingStatusSeverity(data.status)" />
+                        <Tag :value="documentStatusLabel(data)" :severity="signingStatusSeverity(data.status)" />
                         <small v-if="waitingSummary(data)" class="status-hint">{{ waitingSummary(data) }}</small>
                     </div>
                 </template>
@@ -581,8 +633,22 @@ function selectInput(event) {
                             outlined
                             severity="success"
                             aria-label="ส่งไปเซ็น"
+                            :disabled="isInternalDocument(data) && !data.internalCurrentRevisionPrinted"
+                            v-tooltip.top="isInternalDocument(data) && !data.internalCurrentRevisionPrinted ? 'กรุณาพิมพ์ PDF revision ล่าสุดก่อนส่ง' : 'ส่งไปเซ็น'"
                             :loading="isTransitioning(data.id)"
                             @click="confirmSend(data)"
+                        />
+                        <Button v-if="data.status === 'draft' && isInternalDocument(data)" icon="pi pi-pencil" rounded outlined severity="secondary" aria-label="แก้ไขแบบฟอร์ม" v-tooltip.top="'แก้ไขแบบฟอร์ม'" @click="openInternalEdit(data)" />
+                        <Button
+                            v-if="data.status === 'draft' && isInternalDocument(data)"
+                            icon="pi pi-print"
+                            rounded
+                            outlined
+                            :severity="data.internalCurrentRevisionPrinted ? 'secondary' : 'warn'"
+                            aria-label="พิมพ์ PDF"
+                            v-tooltip.top="data.internalCurrentRevisionPrinted ? 'พิมพ์ PDF revision ล่าสุดอีกครั้ง' : 'พิมพ์ PDF ก่อนส่ง'"
+                            :loading="isTransitioning(data.id)"
+                            @click="printInternalDraft(data)"
                         />
                         <Button
                             v-if="canGenerateExternalFromList(data)"
@@ -604,8 +670,8 @@ function selectInput(event) {
                             @click="previewDocumentPDF(data, 'current')"
                         />
                         <DocumentAttachmentActionButton :count="attachmentCount(data)" @click="openAttachmentsDialog(data)" />
-                        <Button icon="pi pi-sitemap" rounded outlined severity="secondary" aria-label="ดู Flow เอกสาร" @click="openDocumentFlowFromRow(data)" />
-                        <Button v-if="queue !== 'draft'" icon="pi pi-list" rounded outlined severity="secondary" aria-label="ตรวจสอบเอกสารอ้างอิง" @click="openReferenceCheck(data)" />
+                        <Button v-if="!isInternalDocument(data)" icon="pi pi-sitemap" rounded outlined severity="secondary" aria-label="ดู Flow เอกสาร" @click="openDocumentFlowFromRow(data)" />
+                        <Button v-if="queue !== 'draft' && !isInternalDocument(data)" icon="pi pi-list" rounded outlined severity="secondary" aria-label="ตรวจสอบเอกสารอ้างอิง" @click="openReferenceCheck(data)" />
                         <Button icon="pi pi-eye" rounded outlined severity="secondary" aria-label="ดูเอกสาร" @click="openDetail(data)" />
                         <Button
                             v-if="data.status === 'draft'"

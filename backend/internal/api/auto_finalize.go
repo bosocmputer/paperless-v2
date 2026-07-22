@@ -66,6 +66,11 @@ func (s *Server) autoFinalizeDocument(parent context.Context, documentID, ipAddr
 	result := s.finalizeCompletedDocument(finalizeCtx, documentID, ipAddress, userAgent)
 	finalizeCancel()
 	if result.LockOK {
-		_ = s.store.AddSigningEvent(context.Background(), documentID, "", "", "document_auto_confirmed", "ระบบส่งเอกสารเข้า SML เรียบร้อยแล้ว", ipAddress, userAgent, nil)
+		document, _ := s.store.FindSigningDocumentByID(context.Background(), documentID)
+		message := "ระบบส่งเอกสารเข้า SML เรียบร้อยแล้ว"
+		if document.DocumentSource == "internal" {
+			message = "ระบบจัดทำเอกสารภายในเสร็จสมบูรณ์แล้ว"
+		}
+		_ = s.store.AddSigningEvent(context.Background(), documentID, "", "", "document_auto_confirmed", message, ipAddress, userAgent, map[string]any{"documentSource": document.DocumentSource})
 	}
 }

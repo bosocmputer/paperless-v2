@@ -143,6 +143,12 @@ const router = createRouter({
                     meta: { role: 'superadmin' }
                 },
                 {
+                    path: '/config/internal-document-masters',
+                    name: 'internal-document-masters',
+                    component: () => import('@/views/config/InternalDocumentMasters.vue'),
+                    meta: { role: 'superadmin', feature: 'internalDocuments' }
+                },
+                {
                     path: '/config/documents/:docFormatCode/workflow',
                     name: 'document-config-workflow',
                     component: () => import('@/views/config/DocumentConfigWorkflow.vue'),
@@ -194,6 +200,18 @@ const router = createRouter({
                     name: 'signing-document-new',
                     component: () => import('@/views/signing/SigningDocumentCreate.vue'),
                     meta: { role: 'admin', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.draft }
+                },
+                {
+                    path: '/signing/internal-documents/new',
+                    name: 'internal-document-new',
+                    component: () => import('@/views/signing/InternalDocumentForm.vue'),
+                    meta: { role: 'admin', feature: 'internalDocuments', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.draft }
+                },
+                {
+                    path: '/signing/internal-documents/:id/edit',
+                    name: 'internal-document-edit',
+                    component: () => import('@/views/signing/InternalDocumentForm.vue'),
+                    meta: { role: 'admin', feature: 'internalDocuments', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.draft }
                 },
                 {
                     path: '/signing/documents/:id',
@@ -264,6 +282,10 @@ router.beforeEach(async (to) => {
     }
 
     if (!hasRequiredRole(to.meta.role, authStore.user?.role)) {
+        return defaultRouteForRole(authStore.user?.role);
+    }
+
+    if (to.meta.feature && authStore.features?.[to.meta.feature] !== true) {
         return defaultRouteForRole(authStore.user?.role);
     }
 

@@ -26,6 +26,7 @@ let attachmentRequestSeq = 0;
 const pdfUrl = computed(() => api.signingDocumentPDFUrlForDocument(document.value));
 const identityLabel = computed(() => authStore.user?.displayName || authStore.user?.username || task.value?.signerName || task.value?.signerUser || '');
 const isAdminSignerWorkspace = computed(() => route.meta.adminSignerWorkspace === true);
+const isInternalDocument = computed(() => String(document.value?.documentSource || '').toLowerCase() === 'internal');
 const taskListRouteName = computed(() => (isAdminSignerWorkspace.value ? 'admin-my-signing-tasks' : 'my-signing-tasks'));
 
 onMounted(loadTask);
@@ -43,7 +44,9 @@ async function loadTask() {
         task.value = result.task;
         legal.value = result.legal;
         signatureOptions.value = result.signatureOptions || null;
-        loadReferenceStatus(route.params.taskId, requestSeq);
+        if (!isInternalDocument.value) {
+            loadReferenceStatus(route.params.taskId, requestSeq);
+        }
         loadAttachments(route.params.taskId);
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลดเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
@@ -170,7 +173,7 @@ function goBackToTasks() {
         :saving="saving"
         :identity-label="identityLabel"
         :admin-workspace="isAdminSignerWorkspace"
-        :reference-status="referenceStatus"
+        :reference-status="isInternalDocument ? null : referenceStatus"
         :attachments="attachments"
         :attachments-loading="attachmentsLoading"
         :attachments-error="attachmentsError"
@@ -182,7 +185,7 @@ function goBackToTasks() {
         :on-reload-attachments="loadAttachments"
         :attachment-file-url="attachmentFileUrl"
         :on-record-event="recordEvent"
-        :related-loader="loadRelatedDocuments"
-        :reference-check-loader="loadReferenceCheck"
+        :related-loader="isInternalDocument ? null : loadRelatedDocuments"
+        :reference-check-loader="isInternalDocument ? null : loadReferenceCheck"
     />
 </template>

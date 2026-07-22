@@ -73,11 +73,12 @@ async function loadPage() {
 async function loadDocFormats() {
     loadingFormats.value = true;
     try {
-        const result = await api.listSMLDocFormats();
-        docFormats.value = result.docFormats || [];
+        const result = await api.listDocumentTypes();
+        docFormats.value = result.documentTypes || [];
+        if (result.smlWarning) toast.add({ severity: 'warn', summary: 'โหลดชนิดเอกสาร SML ไม่ครบ', detail: result.smlWarning, life: 4000 });
     } catch (err) {
         docFormats.value = [];
-        toast.add({ severity: 'warn', summary: 'โหลดชนิดเอกสารจาก SML ไม่สำเร็จ', detail: err.message, life: 4500 });
+        toast.add({ severity: 'warn', summary: 'โหลดชนิดเอกสารไม่สำเร็จ', detail: err.message, life: 4500 });
     } finally {
         loadingFormats.value = false;
     }
@@ -240,7 +241,10 @@ function sameCode(left, right) {
 
             <Column field="docFormatCode" header="ชนิดเอกสาร" sortable style="min-width: 14rem">
                 <template #body="{ data }">
-                    <div class="font-medium text-surface-900 dark:text-surface-0">{{ data.docFormatCode }}</div>
+                    <div class="flex items-center gap-2">
+                        <div class="font-medium text-surface-900 dark:text-surface-0">{{ data.docFormatCode }}</div>
+                        <Tag :value="data.docFormat?.source === 'internal' || data.screenCode === 'INTERNAL' ? 'เอกสารภายใน' : 'SML'" :severity="data.docFormat?.source === 'internal' || data.screenCode === 'INTERNAL' ? 'info' : 'secondary'" />
+                    </div>
                     <div class="text-sm text-muted-color">{{ docFormatName(data.docFormat) }}</div>
                 </template>
             </Column>
@@ -294,7 +298,7 @@ function sameCode(left, right) {
     <Dialog v-model:visible="createVisible" modal header="เพิ่ม Workflow เอกสาร" :style="{ width: 'min(34rem, 92vw)' }">
         <div class="flex flex-col gap-4">
             <div>
-                <label for="newDocFormat" class="block font-bold mb-3">ชนิดเอกสารจาก SML</label>
+                <label for="newDocFormat" class="block font-bold mb-3">ชนิดเอกสาร</label>
                 <Select id="newDocFormat" v-model="selectedNewDocFormat" :options="availableDocFormatOptions" optionLabel="label" optionValue="value" filter fluid />
                 <small class="text-muted-color">เลือกครั้งเดียว แล้วเพิ่มขั้นตอนผู้เซ็นในหน้าถัดไป</small>
             </div>

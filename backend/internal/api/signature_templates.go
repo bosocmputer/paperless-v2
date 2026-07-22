@@ -49,7 +49,7 @@ func (s *Server) getSignatureTemplateState(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	format, err := s.fetchSMLDocFormatByCode(r.Context(), docFormatCode)
+	format, err := s.resolveConfigDocumentFormat(r.Context(), docFormatCode)
 	if err != nil {
 		s.writeDocFormatValidationError(w, err)
 		return
@@ -88,12 +88,16 @@ func (s *Server) uploadSignatureTemplateSamplePDF(w http.ResponseWriter, r *http
 		return
 	}
 
-	format, err := s.fetchSMLDocFormatByCode(r.Context(), docFormatCode)
+	format, err := s.resolveConfigDocumentFormat(r.Context(), docFormatCode)
 	if err != nil {
 		s.writeDocFormatValidationError(w, err)
 		return
 	}
 	screenCode := normalizeScreenCode(format.ScreenCode)
+	if format.Source == "internal" {
+		writeError(w, http.StatusBadRequest, "internal_template_sample_managed", "เอกสารภายในใช้ Sample PDF ที่ระบบสร้างให้อัตโนมัติ")
+		return
+	}
 
 	maxBytes := s.cfg.MaxUploadMB * 1024 * 1024
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes+1024)

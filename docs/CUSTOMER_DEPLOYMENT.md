@@ -83,6 +83,7 @@ Required groups:
 - `PAPERLESS_LOCAL_AUTH_FALLBACK_ENABLED`
 - `PUBLIC_BASE_URL`
 - Upload and template limits
+- `INTERNAL_DOCUMENTS_ENABLED=true` after the additive migration and backend/frontend smoke checks pass
 
 Provider and data group are system configuration values. The login UI must not ask the user to enter them.
 
@@ -138,6 +139,23 @@ The saved-signature feature reads `erp_user.signature_1` from the tenant selecte
 After deployment, sign in as superadmin, select the target database, open `/admin/users`, and run `Sync จาก SML`. Verify the preview summary before confirming. Test with one internal signer first: select `ลายเซ็นที่บันทึกไว้`, review the lazily loaded image, sign a new document, and verify the current/final PDF. Existing completed documents must retain their original signature file/version.
 
 If sync reports a missing or invalid signature, PaperLess preserves the previous saved signature and records a warning. Set `SML_SIGNATURE_SYNC_ENABLED=false` for immediate rollback to draw-only signing; no schema rollback is required.
+
+## Internal Document Rollout
+
+Internal documents require SML API `GET /api/v1/company-profile`, the PaperLess additive migration, and the matching frontend. Deploy in this order: SML API, PaperLess API, PaperLess Web. Keep `INTERNAL_DOCUMENTS_ENABLED=false` until all three services are healthy, then enable it and recreate only the PaperLess API/Web services.
+
+After enabling the flag, verify that the selected tenant has exactly one usable row in `public.erp_company_profile`. Open `Master เอกสารภายใน` as superadmin and confirm the three seeded Masters are inactive. Configure Workflow and Active Template before activating a Master. Do not guess customer signers or activate a production Master with a test Workflow.
+
+Safe smoke checks before customer configuration:
+
+1. The Master list contains `PAYREQ`, `ADV`, and `PREPAY` as inactive.
+2. The internal document create route opens and contains no PDF upload step.
+3. An inactive or incomplete Master cannot create a document and returns a readable configuration error.
+4. Existing SML document create, image upload, and lock flows remain unchanged.
+
+After customer Workflow/Template configuration, create one approved test document, open the generated PDF, edit it once to verify immutable revision behavior, print the latest revision, send it, and complete signing. Confirm logs contain no SML image or SML lock request for that internal document.
+
+For immediate application rollback set `INTERNAL_DOCUMENTS_ENABLED=false` and restore the previous immutable API/Web image tags. Do not drop the additive tables or columns; existing internal records remain audit data and become visible again when the flag is re-enabled.
 
 ### Shared SML database readiness
 

@@ -131,6 +131,141 @@ type SMLDocFormat struct {
 	Name2      string `json:"name_2"`
 	Format     string `json:"format"`
 	ScreenCode string `json:"screen_code"`
+	Source     string `json:"source,omitempty"`
+}
+
+type DocumentType struct {
+	Code       string `json:"code"`
+	Name1      string `json:"name_1"`
+	Name2      string `json:"name_2,omitempty"`
+	ScreenCode string `json:"screen_code"`
+	Source     string `json:"source"`
+	Active     bool   `json:"active"`
+}
+
+type SMLCompanyProfile struct {
+	CompanyName1    string `json:"company_name_1"`
+	CompanyName2    string `json:"company_name_2"`
+	BusinessName1   string `json:"business_name_1"`
+	BusinessName2   string `json:"business_name_2"`
+	DisplayName     string `json:"display_name"`
+	Address1        string `json:"address_1"`
+	Address2        string `json:"address_2"`
+	TelephoneNumber string `json:"telephone_number"`
+	FaxNumber       string `json:"fax_number"`
+	TaxNumber       string `json:"tax_number"`
+	BranchStatus    int    `json:"branch_status"`
+	BranchType      int    `json:"branch_type"`
+	BranchCode      string `json:"branch_code"`
+}
+
+type InternalDocumentMaster struct {
+	ID             string    `json:"id"`
+	SMLTenant      string    `json:"smlTenant"`
+	Code           string    `json:"code"`
+	Name           string    `json:"name"`
+	Prefix         string    `json:"prefix"`
+	RunningPattern string    `json:"runningPattern"`
+	Status         string    `json:"status"`
+	Revision       int       `json:"revision"`
+	DocumentCount  int       `json:"documentCount"`
+	WorkflowReady  bool      `json:"workflowReady"`
+	TemplateReady  bool      `json:"templateReady"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+}
+
+type InternalDocumentMasterRequest struct {
+	Code           string `json:"code"`
+	Name           string `json:"name"`
+	Prefix         string `json:"prefix"`
+	RunningPattern string `json:"runningPattern"`
+	Status         string `json:"status"`
+	Revision       int    `json:"revision"`
+}
+
+type InternalDocumentItem struct {
+	ID          string `json:"id,omitempty"`
+	SequenceNo  int    `json:"sequenceNo"`
+	Description string `json:"description"`
+	Amount      string `json:"amount"`
+}
+
+type InternalDocumentCompanySnapshot struct {
+	DisplayName     string `json:"displayName"`
+	CompanyName1    string `json:"companyName1"`
+	BusinessName1   string `json:"businessName1"`
+	Address1        string `json:"address1"`
+	Address2        string `json:"address2"`
+	TelephoneNumber string `json:"telephoneNumber"`
+	FaxNumber       string `json:"faxNumber"`
+	TaxNumber       string `json:"taxNumber"`
+	BranchStatus    int    `json:"branchStatus"`
+	BranchType      int    `json:"branchType"`
+	BranchCode      string `json:"branchCode"`
+}
+
+type InternalDocument struct {
+	ID                   string                          `json:"id"`
+	SMLTenant            string                          `json:"smlTenant"`
+	MasterID             string                          `json:"masterId"`
+	MasterCode           string                          `json:"masterCode"`
+	MasterName           string                          `json:"masterName"`
+	MasterRevision       int                             `json:"masterRevision"`
+	PrefixSnapshot       string                          `json:"prefixSnapshot"`
+	PatternSnapshot      string                          `json:"patternSnapshot"`
+	DocumentNo           string                          `json:"documentNo"`
+	DocumentDate         string                          `json:"documentDate"`
+	RequiredDate         string                          `json:"requiredDate"`
+	RequesterName        string                          `json:"requesterName"`
+	PositionName         string                          `json:"positionName"`
+	DepartmentName       string                          `json:"departmentName"`
+	Purpose              string                          `json:"purpose"`
+	TotalAmount          string                          `json:"totalAmount"`
+	Status               string                          `json:"status"`
+	Revision             int                             `json:"revision"`
+	CurrentVersionID     string                          `json:"currentVersionId"`
+	SigningDocumentID    string                          `json:"signingDocumentId"`
+	CompanySnapshot      InternalDocumentCompanySnapshot `json:"companySnapshot"`
+	Items                []InternalDocumentItem          `json:"items"`
+	CurrentVersion       *InternalDocumentVersion        `json:"currentVersion,omitempty"`
+	CurrentRevisionPrint bool                            `json:"currentRevisionPrinted"`
+	CreatedBy            string                          `json:"createdBy"`
+	CreatedAt            time.Time                       `json:"createdAt"`
+	UpdatedAt            time.Time                       `json:"updatedAt"`
+}
+
+type InternalDocumentVersion struct {
+	ID         string     `json:"id"`
+	DocumentID string     `json:"documentId"`
+	Revision   int        `json:"revision"`
+	FileID     string     `json:"fileId"`
+	SHA256     string     `json:"sha256"`
+	PageCount  int        `json:"pageCount"`
+	PrintedAt  *time.Time `json:"printedAt,omitempty"`
+	SentAt     *time.Time `json:"sentAt,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+}
+
+type InternalDocumentCreateRequest struct {
+	MasterID       string                 `json:"masterId"`
+	DocumentDate   string                 `json:"documentDate"`
+	RequiredDate   string                 `json:"requiredDate"`
+	RequesterName  string                 `json:"requesterName"`
+	PositionName   string                 `json:"positionName"`
+	DepartmentName string                 `json:"departmentName"`
+	Purpose        string                 `json:"purpose"`
+	Items          []InternalDocumentItem `json:"items"`
+}
+
+type InternalDocumentUpdateRequest struct {
+	Revision       int                    `json:"revision"`
+	RequiredDate   string                 `json:"requiredDate"`
+	RequesterName  string                 `json:"requesterName"`
+	PositionName   string                 `json:"positionName"`
+	DepartmentName string                 `json:"departmentName"`
+	Purpose        string                 `json:"purpose"`
+	Items          []InternalDocumentItem `json:"items"`
 }
 
 type SMLScreenCode struct {
@@ -525,6 +660,10 @@ type SigningDocumentReference struct {
 
 type SigningDocument struct {
 	ID                  string                       `json:"id"`
+	DocumentSource      string                       `json:"documentSource"`
+	InternalDocumentID  string                       `json:"internalDocumentId,omitempty"`
+	InternalRevision    int                          `json:"internalRevision,omitempty"`
+	InternalPrinted     bool                         `json:"internalCurrentRevisionPrinted,omitempty"`
 	SMLTenant           string                       `json:"smlTenant"`
 	SMLDataGroup        string                       `json:"smlDataGroup"`
 	SMLDataCode         string                       `json:"smlDataCode"`
@@ -879,6 +1018,7 @@ type LoginResponse struct {
 	Databases        []SMLAuthDatabase   `json:"databases,omitempty"`
 	AuthSource       string              `json:"authSource,omitempty"`
 	TenantReadiness  *SMLTenantReadiness `json:"tenantReadiness,omitempty"`
+	Features         map[string]bool     `json:"features,omitempty"`
 }
 
 type AuthSession struct {

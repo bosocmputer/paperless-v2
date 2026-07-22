@@ -56,6 +56,7 @@ let pointerCleanup = null;
 let discardNavigationConfirmed = false;
 
 const template = computed(() => active.value || draft.value);
+const isInternalDocument = computed(() => docFormat.value?.source === 'internal' || docFormat.value?.screen_code === 'INTERNAL');
 const canEdit = computed(() => !!template.value && template.value.status !== 'archived');
 const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `หน้า ${index + 1}`, value: index + 1 })));
 const currentPageLabel = computed(() => (pageCount.value ? `หน้า ${currentPage.value} / ${pageCount.value}` : 'หน้า - / -'));
@@ -131,7 +132,7 @@ const pdfMetaLabel = computed(() => {
     return `${Math.round(pageSize.value.width)} x ${Math.round(pageSize.value.height)} px · ${storedPageCount.value || pageCount.value} หน้า`;
 });
 const pdfFileStatusLabel = computed(() => {
-    if (!template.value?.sampleFileId) return 'อัปโหลด PDF ตัวอย่างเพื่อกำหนดกรอบเริ่มต้น';
+    if (!template.value?.sampleFileId) return isInternalDocument.value ? 'กำลังเตรียม PDF ตัวอย่างจากแบบฟอร์มภายใน' : 'อัปโหลด PDF ตัวอย่างเพื่อกำหนดกรอบเริ่มต้น';
     const name = template.value?.sampleFile?.originalName || 'PDF ตัวอย่าง';
     const pages = storedPageCount.value || pageCount.value || 0;
     return pages ? `${name} · ${pages} หน้า` : name;
@@ -1159,8 +1160,9 @@ function recordDesignerEvent(event, extra = {}) {
                 </div>
             </template>
             <template #end>
-                <input ref="fileInput" type="file" accept="application/pdf,.pdf" class="hidden" @change="handleFileChange" />
-                <Button :label="template?.sampleFileId ? 'เปลี่ยน PDF' : 'เลือกไฟล์ PDF'" :icon="template?.sampleFileId ? 'pi pi-refresh' : 'pi pi-upload'" :loading="uploading" @click="triggerUpload" />
+                <input v-if="!isInternalDocument" ref="fileInput" type="file" accept="application/pdf,.pdf" class="hidden" @change="handleFileChange" />
+                <Button v-if="!isInternalDocument" :label="template?.sampleFileId ? 'เปลี่ยน PDF' : 'เลือกไฟล์ PDF'" :icon="template?.sampleFileId ? 'pi pi-refresh' : 'pi pi-upload'" :loading="uploading" @click="triggerUpload" />
+                <Tag v-else value="PDF จากแบบฟอร์มระบบ" severity="info" />
             </template>
         </Toolbar>
 
@@ -1189,9 +1191,9 @@ function recordDesignerEvent(event, extra = {}) {
 
                 <div v-else-if="!template?.sampleFileId" class="signature-empty">
                     <i class="pi pi-file-pdf text-4xl text-muted-color"></i>
-                    <div class="font-semibold mt-3">อัปโหลด PDF เพื่อเริ่มวางกรอบลายเซ็น</div>
-                    <p class="text-muted-color m-0">ใช้ไฟล์ PDF ของเอกสารจริงเพื่อกำหนดตำแหน่งลายเซ็น</p>
-                    <Button label="เลือกไฟล์ PDF" icon="pi pi-upload" class="mt-3" :loading="uploading" @click="triggerUpload" />
+                    <div class="font-semibold mt-3">{{ isInternalDocument ? 'ยังเตรียม PDF ตัวอย่างไม่สำเร็จ' : 'อัปโหลด PDF เพื่อเริ่มวางกรอบลายเซ็น' }}</div>
+                    <p class="text-muted-color m-0">{{ isInternalDocument ? 'กรุณากลับไปหน้า Master แล้วโหลดใหม่อีกครั้ง' : 'ใช้ไฟล์ PDF ของเอกสารจริงเพื่อกำหนดตำแหน่งลายเซ็น' }}</p>
+                    <Button v-if="!isInternalDocument" label="เลือกไฟล์ PDF" icon="pi pi-upload" class="mt-3" :loading="uploading" @click="triggerUpload" />
                 </div>
 
                 <div v-else ref="viewerRef" class="pdf-scroll">

@@ -52,31 +52,39 @@ func tenantFilterValue(ctx context.Context) string {
 }
 
 var (
-	ErrUsernameTaken                  = errors.New("username already exists")
-	ErrUserNotFound                   = errors.New("user not found")
-	ErrDocumentConfigDuplicate        = errors.New("document config step already exists")
-	ErrDocumentConfigNotFound         = errors.New("document config step not found")
-	ErrDocumentConfigRevisionConflict = errors.New("document config workflow revision conflict")
-	ErrSignatureTemplateNotFound      = errors.New("signature template not found")
-	ErrSignatureRevisionConflict      = errors.New("signature template revision conflict")
-	ErrSignatureTemplateNotDraft      = errors.New("signature template is not draft")
-	ErrSignatureTemplateArchived      = errors.New("signature template is archived")
-	ErrSigningDocumentNotFound        = errors.New("signing document not found")
-	ErrSigningDocumentDuplicate       = errors.New("signing document already exists")
-	ErrSigningDocumentUploadNotFound  = errors.New("signing document upload not found")
-	ErrSigningDocumentInvalidStatus   = errors.New("signing document status does not allow this action")
-	ErrSigningTaskNotFound            = errors.New("signing task not found")
-	ErrSigningTaskUnavailable         = errors.New("signing task is not available")
-	ErrRequiredAttachmentsMissing     = errors.New("required signing attachments are missing")
-	ErrExternalSignerNotTurn          = errors.New("external signer is not the active turn")
-	ErrExternalSignerUnavailable      = errors.New("external signer is unavailable")
-	ErrExternalTokenNotFound          = errors.New("external signing token not found")
-	ErrExternalTokenInvalid           = errors.New("external signing token invalid")
-	ErrIdempotencyInProgress          = errors.New("idempotency key is already in progress")
-	ErrSMLUserSyncBatchTooLarge       = errors.New("SML user sync batch is too large")
-	ErrSMLUserPasswordHashMissing     = errors.New("SML user password hash is missing")
-	ErrSavedSignatureUnavailable      = errors.New("saved signature is unavailable")
-	ErrSavedSignatureChanged          = errors.New("saved signature version changed")
+	ErrUsernameTaken                    = errors.New("username already exists")
+	ErrUserNotFound                     = errors.New("user not found")
+	ErrDocumentConfigDuplicate          = errors.New("document config step already exists")
+	ErrDocumentConfigNotFound           = errors.New("document config step not found")
+	ErrDocumentConfigRevisionConflict   = errors.New("document config workflow revision conflict")
+	ErrSignatureTemplateNotFound        = errors.New("signature template not found")
+	ErrSignatureRevisionConflict        = errors.New("signature template revision conflict")
+	ErrSignatureTemplateNotDraft        = errors.New("signature template is not draft")
+	ErrSignatureTemplateArchived        = errors.New("signature template is archived")
+	ErrSigningDocumentNotFound          = errors.New("signing document not found")
+	ErrSigningDocumentDuplicate         = errors.New("signing document already exists")
+	ErrSigningDocumentUploadNotFound    = errors.New("signing document upload not found")
+	ErrSigningDocumentInvalidStatus     = errors.New("signing document status does not allow this action")
+	ErrSigningTaskNotFound              = errors.New("signing task not found")
+	ErrSigningTaskUnavailable           = errors.New("signing task is not available")
+	ErrRequiredAttachmentsMissing       = errors.New("required signing attachments are missing")
+	ErrExternalSignerNotTurn            = errors.New("external signer is not the active turn")
+	ErrExternalSignerUnavailable        = errors.New("external signer is unavailable")
+	ErrExternalTokenNotFound            = errors.New("external signing token not found")
+	ErrExternalTokenInvalid             = errors.New("external signing token invalid")
+	ErrIdempotencyInProgress            = errors.New("idempotency key is already in progress")
+	ErrSMLUserSyncBatchTooLarge         = errors.New("SML user sync batch is too large")
+	ErrSMLUserPasswordHashMissing       = errors.New("SML user password hash is missing")
+	ErrSavedSignatureUnavailable        = errors.New("saved signature is unavailable")
+	ErrSavedSignatureChanged            = errors.New("saved signature version changed")
+	ErrInternalMasterNotFound           = errors.New("internal document master not found")
+	ErrInternalMasterDuplicate          = errors.New("internal document master code already exists")
+	ErrInternalMasterInUse              = errors.New("internal document master is already in use")
+	ErrInternalMasterRevisionConflict   = errors.New("internal document master revision conflict")
+	ErrInternalDocumentNotFound         = errors.New("internal document not found")
+	ErrInternalDocumentRevisionConflict = errors.New("internal document revision conflict")
+	ErrInternalDocumentInvalidStatus    = errors.New("internal document status does not allow this action")
+	ErrInternalDocumentPrintRequired    = errors.New("current internal document revision must be printed before sending")
 )
 
 type IdempotencyClaim struct {
@@ -409,8 +417,120 @@ CREATE TABLE IF NOT EXISTS signer_note_template_boxes (
 CREATE INDEX IF NOT EXISTS signer_note_template_boxes_lookup_idx
 ON signer_note_template_boxes (template_id, page_no, lower(position_code), signer_slot);
 
+CREATE TABLE IF NOT EXISTS internal_document_masters (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sml_tenant TEXT NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    prefix TEXT NOT NULL,
+    running_pattern TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'inactive' CHECK (status IN ('active', 'inactive')),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (sml_tenant, code)
+);
+
+CREATE INDEX IF NOT EXISTS internal_document_masters_lookup_idx
+ON internal_document_masters (sml_tenant, status, lower(code));
+
+CREATE TABLE IF NOT EXISTS internal_document_running_counters (
+    sml_tenant TEXT NOT NULL,
+    master_id UUID NOT NULL REFERENCES internal_document_masters(id),
+    period_key TEXT NOT NULL,
+    last_value INTEGER NOT NULL DEFAULT 0 CHECK (last_value >= 0),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (sml_tenant, master_id, period_key)
+);
+
+CREATE TABLE IF NOT EXISTS internal_documents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sml_tenant TEXT NOT NULL,
+    master_id UUID NOT NULL REFERENCES internal_document_masters(id),
+    master_code TEXT NOT NULL,
+    master_name TEXT NOT NULL,
+    master_revision INTEGER NOT NULL,
+    prefix_snapshot TEXT NOT NULL,
+    pattern_snapshot TEXT NOT NULL,
+    document_no TEXT NOT NULL,
+    document_date DATE NOT NULL,
+    required_date DATE NOT NULL,
+    requester_name TEXT NOT NULL,
+    position_name TEXT NOT NULL DEFAULT '',
+    department_name TEXT NOT NULL DEFAULT '',
+    purpose TEXT NOT NULL,
+    total_amount NUMERIC(18,2) NOT NULL CHECK (total_amount > 0),
+    company_snapshot JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'generating' CHECK (status IN ('generating', 'draft', 'in_progress', 'completed', 'rejected', 'cancelled', 'generation_failed')),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    current_version_id UUID,
+    signing_document_id UUID,
+    idempotency_key TEXT NOT NULL,
+    created_by UUID NOT NULL REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (sml_tenant, document_no),
+    UNIQUE (sml_tenant, created_by, idempotency_key)
+);
+
+CREATE INDEX IF NOT EXISTS internal_documents_tenant_master_status_idx
+ON internal_documents (sml_tenant, master_id, status, document_date DESC);
+
+CREATE INDEX IF NOT EXISTS internal_documents_creator_idx
+ON internal_documents (sml_tenant, created_by, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS internal_documents_number_search_idx
+ON internal_documents (sml_tenant, lower(document_no));
+
+CREATE TABLE IF NOT EXISTS internal_document_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES internal_documents(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    sequence_no INTEGER NOT NULL CHECK (sequence_no > 0),
+    description TEXT NOT NULL,
+    amount NUMERIC(18,2) NOT NULL CHECK (amount > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (document_id, revision, sequence_no)
+);
+
+CREATE INDEX IF NOT EXISTS internal_document_items_lookup_idx
+ON internal_document_items (document_id, revision, sequence_no);
+
+CREATE TABLE IF NOT EXISTS internal_document_versions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES internal_documents(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    file_id UUID NOT NULL REFERENCES uploaded_files(id),
+    sha256 TEXT NOT NULL,
+    page_count INTEGER NOT NULL CHECK (page_count > 0),
+    printed_at TIMESTAMPTZ,
+    sent_at TIMESTAMPTZ,
+    created_by UUID NOT NULL REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (document_id, revision)
+);
+
+CREATE TABLE IF NOT EXISTS internal_document_print_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    document_id UUID NOT NULL REFERENCES internal_documents(id),
+    version_id UUID NOT NULL REFERENCES internal_document_versions(id),
+    revision INTEGER NOT NULL,
+    file_id UUID NOT NULL REFERENCES uploaded_files(id),
+    file_sha256 TEXT NOT NULL,
+    printed_by UUID NOT NULL REFERENCES users(id),
+    ip_address TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS internal_document_print_events_lookup_idx
+ON internal_document_print_events (document_id, revision, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS signing_documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	 document_source TEXT NOT NULL DEFAULT 'sml' CHECK (document_source IN ('sml', 'internal')),
+	 internal_document_id UUID REFERENCES internal_documents(id),
     sml_tenant TEXT NOT NULL DEFAULT 'sml1_2026',
     sml_data_group TEXT NOT NULL DEFAULT 'sml',
     sml_data_code TEXT NOT NULL DEFAULT 'SML1_2026',
@@ -446,6 +566,55 @@ CREATE TABLE IF NOT EXISTS signing_documents (
 
 ALTER TABLE signing_documents
 ADD COLUMN IF NOT EXISTS sml_tenant TEXT NOT NULL DEFAULT 'sml1_2026';
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS document_source TEXT NOT NULL DEFAULT 'sml';
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS internal_document_id UUID REFERENCES internal_documents(id);
+
+ALTER TABLE signing_documents
+DROP CONSTRAINT IF EXISTS signing_documents_document_source_check;
+
+ALTER TABLE signing_documents
+ADD CONSTRAINT signing_documents_document_source_check
+CHECK (document_source IN ('sml', 'internal'));
+
+ALTER TABLE signing_documents
+DROP CONSTRAINT IF EXISTS signing_documents_source_reference_check;
+
+ALTER TABLE signing_documents
+ADD CONSTRAINT signing_documents_source_reference_check
+CHECK (
+    (document_source = 'internal' AND internal_document_id IS NOT NULL)
+    OR (document_source = 'sml' AND internal_document_id IS NULL)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS signing_documents_internal_document_unique_idx
+ON signing_documents (internal_document_id)
+WHERE internal_document_id IS NOT NULL;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'internal_documents_current_version_fk'
+    ) THEN
+        ALTER TABLE internal_documents
+        ADD CONSTRAINT internal_documents_current_version_fk
+        FOREIGN KEY (current_version_id) REFERENCES internal_document_versions(id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'internal_documents_signing_document_fk'
+    ) THEN
+        ALTER TABLE internal_documents
+        ADD CONSTRAINT internal_documents_signing_document_fk
+        FOREIGN KEY (signing_document_id) REFERENCES signing_documents(id);
+    END IF;
+END $$;
 
 ALTER TABLE signing_documents
 ADD COLUMN IF NOT EXISTS sml_data_group TEXT NOT NULL DEFAULT 'sml';

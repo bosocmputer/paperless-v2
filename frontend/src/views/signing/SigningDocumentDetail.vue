@@ -26,6 +26,7 @@ const retryingLock = ref(false);
 const retryingFinalPDF = ref(false);
 const retryingImages = ref(false);
 const printing = ref(false);
+const printingInternal = ref(false);
 const sending = ref(false);
 const confirmingDocument = ref(false);
 const cancellingDocument = ref(false);
@@ -58,6 +59,12 @@ const documentHeaderLine = computed(() => {
     return `${doc.docNo || 'เอกสาร'} ~ ${doc.docFormatCode || '-'} · ${doc.partyName || doc.partyCode || '-'}`;
 });
 const canViewEvidencePDF = computed(() => document.value?.status === 'completed' && Boolean(document.value?.finalFileId || document.value?.finalFile));
+const isInternalDocument = computed(() => document.value?.documentSource === 'internal');
+const documentStatusLabel = computed(() => {
+    if (isInternalDocument.value && document.value?.status === 'pending_confirm') return 'รอสร้างเอกสารสมบูรณ์';
+    if (isInternalDocument.value && document.value?.status === 'auto_confirming') return 'กำลังสร้าง PDF';
+    return signingStatusLabel(document.value?.status);
+});
 const backRouteName = computed(() => {
     if (document.value?.status === 'draft') return 'signing-document-drafts';
     if (document.value?.status === 'completed') return 'signing-document-history';
@@ -78,6 +85,7 @@ function syncActiveMenuFromDocument() {
 }
 
 function loadReferenceCheck() {
+    if (isInternalDocument.value) return Promise.resolve({ referenceCheck: { items: [], summary: { total: 0, missing: 0, inProgress: 0, completed: 0 } } });
     if (!document.value?.id) return Promise.resolve({ referenceCheck: { items: [], summary: { total: 0, missing: 0, inProgress: 0, completed: 0 } } });
     return api.getSigningDocumentReferenceCheck(document.value.id);
 }
@@ -209,6 +217,10 @@ function imageTruncatedDetail(result = {}) {
 }
 
 function confirmSendDocument() {
+    if (isInternalDocument.value && !document.value?.internalCurrentRevisionPrinted) {
+        toast.add({ severity: 'warn', summary: 'กรุณาพิมพ์ PDF ก่อนส่ง', detail: 'ต้องพิมพ์ revision ล่าสุดของเอกสารภายในก่อนส่งเข้า Workflow', life: 3500 });
+        return;
+    }
     confirm.require({
         header: 'ส่งเอกสารไปเซ็น',
         message: `ต้องการส่ง ${document.value?.docNo || 'เอกสารนี้'} ให้ผู้เซ็นใช่ไหม?`,
@@ -217,6 +229,33 @@ function confirmSendDocument() {
         rejectLabel: 'ยกเลิก',
         accept: () => sendDocument()
     });
+}
+
+function openInternalEdit() {
+    if (!document.value?.internalDocumentId) return;
+    router.push({ name: 'internal-document-edit', params: { id: document.value.internalDocumentId } });
+}
+
+async function printInternalDraft() {
+    if (!document.value?.internalDocumentId) return;
+    const popup = window.open('', '_blank');
+    printingInternal.value = true;
+    try {
+        const result = await api.printInternalDocument(document.value.internalDocumentId);
+        const response = await fetch(result.pdfUrl || api.internalDocumentPDFUrl(document.value.internalDocumentId, document.value.internalRevision), { headers: api.authHeaders(), cache: 'no-store' });
+        if (!response.ok) throw new Error('โหลด PDF สำหรับพิมพ์ไม่สำเร็จ');
+        const objectUrl = URL.createObjectURL(await response.blob());
+        if (popup) popup.location.href = objectUrl;
+        else window.open(objectUrl, '_blank');
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+        toast.add({ severity: 'success', summary: 'PDF revision ล่าสุดพร้อมพิมพ์แล้ว', life: 2600 });
+        await loadPage();
+    } catch (error) {
+        if (popup) popup.close();
+        toast.add({ severity: 'error', summary: 'พิมพ์ PDF ไม่สำเร็จ', detail: error.message, life: 4200 });
+    } finally {
+        printingInternal.value = false;
+    }
 }
 
 async function sendDocument() {
@@ -234,9 +273,12 @@ async function sendDocument() {
 }
 
 function confirmAdminConfirmDocument() {
+    const message = isInternalDocument.value
+        ? `ต้องการยืนยัน ${document.value?.docNo || 'เอกสารนี้'} ใช่ไหม? ระบบจะสร้าง PDF ฉบับสมบูรณ์และหลักฐานการลงนามใน PaperLess`
+        : `ต้องการยืนยัน ${document.value?.docNo || 'เอกสารนี้'} ใช่ไหม? ระบบจะสร้าง final PDF/evidence ส่งรูปเข้า SML และ Lock SML`;
     confirm.require({
         header: 'ยืนยันเอกสาร',
-        message: `ต้องการยืนยัน ${document.value?.docNo || 'เอกสารนี้'} ใช่ไหม? ระบบจะสร้าง final PDF/evidence ส่งรูปเข้า SML และ Lock SML`,
+        message,
         icon: 'pi pi-check-circle',
         acceptLabel: 'ยืนยันเอกสาร',
         rejectLabel: 'ยกเลิก',
@@ -602,13 +644,17 @@ function movementEventView(event) {
             <div class="bar-title">
                 <strong>{{ documentHeaderLine }}</strong>
             </div>
-            <Tag v-if="document" :value="signingStatusLabel(document.status)" :severity="signingStatusSeverity(document.status)" />
-            <Button v-if="document" label="ตรวจสอบ Flow" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
-            <Button v-if="document?.status === 'draft'" label="ส่งไปเซ็น" icon="pi pi-send" severity="success" :loading="sending" @click="confirmSendDocument" />
+            <Tag v-if="document" :value="documentStatusLabel" :severity="signingStatusSeverity(document.status)" />
+            <Tag v-if="isInternalDocument" value="เอกสารภายใน" severity="info" />
+            <Tag v-if="isInternalDocument && document?.status === 'draft'" :value="document?.internalCurrentRevisionPrinted ? 'พิมพ์ revision ล่าสุดแล้ว' : 'ต้องพิมพ์ก่อนส่ง'" :severity="document?.internalCurrentRevisionPrinted ? 'success' : 'warn'" />
+            <Button v-if="document && !isInternalDocument" label="ตรวจสอบ Flow" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
+            <Button v-if="document?.status === 'draft' && isInternalDocument" label="แก้ไขแบบฟอร์ม" icon="pi pi-pencil" severity="secondary" outlined @click="openInternalEdit" />
+            <Button v-if="document?.status === 'draft' && isInternalDocument" label="พิมพ์ PDF" icon="pi pi-print" :severity="document?.internalCurrentRevisionPrinted ? 'secondary' : 'warn'" outlined :loading="printingInternal" @click="printInternalDraft" />
+            <Button v-if="document?.status === 'draft'" label="ส่งไปเซ็น" icon="pi pi-send" severity="success" :loading="sending" :disabled="isInternalDocument && !document?.internalCurrentRevisionPrinted" v-tooltip.bottom="isInternalDocument && !document?.internalCurrentRevisionPrinted ? 'กรุณาพิมพ์ PDF revision ล่าสุดก่อนส่ง' : 'ส่งไปเซ็น'" @click="confirmSendDocument" />
             <Button v-if="document?.status === 'draft'" label="ยกเลิก" icon="pi pi-trash" severity="danger" outlined :loading="cancellingDocument" @click="confirmCancelDocument" />
             <Button v-if="document?.status === 'completed_evidence_failed'" label="สร้าง PDF อีกครั้ง" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
-            <Button v-if="document?.status === 'completed_image_failed'" label="ส่งรูป SML อีกครั้ง" icon="pi pi-images" severity="danger" outlined :loading="retryingImages" @click="retryImages" />
-            <Button v-if="document?.status === 'completed_lock_failed'" label="Lock SML อีกครั้ง" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
+            <Button v-if="document?.status === 'completed_image_failed' && !isInternalDocument" label="ส่งรูป SML อีกครั้ง" icon="pi pi-images" severity="danger" outlined :loading="retryingImages" @click="retryImages" />
+            <Button v-if="document?.status === 'completed_lock_failed' && !isInternalDocument" label="Lock SML อีกครั้ง" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
             <Button v-if="canViewEvidencePDF" label="ดูหลักฐานการลงนาม" icon="pi pi-shield" severity="secondary" outlined @click="previewEvidencePDF" />
             <Button v-if="document?.status === 'completed'" label="พิมพ์เอกสาร" icon="pi pi-print" severity="primary" :loading="printing" @click="printOfficialCopy" />
             <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
@@ -623,7 +669,7 @@ function movementEventView(event) {
                 <Tabs v-model:value="activeTab">
                     <TabList>
                         <Tab value="progress">ความคืบหน้า</Tab>
-                        <Tab value="references">ตรวจสอบเอกสาร</Tab>
+                        <Tab v-if="!isInternalDocument" value="references">ตรวจสอบเอกสาร</Tab>
                         <Tab value="attachments">ไฟล์แนบอ้างอิง ({{ documentAttachmentCount }})</Tab>
                         <Tab value="print">พิมพ์</Tab>
                         <Tab value="events">เหตุการณ์</Tab>
@@ -669,7 +715,7 @@ function movementEventView(event) {
                                 <DocumentWorkflowTimeline :document="document" :show-external-actions="false" compact @generate-external="requestExternalToken" />
                             </div>
                         </TabPanel>
-                        <TabPanel value="references">
+                        <TabPanel v-if="!isInternalDocument" value="references">
                             <div class="info-block">
                                 <DocumentReferenceCheck :document="document" :loader="loadReferenceCheck" compact open-in-new-tab :document-route-resolver="referenceDocumentUrl" @open-document="openFlowDocument" />
                             </div>

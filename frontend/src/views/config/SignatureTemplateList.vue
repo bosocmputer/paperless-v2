@@ -76,8 +76,8 @@ async function loadPage() {
     loading.value = true;
     error.value = '';
     try {
-        const [formatsResult, configsResult] = await Promise.all([api.listSMLDocFormats(), api.listDocumentConfigs()]);
-        docFormats.value = formatsResult.docFormats || [];
+        const [formatsResult, configsResult] = await Promise.all([api.listDocumentTypes(), api.listDocumentConfigs()]);
+        docFormats.value = formatsResult.documentTypes || [];
         configs.value = configsResult.configs || [];
 
         const codes = [...new Set(configs.value.map((item) => item.docFormatCode).filter(Boolean))];
@@ -265,7 +265,10 @@ function normalizeSearch(value) {
             <Column header="เอกสาร" style="min-width: 18rem">
                 <template #body="{ data }">
                     <div class="doc-cell">
-                        <div class="doc-code">{{ data.docFormatCode }}</div>
+                        <div class="flex items-center gap-2">
+                            <div class="doc-code">{{ data.docFormatCode }}</div>
+                            <Tag :value="data.format?.source === 'internal' || data.format?.screen_code === 'INTERNAL' ? 'เอกสารภายใน' : 'SML'" :severity="data.format?.source === 'internal' || data.format?.screen_code === 'INTERNAL' ? 'info' : 'secondary'" />
+                        </div>
                         <div class="font-medium">{{ formatName(data) }}</div>
                         <div v-if="formatPattern(data)" class="text-sm text-muted-color">{{ formatPattern(data) }}</div>
                     </div>

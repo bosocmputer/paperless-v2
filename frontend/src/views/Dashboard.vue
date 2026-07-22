@@ -64,10 +64,10 @@ const actionRows = computed(() => {
             partyName: doc.partyName,
             partyCode: doc.partyCode,
             updatedAt: doc.updatedAt,
-            currentPositionName: problemReason(doc.status),
+            currentPositionName: problemReason(doc.status, doc),
             statusLabel: signingStatusLabel(doc.status),
             statusSeverity: signingStatusSeverity(doc.status),
-            helper: doc.status === 'pending_confirm' || doc.status === 'auto_confirming' ? 'เซ็นครบแล้ว ระบบกำลังส่งเข้า SML อัตโนมัติ' : 'เปิดเอกสารเพื่อลองสร้างหลักฐาน ส่งรูป หรือส่งสถานะกลับ SML อีกครั้ง',
+            helper: attentionHelper(doc),
             priority: 1
         });
     });
@@ -175,12 +175,23 @@ function documentLine(doc) {
     return `${doc.docNo || '-'} ~ ${doc.docFormatCode || '-'} · ${doc.partyName || doc.partyCode || '-'}`;
 }
 
-function problemReason(status) {
-    if (status === 'pending_confirm') return 'รอระบบส่งเข้า SML';
-    if (status === 'auto_confirming') return 'กำลังส่งเข้า SML';
+function isInternalDocument(doc) {
+    return String(doc?.documentSource || doc?.document_source || '').toLowerCase() === 'internal';
+}
+
+function attentionHelper(doc) {
+    if (isInternalDocument(doc)) {
+        return doc.status === 'pending_confirm' || doc.status === 'auto_confirming' ? 'เซ็นครบแล้ว ระบบกำลังสร้างเอกสารฉบับสมบูรณ์' : 'เปิดเอกสารเพื่อลองสร้าง PDF หรือหลักฐานอีกครั้ง';
+    }
+    return doc.status === 'pending_confirm' || doc.status === 'auto_confirming' ? 'เซ็นครบแล้ว ระบบกำลังส่งเข้า SML อัตโนมัติ' : 'เปิดเอกสารเพื่อลองสร้างหลักฐาน ส่งรูป หรือส่งสถานะกลับ SML อีกครั้ง';
+}
+
+function problemReason(status, doc) {
+    if (status === 'pending_confirm') return isInternalDocument(doc) ? 'รอสร้างเอกสารฉบับสมบูรณ์' : 'รอระบบส่งเข้า SML';
+    if (status === 'auto_confirming') return isInternalDocument(doc) ? 'กำลังสร้างเอกสารฉบับสมบูรณ์' : 'กำลังส่งเข้า SML';
     if (status === 'completed_evidence_failed') return 'สร้างไฟล์หลักฐานไม่สำเร็จ';
-    if (status === 'completed_image_failed') return 'ส่งรูปเอกสารเข้า SML ไม่สำเร็จ';
-    if (status === 'completed_lock_failed') return 'ส่งสถานะกลับ SML ไม่สำเร็จ';
+    if (status === 'completed_image_failed') return isInternalDocument(doc) ? 'สร้างเอกสารฉบับสมบูรณ์ไม่สำเร็จ' : 'ส่งรูปเอกสารเข้า SML ไม่สำเร็จ';
+    if (status === 'completed_lock_failed') return isInternalDocument(doc) ? 'ปิดงานเอกสารไม่สำเร็จ' : 'ส่งสถานะกลับ SML ไม่สำเร็จ';
     return 'ต้องตรวจสอบ';
 }
 

@@ -101,6 +101,9 @@ func (s *Server) getSigningDocumentRelatedDocuments(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
 		return
 	}
+	if rejectInternalDocumentSMLAction(w, document) {
+		return
+	}
 	graph, ok := s.writeRelatedDocuments(w, r.WithContext(store.WithSMLTenant(r.Context(), document.SMLTenant)), document.DocFormatCode, document.DocNo, true)
 	if !ok {
 		return
@@ -122,6 +125,9 @@ func (s *Server) getSigningDocumentReferenceCheck(w http.ResponseWriter, r *http
 	}
 	if !canAccessSigningDocumentAsAdmin(document, actor) {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
+		return
+	}
+	if rejectInternalDocumentSMLAction(w, document) {
 		return
 	}
 
@@ -165,6 +171,9 @@ func (s *Server) getMySigningTaskRelatedDocuments(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
+	if rejectInternalDocumentSMLAction(w, document) {
+		return
+	}
 	graph, ok := s.writeRelatedDocuments(w, r.WithContext(store.WithSMLTenant(r.Context(), document.SMLTenant)), document.DocFormatCode, document.DocNo, false)
 	if !ok {
 		return
@@ -192,6 +201,9 @@ func (s *Server) getMySigningTaskReferenceStatus(w http.ResponseWriter, r *http.
 	}
 	if document.Status != "in_progress" {
 		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
+	if rejectInternalDocumentSMLAction(w, document) {
 		return
 	}
 
@@ -238,6 +250,9 @@ func (s *Server) getMySigningTaskReferenceCheck(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
 		return
 	}
+	if rejectInternalDocumentSMLAction(w, document) {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.SMLPaperlessTimeout)
 	defer cancel()
@@ -275,6 +290,14 @@ func unavailableSigningReferenceStatus() signingReferenceStatusResponse {
 		Summary:   models.SMLDocumentReferenceSummary{},
 		CheckedAt: time.Now().UTC(),
 	}
+}
+
+func rejectInternalDocumentSMLAction(w http.ResponseWriter, document models.SigningDocument) bool {
+	if !strings.EqualFold(strings.TrimSpace(document.DocumentSource), "internal") {
+		return false
+	}
+	writeError(w, http.StatusConflict, "sml_action_not_applicable", "เอกสารภายในไม่มี Flow หรือเอกสารอ้างอิงจาก SML")
+	return true
 }
 
 func signingReferenceStatusFromSummary(summary models.SMLDocumentReferenceSummary) string {
