@@ -210,9 +210,11 @@ function openTemplate(master) {
 </template>
 
 <style scoped>
-.internal-master-page { display: grid; gap: 1rem; }
+.internal-master-page { display: grid; gap: 1rem; min-width: 0; }
 .page-toolbar, .toolbar-actions, .title-row, .row-actions, .readiness-tags { display: flex; align-items: center; gap: .65rem; }
 .page-toolbar { justify-content: space-between; flex-wrap: wrap; }
+.page-toolbar, .page-toolbar > div, :deep(.p-datatable) { min-width: 0; }
+.internal-master-page :deep(.p-datatable-table-container) { max-width: 100%; overflow-x: auto; }
 .page-toolbar h1 { margin: 0; font-size: 1.35rem; }
 .page-toolbar p { margin: .25rem 0 0; color: var(--text-color-secondary); }
 .toolbar-actions { flex-wrap: wrap; }
