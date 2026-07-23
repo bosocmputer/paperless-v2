@@ -1,6 +1,6 @@
 <script setup>
 import { authStore } from '@/stores/auth';
-import { ADMIN_SIGNER_MENU_KEYS, SIGNING_DOCUMENT_MENU_KEYS } from '@/utils/signingQueue';
+import { ADMIN_SIGNER_MENU_KEYS, INTERNAL_DOCUMENT_MENU_KEYS, SIGNING_DOCUMENT_MENU_KEYS } from '@/utils/signingQueue';
 import { computed } from 'vue';
 import AppMenuItem from './AppMenuItem.vue';
 
@@ -49,7 +49,9 @@ const model = computed(() => {
                           {
                               label: 'สร้างเอกสารภายใน',
                               icon: 'pi pi-fw pi-file-edit',
-                              to: '/signing/internal-documents/new'
+                              to: '/signing/internal-documents/new',
+                              menuKey: INTERNAL_DOCUMENT_MENU_KEYS.create,
+                              activeMatch: '/signing/internal-documents'
                           }
                       ]
                     : []),

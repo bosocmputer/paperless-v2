@@ -1,7 +1,7 @@
 import AppLayout from '@/layout/AppLayout.vue';
 import SignerLayout from '@/layout/SignerLayout.vue';
 import { authStore } from '@/stores/auth';
-import { ADMIN_SIGNER_MENU_KEYS, SIGNING_DOCUMENT_MENU_KEYS } from '@/utils/signingQueue';
+import { ADMIN_SIGNER_MENU_KEYS, INTERNAL_DOCUMENT_MENU_KEYS, SIGNING_DOCUMENT_MENU_KEYS } from '@/utils/signingQueue';
 import { createRouter, createWebHistory } from 'vue-router';
 
 const ADMIN_SIGNER_ROUTE_BY_USER_ROUTE = Object.freeze({
@@ -205,13 +205,13 @@ const router = createRouter({
                     path: '/signing/internal-documents/new',
                     name: 'internal-document-new',
                     component: () => import('@/views/signing/InternalDocumentForm.vue'),
-                    meta: { role: 'admin', feature: 'internalDocuments', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.draft }
+                    meta: { role: 'admin', feature: 'internalDocuments', activeMenuKey: INTERNAL_DOCUMENT_MENU_KEYS.create }
                 },
                 {
                     path: '/signing/internal-documents/:id/edit',
                     name: 'internal-document-edit',
                     component: () => import('@/views/signing/InternalDocumentForm.vue'),
-                    meta: { role: 'admin', feature: 'internalDocuments', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.draft }
+                    meta: { role: 'admin', feature: 'internalDocuments', activeMenuKey: INTERNAL_DOCUMENT_MENU_KEYS.create }
                 },
                 {
                     path: '/signing/documents/:id',

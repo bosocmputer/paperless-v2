@@ -15,6 +15,10 @@ export const ADMIN_SIGNER_MENU_KEYS = Object.freeze({
     history: 'admin-my-signing-history'
 });
 
+export const INTERNAL_DOCUMENT_MENU_KEYS = Object.freeze({
+    create: 'internal-document-create'
+});
+
 export function normalizeSigningDocumentQueue(value) {
     const queue = String(value || '').trim().toLowerCase();
     return Object.prototype.hasOwnProperty.call(SIGNING_DOCUMENT_QUEUES, queue) ? queue : '';
