@@ -240,10 +240,6 @@ function confirmSendDocument() {
         toast.add({ severity: 'warn', summary: 'กรุณาจัดวางกรอบก่อนส่ง', detail: 'วางกรอบลายเซ็นและข้อความกฎหมายบน PDF ฉบับจริงให้ครบก่อนส่งเข้า Workflow', life: 3800 });
         return;
     }
-    if (isInternalDocument.value && !document.value?.internalCurrentRevisionPrinted) {
-        toast.add({ severity: 'warn', summary: 'กรุณาพิมพ์ PDF ก่อนส่ง', detail: 'ต้องพิมพ์ revision ล่าสุดของเอกสารภายในก่อนส่งเข้า Workflow', life: 3500 });
-        return;
-    }
     confirm.require({
         header: 'ส่งเอกสารไปเซ็น',
         message: `ต้องการส่ง ${document.value?.docNo || 'เอกสารนี้'} ให้ผู้เซ็นใช่ไหม?`,
@@ -727,14 +723,13 @@ function movementEventView(event) {
             </div>
             <Tag v-if="document" :value="documentStatusLabel" :severity="signingStatusSeverity(document.status)" />
             <Tag v-if="isInternalDocument" value="เอกสารภายใน" severity="info" />
-            <Tag v-if="isInternalDocument && document?.status === 'draft'" :value="document?.internalCurrentRevisionPrinted ? 'พิมพ์ revision ล่าสุดแล้ว' : 'ต้องพิมพ์ก่อนส่ง'" :severity="document?.internalCurrentRevisionPrinted ? 'success' : 'warn'" />
             <Tag v-if="isInternalDocument && document?.status === 'draft'" :value="internalLayoutReady ? 'จัดวางกรอบแล้ว' : 'ต้องจัดวางกรอบ'" :severity="internalLayoutReady ? 'success' : 'warn'" />
             <Button v-if="document && !isInternalDocument" label="ตรวจสอบ Flow" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
             <Button v-if="document?.status === 'draft' && isInternalDocument" label="แก้ไขแบบฟอร์ม" icon="pi pi-pencil" severity="secondary" outlined @click="openInternalEdit" />
             <Button v-if="document?.status === 'draft' && isInternalDocument" label="จัดวางกรอบ" icon="pi pi-objects-column" severity="secondary" outlined @click="openInternalLayout" />
-            <Button v-if="document?.status === 'draft' && isInternalDocument" label="พิมพ์ PDF" icon="pi pi-print" :severity="document?.internalCurrentRevisionPrinted ? 'secondary' : 'warn'" outlined :disabled="!internalLayoutReady" v-tooltip.bottom="internalLayoutReady ? 'พิมพ์ PDF revision ล่าสุด' : 'กรุณาจัดวางกรอบก่อนพิมพ์'" :loading="printingInternal" @click="printInternalDraft" />
+            <Button v-if="document?.status === 'draft' && isInternalDocument" label="พิมพ์ PDF" icon="pi pi-print" severity="secondary" outlined :disabled="!internalLayoutReady" v-tooltip.bottom="internalLayoutReady ? 'พิมพ์ PDF revision ล่าสุด (ไม่บังคับก่อนส่ง)' : 'กรุณาจัดวางกรอบก่อนพิมพ์'" :loading="printingInternal" @click="printInternalDraft" />
             <Button v-if="document?.status === 'cancelled' && isInternalDocument" label="สร้างฉบับใหม่" icon="pi pi-copy" severity="secondary" outlined @click="copyInternalDocument" />
-            <Button v-if="document?.status === 'draft'" label="ส่งไปเซ็น" icon="pi pi-send" severity="success" :loading="sending" :disabled="isInternalDocument && (!document?.internalCurrentRevisionPrinted || !internalLayoutReady)" v-tooltip.bottom="isInternalDocument && !internalLayoutReady ? 'กรุณาจัดวางกรอบก่อนส่ง' : (isInternalDocument && !document?.internalCurrentRevisionPrinted ? 'กรุณาพิมพ์ PDF revision ล่าสุดก่อนส่ง' : 'ส่งไปเซ็น')" @click="confirmSendDocument" />
+            <Button v-if="document?.status === 'draft'" label="ส่งไปเซ็น" icon="pi pi-send" severity="success" :loading="sending" :disabled="isInternalDocument && !internalLayoutReady" v-tooltip.bottom="isInternalDocument && !internalLayoutReady ? 'กรุณาจัดวางกรอบก่อนส่ง' : 'ส่งไปเซ็น'" @click="confirmSendDocument" />
             <Button v-if="(document?.status === 'draft' && !isInternalDocument) || canCancelInternalDocument" label="ยกเลิก" icon="pi pi-trash" severity="danger" outlined :loading="cancellingDocument" @click="confirmCancelDocument" />
             <Button v-if="document?.status === 'completed_evidence_failed'" label="สร้าง PDF อีกครั้ง" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
             <Button v-if="document?.status === 'completed_image_failed' && !isInternalDocument" label="ส่งรูป SML อีกครั้ง" icon="pi pi-images" severity="danger" outlined :loading="retryingImages" @click="retryImages" />

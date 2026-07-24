@@ -62,6 +62,15 @@ func TestFindInternalDocumentScanAllowsMissingCurrentVersion(t *testing.T) {
 	}
 }
 
+func TestValidateInternalDraftSendRequiresLayoutButNotPrint(t *testing.T) {
+	if err := validateInternalDraftSend(false); !errors.Is(err, ErrSigningDocumentLayoutRequired) {
+		t.Fatalf("missing layout error = %v, want %v", err, ErrSigningDocumentLayoutRequired)
+	}
+	if err := validateInternalDraftSend(true); err != nil {
+		t.Fatalf("layout-ready draft must be sendable without a print event: %v", err)
+	}
+}
+
 // internalDocumentMissingVersionRow asserts the destination type for the
 // nullable created_at from the LEFT JOIN in FindInternalDocumentByID.
 type internalDocumentMissingVersionRow struct {

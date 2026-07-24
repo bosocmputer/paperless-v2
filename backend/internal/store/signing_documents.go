@@ -746,22 +746,8 @@ func (s *Store) SendSigningDocument(ctx context.Context, documentID, actorID, ip
 		return models.SigningDocument{}, ErrSigningDocumentNotFound
 	}
 	if documentSource == "internal" {
-		if !layoutReady {
-			return models.SigningDocument{}, ErrSigningDocumentLayoutRequired
-		}
-		var printable bool
-		if err := tx.QueryRow(ctx, `
-SELECT EXISTS(
-  SELECT 1
-  FROM internal_documents d
-  JOIN signing_documents s ON s.id=d.signing_document_id
-  JOIN internal_document_print_events p ON p.document_id=d.id AND p.revision=d.revision AND p.file_id=s.current_file_id
-  WHERE d.id=NULLIF($1,'')::uuid AND d.signing_document_id=$2
-)`, internalDocumentID, documentID).Scan(&printable); err != nil {
+		if err := validateInternalDraftSend(layoutReady); err != nil {
 			return models.SigningDocument{}, err
-		}
-		if !printable {
-			return models.SigningDocument{}, ErrInternalDocumentPrintRequired
 		}
 	}
 
@@ -806,6 +792,15 @@ WHERE id = $1
 		return models.SigningDocument{}, err
 	}
 	return s.FindSigningDocumentByID(ctx, documentID)
+}
+
+// Internal documents need an approved layout so every signer has a real PDF
+// placement. Printing remains an optional audit action and must not block send.
+func validateInternalDraftSend(layoutReady bool) error {
+	if !layoutReady {
+		return ErrSigningDocumentLayoutRequired
+	}
+	return nil
 }
 
 func (s *Store) PrepareSigningDocumentConfirmation(ctx context.Context, documentID, actorID, ipAddress, userAgent string) (models.SigningDocument, error) {

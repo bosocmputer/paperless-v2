@@ -138,7 +138,7 @@ External signers only see the signing task. They do not see attachments, admin t
 | PDF preview fails | Refresh/reopen the page; if it persists, report document number to admin |
 | SML image upload failed | Admin uses retry SML images |
 | SML lock failed | Admin retries lock after image upload is successful |
-| Internal document cannot be sent | Arrange signature/legal boxes and print the latest PDF revision, then send again |
+| Internal document cannot be sent | Arrange signature/legal boxes, then send again; printing the latest PDF revision is optional |
 | Internal Master cannot be activated | Complete its Running pattern and Workflow |
 | Company profile unavailable | Ask SML ERP support to verify one usable row in `public.erp_company_profile` |
 | External link already used | Generate a new external link/OTP from admin detail if business allows |

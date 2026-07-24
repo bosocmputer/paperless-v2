@@ -153,7 +153,7 @@ Safe smoke checks before customer configuration:
 3. An inactive or incomplete Master cannot create a document and returns a readable configuration error.
 4. Existing SML document create, image upload, and lock flows remain unchanged.
 
-After customer Workflow/Template configuration, create one approved test document, open the generated PDF, edit it once to verify immutable revision behavior, print the latest revision, send it, and complete signing. Confirm logs contain no SML image or SML lock request for that internal document.
+After customer Workflow/Template configuration, create one approved test document, open the generated PDF, edit it once to verify immutable revision behavior, arrange the signature/legal boxes, send it, and complete signing. Printing the latest revision is optional. Confirm logs contain no SML image or SML lock request for that internal document.
 
 For immediate application rollback set `INTERNAL_DOCUMENTS_ENABLED=false` and restore the previous immutable API/Web image tags. Do not drop the additive tables or columns; existing internal records remain audit data and become visible again when the flag is re-enabled.
 

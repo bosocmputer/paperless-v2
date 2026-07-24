@@ -85,7 +85,6 @@ var (
 	ErrInternalDocumentNotFound         = errors.New("internal document not found")
 	ErrInternalDocumentRevisionConflict = errors.New("internal document revision conflict")
 	ErrInternalDocumentInvalidStatus    = errors.New("internal document status does not allow this action")
-	ErrInternalDocumentPrintRequired    = errors.New("current internal document revision must be printed before sending")
 )
 
 type IdempotencyClaim struct {

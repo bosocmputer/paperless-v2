@@ -1153,10 +1153,6 @@ func (s *Server) writeSigningDocumentTransitionError(w http.ResponseWriter, err 
 		writeError(w, http.StatusConflict, "signing_document_status_invalid", "Document status does not allow this action.")
 		return true
 	}
-	if errors.Is(err, store.ErrInternalDocumentPrintRequired) {
-		writeError(w, http.StatusConflict, "internal_document_print_required", "กรุณาพิมพ์ PDF revision ล่าสุดก่อนส่ง")
-		return true
-	}
 	if errors.Is(err, store.ErrSigningDocumentLayoutRequired) {
 		writeError(w, http.StatusConflict, "internal_document_layout_required", "กรุณาจัดวางกรอบลายเซ็นและข้อความกฎหมายบน PDF ก่อนส่งเอกสาร")
 		return true

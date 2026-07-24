@@ -273,10 +273,6 @@ function confirmSend(doc) {
         toast.add({ severity: 'warn', summary: 'กรุณาจัดวางกรอบก่อนส่ง', detail: 'วางกรอบลายเซ็นและข้อความกฎหมายบน PDF ฉบับจริงให้ครบก่อนส่งเข้า Workflow', life: 4000 });
         return;
     }
-    if (isInternalDocument(doc) && !doc.internalCurrentRevisionPrinted) {
-        toast.add({ severity: 'warn', summary: 'กรุณาพิมพ์ PDF ก่อนส่ง', detail: 'ต้องพิมพ์ revision ล่าสุดของเอกสารภายในก่อนส่งเข้า Workflow', life: 3500 });
-        return;
-    }
     confirm.require({
         header: 'ส่งเอกสารไปเซ็น',
         message: `ต้องการส่ง ${doc.docNo} ให้ผู้เซ็นใช่ไหม? หลังส่งแล้วเอกสารจะย้ายไปเมนูเอกสารรอเซ็น`,
@@ -648,8 +644,8 @@ function selectInput(event) {
                             outlined
                             severity="success"
                             aria-label="ส่งไปเซ็น"
-                            :disabled="isInternalDocument(data) && (!data.internalCurrentRevisionPrinted || !data.layoutReady)"
-                            v-tooltip.top="isInternalDocument(data) && !data.layoutReady ? 'กรุณาจัดวางกรอบก่อนส่ง' : (isInternalDocument(data) && !data.internalCurrentRevisionPrinted ? 'กรุณาพิมพ์ PDF revision ล่าสุดก่อนส่ง' : 'ส่งไปเซ็น')"
+                            :disabled="isInternalDocument(data) && !data.layoutReady"
+                            v-tooltip.top="isInternalDocument(data) && !data.layoutReady ? 'กรุณาจัดวางกรอบก่อนส่ง' : 'ส่งไปเซ็น'"
                             :loading="isTransitioning(data.id)"
                             @click="confirmSend(data)"
                         />
@@ -660,10 +656,10 @@ function selectInput(event) {
                             icon="pi pi-print"
                             rounded
                             outlined
-                            :severity="data.internalCurrentRevisionPrinted ? 'secondary' : 'warn'"
+                            severity="secondary"
                             aria-label="พิมพ์ PDF"
                             :disabled="!data.layoutReady"
-                            v-tooltip.top="!data.layoutReady ? 'กรุณาจัดวางกรอบก่อนพิมพ์' : (data.internalCurrentRevisionPrinted ? 'พิมพ์ PDF revision ล่าสุดอีกครั้ง' : 'พิมพ์ PDF ก่อนส่ง')"
+                            v-tooltip.top="!data.layoutReady ? 'กรุณาจัดวางกรอบก่อนพิมพ์' : 'พิมพ์ PDF revision ล่าสุด (ไม่บังคับก่อนส่ง)'"
                             :loading="isTransitioning(data.id)"
                             @click="printInternalDraft(data)"
                         />
