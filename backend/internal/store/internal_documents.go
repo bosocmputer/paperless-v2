@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -391,10 +392,7 @@ RETURNING current_version`, signingID, input.OriginalFile.ID, input.CurrentFile.
 
 func (s *Store) FindInternalDocumentByID(ctx context.Context, id string) (models.InternalDocument, error) {
 	tenant := tenantFilterValue(ctx)
-	var item models.InternalDocument
-	var companyRaw string
-	var printedAt, sentAt *time.Time
-	err := s.pool.QueryRow(ctx, `
+	item, companyRaw, err := scanInternalDocument(s.pool.QueryRow(ctx, `
 SELECT d.id::text,d.sml_tenant,d.master_id::text,d.master_code,d.master_name,d.master_revision,d.prefix_snapshot,d.pattern_snapshot,
        d.document_no,d.document_date::text,d.required_date::text,d.requester_name,d.position_name,d.department_name,d.purpose,
        d.total_amount::text,d.status,d.revision,COALESCE(d.current_version_id::text,''),COALESCE(d.signing_document_id::text,''),
@@ -408,12 +406,7 @@ SELECT d.id::text,d.sml_tenant,d.master_id::text,d.master_code,d.master_name,d.m
        )
 FROM internal_documents d
 LEFT JOIN internal_document_versions v ON v.id=d.current_version_id
-WHERE d.id=$1 AND ($2='' OR d.sml_tenant=$2)`, id, tenant).Scan(
-		&item.ID, &item.SMLTenant, &item.MasterID, &item.MasterCode, &item.MasterName, &item.MasterRevision, &item.PrefixSnapshot, &item.PatternSnapshot,
-		&item.DocumentNo, &item.DocumentDate, &item.RequiredDate, &item.RequesterName, &item.PositionName, &item.DepartmentName, &item.Purpose,
-		&item.TotalAmount, &item.Status, &item.Revision, &item.CurrentVersionID, &item.SigningDocumentID, &companyRaw, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt,
-		new(string), new(string), new(string), new(int), &printedAt, &sentAt, new(time.Time), &item.CurrentRevisionPrint,
-	)
+WHERE d.id=$1 AND ($2='' OR d.sml_tenant=$2)`, id, tenant))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return item, ErrInternalDocumentNotFound
 	}
@@ -434,6 +427,21 @@ WHERE d.id=$1 AND ($2='' OR d.sml_tenant=$2)`, id, tenant).Scan(
 		item.CurrentVersion = &version
 	}
 	return item, nil
+}
+
+func scanInternalDocument(row rowScanner) (models.InternalDocument, string, error) {
+	var item models.InternalDocument
+	var companyRaw string
+	// A freshly reserved document has no current version until its PDF is
+	// generated. The LEFT JOIN therefore returns NULL for these fields.
+	var printedAt, sentAt, versionCreatedAt sql.NullTime
+	err := row.Scan(
+		&item.ID, &item.SMLTenant, &item.MasterID, &item.MasterCode, &item.MasterName, &item.MasterRevision, &item.PrefixSnapshot, &item.PatternSnapshot,
+		&item.DocumentNo, &item.DocumentDate, &item.RequiredDate, &item.RequesterName, &item.PositionName, &item.DepartmentName, &item.Purpose,
+		&item.TotalAmount, &item.Status, &item.Revision, &item.CurrentVersionID, &item.SigningDocumentID, &companyRaw, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt,
+		new(string), new(string), new(string), new(int), &printedAt, &sentAt, &versionCreatedAt, &item.CurrentRevisionPrint,
+	)
+	return item, companyRaw, err
 }
 
 func (s *Store) listInternalDocumentItems(ctx context.Context, documentID string, revision int) ([]models.InternalDocumentItem, error) {

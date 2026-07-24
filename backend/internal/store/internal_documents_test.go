@@ -1,6 +1,8 @@
 package store
 
 import (
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 )
@@ -50,4 +52,30 @@ func TestParseInternalAmount(t *testing.T) {
 			t.Fatalf("expected %q to be rejected", input)
 		}
 	}
+}
+
+func TestFindInternalDocumentScanAllowsMissingCurrentVersion(t *testing.T) {
+	expected := errors.New("stop after destination assertion")
+	_, _, err := scanInternalDocument(internalDocumentMissingVersionRow{t: t, err: expected})
+	if !errors.Is(err, expected) {
+		t.Fatalf("scan error = %v, want %v", err, expected)
+	}
+}
+
+// internalDocumentMissingVersionRow asserts the destination type for the
+// nullable created_at from the LEFT JOIN in FindInternalDocumentByID.
+type internalDocumentMissingVersionRow struct {
+	t   *testing.T
+	err error
+}
+
+func (r internalDocumentMissingVersionRow) Scan(dest ...any) error {
+	r.t.Helper()
+	if len(dest) != 32 {
+		r.t.Fatalf("FindInternalDocumentByID scan destinations = %d, want 32", len(dest))
+	}
+	if _, ok := dest[30].(*sql.NullTime); !ok {
+		r.t.Fatalf("version created_at destination = %T, want *sql.NullTime", dest[30])
+	}
+	return r.err
 }
