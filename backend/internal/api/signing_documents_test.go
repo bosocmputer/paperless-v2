@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -1001,6 +1002,52 @@ func TestValidateLegalNoticeBoxesAllowsMultiplePages(t *testing.T) {
 	}
 	if len(boxes) != 2 {
 		t.Fatalf("expected two legal notice boxes, got %d", len(boxes))
+	}
+}
+
+func TestDecodeInternalDraftLayoutAcceptsAndDiscardsFrontendClientKeys(t *testing.T) {
+	body := `{
+        "expectedVersion": 1,
+        "layoutBoxes": [{
+            "clientKey": "signature-overlay-1",
+            "positionCode": "1",
+            "signerSlot": 1,
+            "signerType": "any",
+            "pageNo": 1,
+            "xRatio": 0.2,
+            "yRatio": 0.5,
+            "widthRatio": 0.2,
+            "heightRatio": 0.08,
+            "label": "ผู้ขอเบิก"
+        }],
+        "legalNoticeBoxes": [{
+            "clientKey": "legal-overlay-1",
+            "pageNo": 1,
+            "xRatio": 0.2,
+            "yRatio": 0.62,
+            "widthRatio": 0.6,
+            "heightRatio": 0.065,
+            "label": "ข้อความกฎหมาย",
+            "source": "per_document"
+        }]
+    }`
+
+	req := httptest.NewRequest(http.MethodPut, "/api/signing-documents/doc/layout", strings.NewReader(body))
+	writer := httptest.NewRecorder()
+	var payload models.SaveSigningDocumentLayoutRequest
+	if err := decodeLimitedJSON(writer, req, 256<<10, &payload); err != nil {
+		t.Fatalf("expected frontend layout payload to decode, got %v", err)
+	}
+	if len(payload.LayoutBoxes) != 1 || len(payload.LegalNoticeBoxes) != 1 {
+		t.Fatalf("unexpected decoded payload: %#v", payload)
+	}
+	boxes, issues := normalizeAndValidateSigningDocumentPlacements(payload.LayoutBoxes, 1)
+	if len(issues) != 0 || boxes[0].ClientKey != "" {
+		t.Fatalf("signature client key must be discarded, boxes=%#v issues=%#v", boxes, issues)
+	}
+	legal, issues := normalizeAndValidateLegalNoticeBoxes(payload.LegalNoticeBoxes, nil, 1, true)
+	if len(issues) != 0 || legal[0].ClientKey != "" {
+		t.Fatalf("legal notice client key must be discarded, boxes=%#v issues=%#v", legal, issues)
 	}
 }
 

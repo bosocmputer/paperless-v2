@@ -403,6 +403,9 @@ type SignatureTemplateBox struct {
 }
 
 type SignatureTemplateBoxRequest struct {
+	// ClientKey is an ephemeral frontend identifier used while arranging boxes.
+	// It is accepted for backwards-compatible draft saves and discarded by validation.
+	ClientKey    string  `json:"clientKey,omitempty"`
 	PositionCode string  `json:"positionCode"`
 	SignerSlot   int     `json:"signerSlot"`
 	SignerType   string  `json:"signerType"`
@@ -426,6 +429,9 @@ type LegalNoticeBox struct {
 }
 
 type LegalNoticeBoxRequest struct {
+	// ClientKey is an ephemeral frontend identifier used while arranging boxes.
+	// It is accepted for backwards-compatible draft saves and discarded by validation.
+	ClientKey   string  `json:"clientKey,omitempty"`
 	PageNo      int     `json:"pageNo"`
 	XRatio      float64 `json:"xRatio"`
 	YRatio      float64 `json:"yRatio"`

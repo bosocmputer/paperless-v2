@@ -268,6 +268,11 @@ function withLayoutClientKey(box, index) {
     return { ...box, clientKey: box.clientKey || `internal-layout-${index}-${crypto.randomUUID?.() || Date.now()}` };
 }
 
+function toInternalLayoutPayload(box) {
+    const { clientKey: _clientKey, ...payload } = box || {};
+    return payload;
+}
+
 function openInternalLayout() {
     if (!document.value?.id || !document.value?.originalFile) return;
     const boxes = (document.value.signaturePlacements || []).map((box, index) => withLayoutClientKey(box, index));
@@ -291,8 +296,8 @@ async function saveInternalLayout() {
     try {
         const result = await api.saveInternalDraftLayout(document.value.id, {
             expectedVersion: document.value.currentVersion,
-            layoutBoxes: layoutDraft.value.boxes,
-            legalNoticeBoxes: layoutDraft.value.legalNoticeBoxes
+            layoutBoxes: layoutDraft.value.boxes.map(toInternalLayoutPayload),
+            legalNoticeBoxes: layoutDraft.value.legalNoticeBoxes.map(toInternalLayoutPayload)
         });
         document.value = result.document;
         layoutDialog.value = false;

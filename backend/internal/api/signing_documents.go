@@ -1689,6 +1689,8 @@ func normalizeAndValidateSigningDocumentPlacements(boxes []models.SignatureTempl
 	normalized := make([]models.SignatureTemplateBoxRequest, 0, len(boxes))
 	issues := []models.SignatureValidationIssue{}
 	for index, box := range boxes {
+		// clientKey only coordinates the browser overlay; never persist it in a document snapshot.
+		box.ClientKey = ""
 		box.PositionCode = strings.TrimSpace(box.PositionCode)
 		box.SignerType = strings.ToLower(strings.TrimSpace(box.SignerType))
 		box.SignerUser = strings.TrimSpace(box.SignerUser)

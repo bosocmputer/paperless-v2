@@ -494,6 +494,8 @@ func normalizeAndValidateBoxRequests(boxes []models.SignatureTemplateBoxRequest,
 	issues := []models.SignatureValidationIssue{}
 	usedSlots := map[string]bool{}
 	for index, box := range boxes {
+		// clientKey only coordinates the browser overlay; never persist it in a document snapshot.
+		box.ClientKey = ""
 		box.PositionCode = strings.TrimSpace(box.PositionCode)
 		box.SignerType = strings.ToLower(strings.TrimSpace(box.SignerType))
 		box.SignerUser = strings.TrimSpace(box.SignerUser)
@@ -589,6 +591,8 @@ func normalizeAndValidateLegalNoticeBox(box *models.LegalNoticeBoxRequest, maxPa
 		return nil, nil
 	}
 	normalized := *box
+	// clientKey only coordinates the browser overlay; never persist it in a document snapshot.
+	normalized.ClientKey = ""
 	normalized.Label = strings.TrimSpace(normalized.Label)
 	normalized.Source = strings.ToLower(strings.TrimSpace(normalized.Source))
 	if normalized.Label == "" {
