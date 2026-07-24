@@ -328,15 +328,12 @@ func (s *Store) UpdateInternalDocumentRevision(ctx context.Context, input Update
 	if status != "draft" || createdBy != input.ActorID || signingID == "" {
 		return models.InternalDocument{}, ErrInternalDocumentInvalidStatus
 	}
-	var signingStatus, signaturePlacementsRaw, legalNoticeRaw, legalNoticeBoxesRaw string
+	var signingStatus string
 	if err := tx.QueryRow(ctx, `
-SELECT status,
-       COALESCE(signature_placement_snapshot, '[]'::jsonb)::text,
-       COALESCE(legal_notice_snapshot, '{}'::jsonb)::text,
-       COALESCE(legal_notice_boxes_snapshot, '[]'::jsonb)::text
+SELECT status
 FROM signing_documents
 WHERE id=$1
-FOR UPDATE`, signingID).Scan(&signingStatus, &signaturePlacementsRaw, &legalNoticeRaw, &legalNoticeBoxesRaw); err != nil {
+FOR UPDATE`, signingID).Scan(&signingStatus); err != nil {
 		return models.InternalDocument{}, err
 	}
 	if signingStatus != "draft" {
@@ -355,30 +352,10 @@ FOR UPDATE`, signingID).Scan(&signingStatus, &signaturePlacementsRaw, &legalNoti
 	if _, err := tx.Exec(ctx, `UPDATE internal_documents SET required_date=$2,requester_name=$3,position_name=$4,department_name=$5,purpose=$6,total_amount=$7::numeric,revision=$8,current_version_id=$9,updated_at=now() WHERE id=$1`, input.InternalID, input.RequiredDate, input.RequesterName, input.PositionName, input.DepartmentName, input.Purpose, input.TotalAmount, next, versionID); err != nil {
 		return models.InternalDocument{}, err
 	}
-	signaturePlacements := parseSignaturePlacementSnapshots(signaturePlacementsRaw)
-	for i := range signaturePlacements {
-		signaturePlacements[i].PageNo = input.OriginalFile.PageCount
-	}
-	var legalNotice models.LegalNoticeSnapshot
-	_ = json.Unmarshal([]byte(legalNoticeRaw), &legalNotice)
-	if strings.TrimSpace(legalNotice.Text) != "" {
-		legalNotice.PageNo = input.OriginalFile.PageCount
-	}
-	var legalNoticeBoxes []models.LegalNoticeSnapshot
-	_ = json.Unmarshal([]byte(legalNoticeBoxesRaw), &legalNoticeBoxes)
-	for i := range legalNoticeBoxes {
-		legalNoticeBoxes[i].PageNo = input.OriginalFile.PageCount
-	}
-	signatureJSON, err := json.Marshal(signaturePlacements)
-	if err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM signing_document_signers WHERE document_id=$1`, signingID); err != nil {
 		return models.InternalDocument{}, err
 	}
-	legalJSON, err := json.Marshal(legalNotice)
-	if err != nil {
-		return models.InternalDocument{}, err
-	}
-	legalBoxesJSON, err := json.Marshal(legalNoticeBoxes)
-	if err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE signing_document_steps SET status='waiting', completed_at=NULL WHERE document_id=$1`, signingID); err != nil {
 		return models.InternalDocument{}, err
 	}
 	var signingVersion int
@@ -389,22 +366,21 @@ SET original_file_id=$2,
     current_version=current_version+1,
     party_name=$4,
     total_amount=$5::numeric,
-    signature_placement_snapshot=$6::jsonb,
-    legal_notice_snapshot=$7::jsonb,
-    legal_notice_boxes_snapshot=$8::jsonb,
+    template_snapshot='{ "source": "internal_draft_layout_required" }'::jsonb,
+    signature_template_id=NULL,
+    signature_placement_snapshot='[]'::jsonb,
+    legal_notice_snapshot='{}'::jsonb,
+    legal_notice_boxes_snapshot='[]'::jsonb,
+    layout_ready=false,
     updated_at=now()
 WHERE id=$1
-RETURNING current_version`, signingID, input.OriginalFile.ID, input.CurrentFile.ID, input.RequesterName, input.TotalAmount,
-		string(signatureJSON), string(legalJSON), string(legalBoxesJSON)).Scan(&signingVersion); err != nil {
-		return models.InternalDocument{}, err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE signing_document_signers SET page_no=$2 WHERE document_id=$1`, signingID, input.OriginalFile.PageCount); err != nil {
+RETURNING current_version`, signingID, input.OriginalFile.ID, input.CurrentFile.ID, input.RequesterName, input.TotalAmount).Scan(&signingVersion); err != nil {
 		return models.InternalDocument{}, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO signing_document_versions(document_id,version_no,file_id,kind,created_by) VALUES($1,$2,$3,'original',$5),($1,$2,$4,'current',$5)`, signingID, signingVersion, input.OriginalFile.ID, input.CurrentFile.ID, input.ActorID); err != nil {
 		return models.InternalDocument{}, err
 	}
-	if err := insertSigningEvent(ctx, tx, signingID, input.ActorID, "", "internal_document_revised", "แก้ไขแบบฟอร์มเอกสารภายใน", input.IPAddress, input.UserAgent, map[string]any{"internalRevision": next}); err != nil {
+	if err := insertSigningEvent(ctx, tx, signingID, input.ActorID, "", "internal_document_revised", "แก้ไขแบบฟอร์มเอกสารภายในและต้องจัดวางกรอบใหม่", input.IPAddress, input.UserAgent, map[string]any{"internalRevision": next, "layoutInvalidated": true}); err != nil {
 		return models.InternalDocument{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -424,7 +400,12 @@ SELECT d.id::text,d.sml_tenant,d.master_id::text,d.master_code,d.master_name,d.m
        d.total_amount::text,d.status,d.revision,COALESCE(d.current_version_id::text,''),COALESCE(d.signing_document_id::text,''),
        d.company_snapshot::text,d.created_by::text,d.created_at,d.updated_at,
        COALESCE(v.id::text,''),COALESCE(v.file_id::text,''),COALESCE(v.sha256,''),COALESCE(v.page_count,0),v.printed_at,v.sent_at,v.created_at,
-       EXISTS(SELECT 1 FROM internal_document_print_events p WHERE p.document_id=d.id AND p.revision=d.revision)
+       EXISTS(
+           SELECT 1
+           FROM internal_document_print_events p
+           JOIN signing_documents s ON s.id=d.signing_document_id
+           WHERE p.document_id=d.id AND p.revision=d.revision AND p.file_id=s.current_file_id
+       )
 FROM internal_documents d
 LEFT JOIN internal_document_versions v ON v.id=d.current_version_id
 WHERE d.id=$1 AND ($2='' OR d.sml_tenant=$2)`, id, tenant).Scan(
@@ -478,7 +459,7 @@ func (s *Store) findInternalVersion(ctx context.Context, id string) (models.Inte
 	return item, err
 }
 
-func (s *Store) CreateInternalDocumentPrintEvent(ctx context.Context, internalID, actorID, ipAddress, userAgent string) (models.InternalDocument, models.UploadedFile, error) {
+func (s *Store) CreateInternalDocumentPrintEvent(ctx context.Context, internalID, actorID, ipAddress, userAgent string, allowSuperAdmin bool) (models.InternalDocument, models.UploadedFile, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return models.InternalDocument{}, models.UploadedFile{}, err
@@ -486,21 +467,26 @@ func (s *Store) CreateInternalDocumentPrintEvent(ctx context.Context, internalID
 	defer func() { _ = tx.Rollback(ctx) }()
 	var versionID, fileID, sha, createdBy, status string
 	var revision int
+	var layoutReady bool
 	err = tx.QueryRow(ctx, `
-SELECT current_version_id::text,revision,created_by::text,status
-FROM internal_documents
-WHERE id=$1 AND ($2='' OR sml_tenant=$2)
-FOR UPDATE`, internalID, tenantFilterValue(ctx)).Scan(&versionID, &revision, &createdBy, &status)
+SELECT d.current_version_id::text,d.revision,d.created_by::text,d.status,COALESCE(s.current_file_id::text,''),s.layout_ready
+FROM internal_documents d
+JOIN signing_documents s ON s.id=d.signing_document_id AND s.document_source='internal'
+WHERE d.id=$1 AND ($2='' OR d.sml_tenant=$2)
+FOR UPDATE OF d,s`, internalID, tenantFilterValue(ctx)).Scan(&versionID, &revision, &createdBy, &status, &fileID, &layoutReady)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.InternalDocument{}, models.UploadedFile{}, ErrInternalDocumentNotFound
 	}
 	if err != nil {
 		return models.InternalDocument{}, models.UploadedFile{}, err
 	}
-	if createdBy != actorID || status != "draft" {
+	if (createdBy != actorID && !allowSuperAdmin) || status != "draft" {
 		return models.InternalDocument{}, models.UploadedFile{}, ErrInternalDocumentInvalidStatus
 	}
-	if err := tx.QueryRow(ctx, `SELECT file_id::text,sha256 FROM internal_document_versions WHERE id=$1 AND revision=$2`, versionID, revision).Scan(&fileID, &sha); err != nil {
+	if !layoutReady || strings.TrimSpace(fileID) == "" {
+		return models.InternalDocument{}, models.UploadedFile{}, ErrSigningDocumentLayoutRequired
+	}
+	if err := tx.QueryRow(ctx, `SELECT sha256 FROM uploaded_files WHERE id=NULLIF($1,'')::uuid`, fileID).Scan(&sha); err != nil {
 		return models.InternalDocument{}, models.UploadedFile{}, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO internal_document_print_events(document_id,version_id,revision,file_id,file_sha256,printed_by,ip_address,user_agent) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, internalID, versionID, revision, fileID, sha, actorID, ipAddress, userAgent); err != nil {

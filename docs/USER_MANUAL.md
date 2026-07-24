@@ -51,8 +51,8 @@ Batch import uses the Active Template automatically and does not open the placem
 Superadmin prepares an internal document once:
 
 1. Open `Master เอกสารภายใน` and configure the name, code, prefix, and running pattern.
-2. Configure its Workflow and Active Template. Signature boxes for internal documents are placed on the last PDF page.
-3. Activate the Master only after both configurations are ready.
+2. Configure its Workflow to determine the signing positions and sequence.
+3. Activate the Master after its Workflow is ready. An Active Template is not required for internal documents.
 
 Admin or superadmin then creates the real document:
 
@@ -60,8 +60,11 @@ Admin or superadmin then creates the real document:
 2. Enter the requester, position, department, purpose, required date, and at least one expense row.
 3. Save once. PaperLess reserves the document number, creates the PDF, and creates the draft automatically; no PDF upload is required.
 4. Use `แก้ไขแบบฟอร์ม` while the document is still a draft. Each save creates a new immutable revision.
-5. Open `พิมพ์ PDF` for the latest revision. Editing afterward requires printing the new revision again.
-6. Send the draft to the normal signing Workflow.
+5. Select `จัดวางกรอบ` and place a signature box for every Workflow position plus the legal-notice box on the actual generated PDF.
+6. Open `พิมพ์ PDF` for the latest revision. Editing afterward requires both arranging the new revision and printing it again.
+7. Send the draft to the normal signing Workflow.
+
+After sending, the form and layout are locked. To stop an internal document, the creator or superadmin uses `ยกเลิก` and enters a reason. The history remains available, outstanding external links are revoked, and a cancelled document can be copied into a new draft with a new document number.
 
 Internal documents use the company profile from the selected SML database only at creation time. They finish entirely in PaperLess and never upload images or lock transactions in SML.
 
@@ -135,8 +138,8 @@ External signers only see the signing task. They do not see attachments, admin t
 | PDF preview fails | Refresh/reopen the page; if it persists, report document number to admin |
 | SML image upload failed | Admin uses retry SML images |
 | SML lock failed | Admin retries lock after image upload is successful |
-| Internal document cannot be sent | Open/print the latest PDF revision, then send again |
-| Internal Master cannot be activated | Complete its Running pattern, Workflow, and Active Template |
+| Internal document cannot be sent | Arrange signature/legal boxes and print the latest PDF revision, then send again |
+| Internal Master cannot be activated | Complete its Running pattern and Workflow |
 | Company profile unavailable | Ask SML ERP support to verify one usable row in `public.erp_company_profile` |
 | External link already used | Generate a new external link/OTP from admin detail if business allows |
 

@@ -1,11 +1,13 @@
 <script setup>
 import { useLayout } from '@/layout/composables/layout';
 import { api } from '@/services/api';
+import { authStore } from '@/stores/auth';
 import { formatThaiDateTime, signingStatusLabel, signingStatusSeverity, smlImageFailureDetail } from '@/utils/signingFormatters';
 import { isSigningDocumentMenuKey, normalizeSigningDocumentQueue, signingDocumentMenuKeyForQueue, signingDocumentQueueForStatus } from '@/utils/signingQueue';
 import ContinuousPdfViewer from '@/views/signing/components/ContinuousPdfViewer.vue';
 import DocumentAttachmentsPanel from '@/views/signing/components/DocumentAttachmentsPanel.vue';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
+import DocumentLayoutDesigner from '@/views/signing/components/DocumentLayoutDesigner.vue';
 import DocumentReferenceCheck from '@/views/signing/components/DocumentReferenceCheck.vue';
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
@@ -43,6 +45,12 @@ const evidencePdfUrl = ref('');
 const evidencePdfTitle = ref('');
 const copyFallbackVisible = ref(false);
 const copyFallbackValue = ref('');
+const layoutDialog = ref(false);
+const savingLayout = ref(false);
+const layoutValidationIssues = ref([]);
+const layoutDraft = ref({ boxes: [], legalNoticeBox: null, legalNoticeBoxes: [] });
+const cancelDialog = ref(false);
+const cancelReason = ref('');
 
 const importantEvents = computed(() =>
     (document.value?.events || [])
@@ -60,6 +68,12 @@ const documentHeaderLine = computed(() => {
 });
 const canViewEvidencePDF = computed(() => document.value?.status === 'completed' && Boolean(document.value?.finalFileId || document.value?.finalFile));
 const isInternalDocument = computed(() => document.value?.documentSource === 'internal');
+const internalLayoutReady = computed(() => !isInternalDocument.value || document.value?.layoutReady === true);
+const internalLayoutPDFUrl = computed(() => (document.value?.id ? api.signingDocumentPDFUrlForDocument(document.value, 'original') : ''));
+const canCancelInternalDocument = computed(() => {
+    if (!isInternalDocument.value || !['draft', 'in_progress'].includes(document.value?.status)) return false;
+    return authStore.user?.role === 'superadmin' || document.value?.createdBy === authStore.user?.id;
+});
 const documentStatusLabel = computed(() => {
     if (isInternalDocument.value && document.value?.status === 'pending_confirm') return 'รอสร้างเอกสารสมบูรณ์';
     if (isInternalDocument.value && document.value?.status === 'auto_confirming') return 'กำลังสร้าง PDF';
@@ -121,6 +135,11 @@ async function loadPage() {
         document.value = result.document;
         syncActiveMenuFromDocument();
         loadDocumentAttachments();
+        if (route.query.open_layout === '1' && document.value?.documentSource === 'internal' && document.value?.status === 'draft') {
+            openInternalLayout();
+            const { open_layout, ...query } = route.query;
+            router.replace({ query });
+        }
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลดเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
@@ -217,6 +236,10 @@ function imageTruncatedDetail(result = {}) {
 }
 
 function confirmSendDocument() {
+    if (isInternalDocument.value && !internalLayoutReady.value) {
+        toast.add({ severity: 'warn', summary: 'กรุณาจัดวางกรอบก่อนส่ง', detail: 'วางกรอบลายเซ็นและข้อความกฎหมายบน PDF ฉบับจริงให้ครบก่อนส่งเข้า Workflow', life: 3800 });
+        return;
+    }
     if (isInternalDocument.value && !document.value?.internalCurrentRevisionPrinted) {
         toast.add({ severity: 'warn', summary: 'กรุณาพิมพ์ PDF ก่อนส่ง', detail: 'ต้องพิมพ์ revision ล่าสุดของเอกสารภายในก่อนส่งเข้า Workflow', life: 3500 });
         return;
@@ -234,6 +257,52 @@ function confirmSendDocument() {
 function openInternalEdit() {
     if (!document.value?.internalDocumentId) return;
     router.push({ name: 'internal-document-edit', params: { id: document.value.internalDocumentId } });
+}
+
+function copyInternalDocument() {
+    if (!document.value?.internalDocumentId) return;
+    router.push({ name: 'internal-document-new', query: { copy_from: document.value.internalDocumentId } });
+}
+
+function withLayoutClientKey(box, index) {
+    return { ...box, clientKey: box.clientKey || `internal-layout-${index}-${crypto.randomUUID?.() || Date.now()}` };
+}
+
+function openInternalLayout() {
+    if (!document.value?.id || !document.value?.originalFile) return;
+    const boxes = (document.value.signaturePlacements || []).map((box, index) => withLayoutClientKey(box, index));
+    const legalNoticeBoxes = (document.value.legalNoticeBoxes || []).map((box, index) => withLayoutClientKey(box, `legal-${index}`));
+    layoutDraft.value = {
+        boxes,
+        legalNoticeBox: legalNoticeBoxes[0] || null,
+        legalNoticeBoxes
+    };
+    layoutValidationIssues.value = [];
+    layoutDialog.value = true;
+}
+
+async function saveInternalLayout() {
+    if (!document.value?.id || savingLayout.value) return;
+    if (layoutValidationIssues.value.length) {
+        toast.add({ severity: 'warn', summary: 'กรอบยังไม่พร้อม', detail: layoutValidationIssues.value[0], life: 4000 });
+        return;
+    }
+    savingLayout.value = true;
+    try {
+        const result = await api.saveInternalDraftLayout(document.value.id, {
+            expectedVersion: document.value.currentVersion,
+            layoutBoxes: layoutDraft.value.boxes,
+            legalNoticeBoxes: layoutDraft.value.legalNoticeBoxes
+        });
+        document.value = result.document;
+        layoutDialog.value = false;
+        toast.add({ severity: 'success', summary: 'บันทึกกรอบลายเซ็นแล้ว', detail: 'Draft พร้อมสำหรับพิมพ์ PDF และส่งเข้า Workflow', life: 3200 });
+    } catch (error) {
+        const issues = Array.isArray(error.payload?.issues) ? error.payload.issues.join(' · ') : error.message;
+        toast.add({ severity: 'error', summary: 'บันทึกกรอบไม่สำเร็จ', detail: issues, life: 5200 });
+    } finally {
+        savingLayout.value = false;
+    }
 }
 
 async function printInternalDraft() {
@@ -306,6 +375,11 @@ async function adminConfirmDocument() {
 }
 
 function confirmCancelDocument() {
+    if (isInternalDocument.value) {
+        cancelReason.value = '';
+        cancelDialog.value = true;
+        return;
+    }
     confirm.require({
         header: 'ยกเลิกเอกสาร',
         message: `ต้องการยกเลิก ${document.value?.docNo || 'เอกสารนี้'} ใช่ไหม?`,
@@ -321,9 +395,11 @@ async function cancelDocument() {
     if (!document.value?.id) return;
     cancellingDocument.value = true;
     try {
-        await api.cancelSigningDocument(document.value.id, { idempotencyKey: makeTransitionKey('cancel') });
+        await api.cancelSigningDocument(document.value.id, { idempotencyKey: makeTransitionKey('cancel'), reason: cancelReason.value });
         toast.add({ severity: 'success', summary: 'ยกเลิกเอกสารแล้ว', life: 2500 });
-        router.push({ name: 'signing-document-drafts' });
+        cancelDialog.value = false;
+        if (isInternalDocument.value) await loadPage();
+        else router.push({ name: 'signing-document-drafts' });
     } catch (err) {
         toast.add({ severity: 'error', summary: 'ยกเลิกเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
@@ -647,11 +723,14 @@ function movementEventView(event) {
             <Tag v-if="document" :value="documentStatusLabel" :severity="signingStatusSeverity(document.status)" />
             <Tag v-if="isInternalDocument" value="เอกสารภายใน" severity="info" />
             <Tag v-if="isInternalDocument && document?.status === 'draft'" :value="document?.internalCurrentRevisionPrinted ? 'พิมพ์ revision ล่าสุดแล้ว' : 'ต้องพิมพ์ก่อนส่ง'" :severity="document?.internalCurrentRevisionPrinted ? 'success' : 'warn'" />
+            <Tag v-if="isInternalDocument && document?.status === 'draft'" :value="internalLayoutReady ? 'จัดวางกรอบแล้ว' : 'ต้องจัดวางกรอบ'" :severity="internalLayoutReady ? 'success' : 'warn'" />
             <Button v-if="document && !isInternalDocument" label="ตรวจสอบ Flow" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
             <Button v-if="document?.status === 'draft' && isInternalDocument" label="แก้ไขแบบฟอร์ม" icon="pi pi-pencil" severity="secondary" outlined @click="openInternalEdit" />
-            <Button v-if="document?.status === 'draft' && isInternalDocument" label="พิมพ์ PDF" icon="pi pi-print" :severity="document?.internalCurrentRevisionPrinted ? 'secondary' : 'warn'" outlined :loading="printingInternal" @click="printInternalDraft" />
-            <Button v-if="document?.status === 'draft'" label="ส่งไปเซ็น" icon="pi pi-send" severity="success" :loading="sending" :disabled="isInternalDocument && !document?.internalCurrentRevisionPrinted" v-tooltip.bottom="isInternalDocument && !document?.internalCurrentRevisionPrinted ? 'กรุณาพิมพ์ PDF revision ล่าสุดก่อนส่ง' : 'ส่งไปเซ็น'" @click="confirmSendDocument" />
-            <Button v-if="document?.status === 'draft'" label="ยกเลิก" icon="pi pi-trash" severity="danger" outlined :loading="cancellingDocument" @click="confirmCancelDocument" />
+            <Button v-if="document?.status === 'draft' && isInternalDocument" label="จัดวางกรอบ" icon="pi pi-objects-column" severity="secondary" outlined @click="openInternalLayout" />
+            <Button v-if="document?.status === 'draft' && isInternalDocument" label="พิมพ์ PDF" icon="pi pi-print" :severity="document?.internalCurrentRevisionPrinted ? 'secondary' : 'warn'" outlined :disabled="!internalLayoutReady" v-tooltip.bottom="internalLayoutReady ? 'พิมพ์ PDF revision ล่าสุด' : 'กรุณาจัดวางกรอบก่อนพิมพ์'" :loading="printingInternal" @click="printInternalDraft" />
+            <Button v-if="document?.status === 'cancelled' && isInternalDocument" label="สร้างฉบับใหม่" icon="pi pi-copy" severity="secondary" outlined @click="copyInternalDocument" />
+            <Button v-if="document?.status === 'draft'" label="ส่งไปเซ็น" icon="pi pi-send" severity="success" :loading="sending" :disabled="isInternalDocument && (!document?.internalCurrentRevisionPrinted || !internalLayoutReady)" v-tooltip.bottom="isInternalDocument && !internalLayoutReady ? 'กรุณาจัดวางกรอบก่อนส่ง' : (isInternalDocument && !document?.internalCurrentRevisionPrinted ? 'กรุณาพิมพ์ PDF revision ล่าสุดก่อนส่ง' : 'ส่งไปเซ็น')" @click="confirmSendDocument" />
+            <Button v-if="(document?.status === 'draft' && !isInternalDocument) || canCancelInternalDocument" label="ยกเลิก" icon="pi pi-trash" severity="danger" outlined :loading="cancellingDocument" @click="confirmCancelDocument" />
             <Button v-if="document?.status === 'completed_evidence_failed'" label="สร้าง PDF อีกครั้ง" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
             <Button v-if="document?.status === 'completed_image_failed' && !isInternalDocument" label="ส่งรูป SML อีกครั้ง" icon="pi pi-images" severity="danger" outlined :loading="retryingImages" @click="retryImages" />
             <Button v-if="document?.status === 'completed_lock_failed' && !isInternalDocument" label="Lock SML อีกครั้ง" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
@@ -789,6 +868,38 @@ function movementEventView(event) {
 
     <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="openFlowDocument" />
     <ReadOnlyPdfDialog v-model:visible="evidenceDialog" :url="evidencePdfUrl" :title="evidencePdfTitle" />
+
+    <Dialog v-model:visible="layoutDialog" modal maximizable :style="{ width: 'min(92rem, 98vw)' }" :contentStyle="{ padding: '1rem', overflow: 'hidden' }" header="จัดวางกรอบบน PDF ฉบับจริง" :draggable="false">
+        <div class="internal-layout-dialog">
+            <Message severity="info" :closable="false" class="m-0">กรอบนี้ใช้กับ Draft ฉบับนี้เท่านั้น วางลายเซ็นของทุกตำแหน่งและข้อความกฎหมายให้ครบก่อนส่ง</Message>
+            <DocumentLayoutDesigner
+                v-model="layoutDraft.boxes"
+                v-model:legalNoticeBox="layoutDraft.legalNoticeBox"
+                v-model:legalNoticeBoxes="layoutDraft.legalNoticeBoxes"
+                :pdfUrl="internalLayoutPDFUrl"
+                :pageCount="document?.originalFile?.pageCount || 0"
+                :configs="document?.steps || []"
+                fullHeight
+                @validation-change="layoutValidationIssues = $event"
+            />
+        </div>
+        <template #footer>
+            <Button label="ยกเลิก" severity="secondary" text :disabled="savingLayout" @click="layoutDialog = false" />
+            <Button label="บันทึกกรอบ" icon="pi pi-check" :loading="savingLayout" @click="saveInternalLayout" />
+        </template>
+    </Dialog>
+
+    <Dialog v-model:visible="cancelDialog" modal header="ยกเลิกเอกสารภายใน" :style="{ width: 'min(34rem, 94vw)' }" :draggable="false">
+        <div class="cancel-document-form">
+            <Message severity="warn" :closable="false" class="m-0">หลังยกเลิก เอกสารจะไม่ส่งต่อให้ผู้เซ็น และลิงก์ภายนอกที่มีอยู่จะใช้ไม่ได้</Message>
+            <label>เหตุผลการยกเลิก <span class="required-mark">*</span></label>
+            <Textarea v-model="cancelReason" rows="4" maxlength="1000" autoResize placeholder="ระบุเหตุผลเพื่อเก็บในประวัติเอกสาร" />
+        </div>
+        <template #footer>
+            <Button label="กลับ" severity="secondary" text :disabled="cancellingDocument" @click="cancelDialog = false" />
+            <Button label="ยกเลิกเอกสาร" icon="pi pi-trash" severity="danger" :disabled="!cancelReason.trim()" :loading="cancellingDocument" @click="cancelDocument" />
+        </template>
+    </Dialog>
 
     <Dialog v-model:visible="tokenDialog" modal header="ลิงก์ภายนอก / OTP" :style="{ width: 'min(42rem, 92vw)' }">
         <div v-if="generatedToken" class="token-box">
@@ -1089,6 +1200,10 @@ function movementEventView(event) {
     display: grid;
     gap: 0.75rem;
 }
+.internal-layout-dialog { display: grid; gap: .75rem; min-height: min(76dvh, 56rem); }
+.cancel-document-form { display: grid; gap: .75rem; }
+.cancel-document-form label { font-weight: 600; }
+.required-mark { color: var(--red-500, #ef4444); }
 .otp-text {
     font-size: 1.35rem;
     font-weight: 700;

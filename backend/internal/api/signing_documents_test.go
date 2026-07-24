@@ -921,6 +921,44 @@ func TestValidateSigningDocumentLayoutRejectsZeroBoxes(t *testing.T) {
 	}
 }
 
+func TestInternalLayoutCoverageRequiresEveryWorkflowStep(t *testing.T) {
+	configs := []models.DocumentConfigStep{
+		{PositionCode: "requester", PositionName: "ผู้ขอเบิก", User01: "001:ผู้ขอเบิก", ConditionType: 1, SequenceNo: 1},
+		{PositionCode: "approver", PositionName: "ผู้อนุมัติ", User01: "002:ผู้อนุมัติ", ConditionType: 1, SequenceNo: 2},
+	}
+	boxes := []models.SignatureTemplateBoxRequest{{
+		PositionCode: "requester", SignerType: "any", PageNo: 2,
+		XRatio: 0.1, YRatio: 0.7, WidthRatio: 0.2, HeightRatio: 0.08,
+	}}
+
+	issues := internalLayoutCoverageIssues(configs, boxes)
+	if !hasSignatureIssue(issues, "internal_step_layout_required") {
+		t.Fatalf("expected missing workflow step issue, got %#v", issues)
+	}
+	if len(issues) != 1 || issues[0].PositionCode != "approver" {
+		t.Fatalf("expected only approver to be missing, got %#v", issues)
+	}
+}
+
+func TestInternalLayoutConfigsKeepsAttachmentRequirementsFromDocumentSnapshot(t *testing.T) {
+	document := models.SigningDocument{
+		ConfigSnapshot: []models.DocumentConfigStep{{
+			PositionCode: "1", PositionName: "ผู้อนุมัติ", SequenceNo: 1, ConditionType: 2,
+			AttachmentRequirements: []models.AttachmentRequirement{{Key: "quotation", Label: "ใบเสนอราคา", SignerSlot: 1}},
+		}},
+		Steps: []models.SigningDocumentStep{{
+			PositionCode: "1", PositionName: "ผู้อนุมัติ", SequenceNo: 1, ConditionType: 2,
+		}},
+	}
+	configs := internalLayoutConfigs(document)
+	if len(configs) != 1 || len(configs[0].AttachmentRequirements) != 1 {
+		t.Fatalf("expected attachment requirements from draft snapshot, got %#v", configs)
+	}
+	if configs[0].AttachmentRequirements[0].Key != "quotation" {
+		t.Fatalf("unexpected attachment requirement %#v", configs[0].AttachmentRequirements)
+	}
+}
+
 func TestValidateLegalNoticeBoxRequiredAndBounds(t *testing.T) {
 	_, issues := normalizeAndValidateLegalNoticeBox(nil, 1, true)
 	if !hasSignatureIssue(issues, "legal_notice_box_required") {

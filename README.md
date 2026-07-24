@@ -112,9 +112,11 @@ Valid items are created as independent drafts with concurrency capped at two. Su
 
 ## Internal Documents
 
-Set `INTERNAL_DOCUMENTS_ENABLED=true` to enable PaperLess-only request forms. Superadmins configure an internal document Master, running pattern, Workflow, and Active Template. Admins then enter the requester, department, purpose, required date, and expense rows once. PaperLess reserves the number atomically, snapshots the SML company profile, generates an immutable A4 PDF revision, and creates the signing draft automatically.
+Set `INTERNAL_DOCUMENTS_ENABLED=true` to enable PaperLess-only request forms. Superadmins configure an internal document Master, running pattern, and Workflow. Admins then enter the requester, department, purpose, required date, and expense rows once. PaperLess reserves the number atomically, snapshots the SML company profile, generates an immutable A4 PDF revision, and creates the signing draft automatically.
 
-An internal draft must open its latest printable PDF before it can be sent. Editing creates a new immutable revision and invalidates the earlier print readiness. After sending, the form can no longer be edited. Internal documents reuse normal signers, attachments, required attachments, saved signatures, runtime notes, history, evidence, and official-print behavior.
+Because the generated form can grow to multiple pages, the creator places signature boxes and the legal-notice box on the real Draft PDF, not on a fixed template. An internal draft must save that layout and open its latest printable PDF before it can be sent. Editing creates a new immutable revision and invalidates both the earlier print readiness and layout. After sending, the form and layout can no longer be edited. Internal documents reuse normal signers, attachments, required attachments, saved signatures, runtime notes, history, evidence, and official-print behavior.
+
+The creator or a superadmin can cancel an internal document only while it is a Draft or is in progress, and must record a reason. Cancellation preserves the audit trail, revokes outstanding external links, and stops unsigned tasks; it never deletes an audited document. A cancelled document can be used as a starting point for a new draft with a new running number.
 
 Internal documents never upload images to SML and never lock an SML transaction. The SML API is used only to read `public.erp_company_profile` when the internal document is first created. Company data and each PDF revision remain immutable audit snapshots.
 

@@ -65,6 +65,7 @@ var (
 	ErrSigningDocumentDuplicate         = errors.New("signing document already exists")
 	ErrSigningDocumentUploadNotFound    = errors.New("signing document upload not found")
 	ErrSigningDocumentInvalidStatus     = errors.New("signing document status does not allow this action")
+	ErrSigningDocumentLayoutRequired    = errors.New("signing document layout is required before sending")
 	ErrSigningTaskNotFound              = errors.New("signing task not found")
 	ErrSigningTaskUnavailable           = errors.New("signing task is not available")
 	ErrRequiredAttachmentsMissing       = errors.New("required signing attachments are missing")
@@ -633,6 +634,9 @@ ADD COLUMN IF NOT EXISTS legal_notice_boxes_snapshot JSONB NOT NULL DEFAULT '[]'
 
 ALTER TABLE signing_documents
 ADD COLUMN IF NOT EXISTS sign_note_placement_snapshot JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS layout_ready BOOLEAN NOT NULL DEFAULT true;
 
 ALTER TABLE signing_documents
 DROP CONSTRAINT IF EXISTS signing_documents_status_check;

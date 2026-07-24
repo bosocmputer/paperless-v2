@@ -37,6 +37,10 @@ const docFormatName = computed(() => {
     const format = workflow.value?.docFormat || {};
     return format.name_1 || format.name_2 || format.format || 'ไม่มีชื่อเอกสาร';
 });
+const isInternalDocument = computed(() => {
+    const format = workflow.value?.docFormat || {};
+    return String(format.source || '').toLowerCase() === 'internal' || String(format.screenCode || format.screen_code || '').toUpperCase() === 'INTERNAL';
+});
 const activeUserOptions = computed(() => {
     const options = users.value
         .filter((user) => user.status === 'active')
@@ -553,12 +557,13 @@ function normalizeCode(value) {
                 <Tag v-if="dirty" severity="warn" value="ยังไม่บันทึก" />
                 <Tag v-else severity="success" value="บันทึกแล้ว" />
                 <Button label="เพิ่มขั้นตอน" icon="pi pi-plus" severity="secondary" @click="openCreateStep" />
-                <Button label="กรอบเริ่มต้น" icon="pi pi-map-marker" severity="secondary" outlined @click="router.push({ name: 'signature-template', params: { docFormatCode } })" />
+                <Button v-if="!isInternalDocument" label="กรอบเริ่มต้น" icon="pi pi-map-marker" severity="secondary" outlined @click="router.push({ name: 'signature-template', params: { docFormatCode } })" />
                 <Button label="บันทึก Workflow" icon="pi pi-save" :loading="saving" :disabled="Boolean(saveDisabledReason)" @click="requestSave" />
             </div>
         </div>
 
         <Message v-if="saveDisabledReason && dirty" severity="warn" class="mb-4" :closable="false">{{ saveDisabledReason }}</Message>
+        <Message v-if="isInternalDocument" severity="info" class="mb-4" :closable="false">เอกสารภายในใช้ Workflow สำหรับลำดับและผู้เซ็นเท่านั้น ผู้สร้างจะวางกรอบลายเซ็นและข้อความกฎหมายบน PDF ฉบับจริงใน Draft ก่อนส่ง</Message>
         <Message v-if="conflictMessage" severity="warn" class="mb-4" :closable="false">
             {{ conflictMessage }}
             <Button label="โหลดใหม่" icon="pi pi-refresh" text size="small" @click="loadWorkflow" />

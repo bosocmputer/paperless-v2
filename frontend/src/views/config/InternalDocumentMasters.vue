@@ -69,8 +69,8 @@ function openEdit(master) {
 }
 
 function setActive(value) {
-    if (value && editing.value && (!editing.value.workflowReady || !editing.value.templateReady)) {
-        toast.add({ severity: 'warn', summary: 'ยังเปิดใช้งานไม่ได้', detail: 'กรุณาตั้งค่า Workflow และกรอบลายเซ็นให้พร้อมก่อน', life: 3500 });
+    if (value && editing.value && !editing.value.workflowReady) {
+        toast.add({ severity: 'warn', summary: 'ยังเปิดใช้งานไม่ได้', detail: 'กรุณาตั้งค่า Workflow ให้พร้อมก่อน', life: 3500 });
         form.status = 'inactive';
         return;
     }
@@ -127,9 +127,6 @@ function openWorkflow(master) {
     router.push({ name: 'document-config-workflow', params: { docFormatCode: master.code } });
 }
 
-function openTemplate(master) {
-    router.push({ name: 'signature-template', params: { docFormatCode: master.code } });
-}
 </script>
 
 <template>
@@ -167,7 +164,7 @@ function openTemplate(master) {
                 <template #body="{ data }">
                     <div class="readiness-tags">
                         <Tag :value="data.workflowReady ? 'Workflow พร้อม' : 'ยังไม่มี Workflow'" :severity="data.workflowReady ? 'success' : 'warn'" />
-                        <Tag :value="data.templateReady ? 'กรอบพร้อม' : 'ยังไม่มีกรอบ'" :severity="data.templateReady ? 'success' : 'warn'" />
+                        <Tag value="จัดวางกรอบใน Draft" severity="info" />
                     </div>
                 </template>
             </Column>
@@ -178,9 +175,8 @@ function openTemplate(master) {
                 <template #body="{ data }">
                     <div class="row-actions">
                         <Button icon="pi pi-file-edit" rounded outlined severity="secondary" v-tooltip.top="'ตั้งค่า Workflow'" aria-label="ตั้งค่า Workflow" @click="openWorkflow(data)" />
-                        <Button icon="pi pi-map-marker" rounded outlined severity="secondary" v-tooltip.top="'วางกรอบลายเซ็น'" aria-label="วางกรอบลายเซ็น" @click="openTemplate(data)" />
                         <Button icon="pi pi-pencil" rounded outlined severity="secondary" aria-label="แก้ไข" @click="openEdit(data)" />
-                        <Button v-if="data.documentCount === 0 && !data.workflowReady && !data.templateReady" icon="pi pi-trash" rounded outlined severity="danger" aria-label="ลบ" @click="confirmDelete(data)" />
+                        <Button v-if="data.documentCount === 0 && !data.workflowReady" icon="pi pi-trash" rounded outlined severity="danger" aria-label="ลบ" @click="confirmDelete(data)" />
                     </div>
                 </template>
             </Column>
@@ -197,10 +193,10 @@ function openTemplate(master) {
             </div>
             <div class="preview-line"><span>ตัวอย่างเลขเอกสาร</span><strong>{{ runningPreview || '-' }}</strong></div>
             <div v-if="editing" class="status-switch">
-                <span><strong>เปิดใช้งาน</strong><small>ต้องมี Workflow และ Active Template พร้อมแล้ว</small></span>
+                <span><strong>เปิดใช้งาน</strong><small>ต้องมี Workflow พร้อมแล้ว กรอบลายเซ็นจะจัดวางบน Draft PDF จริง</small></span>
                 <ToggleSwitch :modelValue="form.status === 'active'" @update:modelValue="setActive" />
             </div>
-            <Message v-else severity="info" class="m-0">Master ใหม่จะเริ่มเป็นปิดใช้งาน เพื่อให้ตั้งค่า Workflow และกรอบลายเซ็นก่อน</Message>
+            <Message v-else severity="info" class="m-0">Master ใหม่จะเริ่มเป็นปิดใช้งาน เพื่อให้ตั้งค่า Workflow ก่อน</Message>
         </div>
         <template #footer>
             <Button label="ยกเลิก" severity="secondary" text @click="dialogVisible = false" />

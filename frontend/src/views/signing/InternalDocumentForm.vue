@@ -12,6 +12,7 @@ const saving = ref(false);
 const dirty = ref(false);
 const masters = ref([]);
 const internalDocument = ref(null);
+const copySource = ref(null);
 const idempotencyKey = ref(crypto.randomUUID?.() || `internal-${Date.now()}-${Math.random()}`);
 const form = reactive({
     masterId: '',
@@ -25,8 +26,13 @@ const form = reactive({
 });
 
 const isEdit = computed(() => Boolean(route.params.id));
-const pageTitle = computed(() => (isEdit.value ? `แก้ไข ${internalDocument.value?.documentNo || 'เอกสารภายใน'}` : 'สร้างเอกสารภายใน'));
-const activeMasters = computed(() => masters.value.filter((item) => item.status === 'active' && item.workflowReady && item.templateReady));
+const isCopy = computed(() => !isEdit.value && Boolean(route.query.copy_from));
+const pageTitle = computed(() => {
+    if (isEdit.value) return `แก้ไข ${internalDocument.value?.documentNo || 'เอกสารภายใน'}`;
+    if (isCopy.value) return `สร้างฉบับใหม่จาก ${copySource.value?.documentNo || 'เอกสารภายใน'}`;
+    return 'สร้างเอกสารภายใน';
+});
+const activeMasters = computed(() => masters.value.filter((item) => item.status === 'active' && item.workflowReady));
 const masterOptions = computed(() => {
     if (!isEdit.value) return activeMasters.value;
     const selected = masters.value.find((item) => item.id === form.masterId);
@@ -75,6 +81,24 @@ async function loadPage() {
                 purpose: document.purpose || '',
                 items: (document.items || []).map((item) => ({ clientKey: item.id || crypto.randomUUID(), description: item.description, amount: Number(item.amount) }))
             });
+        } else if (isCopy.value) {
+            const result = await api.getInternalDocument(String(route.query.copy_from));
+            const source = result.internalDocument;
+            copySource.value = source;
+            const sourceMaster = activeMasters.value.find((master) => master.id === source.masterId);
+            Object.assign(form, {
+                masterId: sourceMaster?.id || activeMasters.value[0]?.id || '',
+                documentDate: new Date(),
+                requiredDate: toDate(source.requiredDate),
+                requesterName: source.requesterName || '',
+                positionName: source.positionName || '',
+                departmentName: source.departmentName || '',
+                purpose: source.purpose || '',
+                items: (source.items || []).map((item) => ({ clientKey: crypto.randomUUID?.() || `copy-${Date.now()}-${Math.random()}`, description: item.description, amount: Number(item.amount) }))
+            });
+            if (!sourceMaster) {
+                toast.add({ severity: 'warn', summary: 'Master เดิมยังไม่พร้อมใช้', detail: 'กรุณาเลือก Master ที่เปิดใช้งานอยู่ก่อนบันทึกฉบับใหม่', life: 4500 });
+            }
         } else if (activeMasters.value.length) {
             form.masterId = activeMasters.value[0].id;
         }
@@ -175,6 +199,7 @@ function formatMoney(value) {
             <div class="toolbar-title">
                 <strong>{{ pageTitle }}</strong>
                 <small v-if="isEdit">Revision {{ internalDocument?.revision || '-' }} · วันที่และเลขที่เอกสารถูกล็อกแล้ว</small>
+                <small v-else-if="isCopy">คัดลอกเฉพาะข้อมูลแบบฟอร์ม เลขที่เอกสารและ PDF จะสร้างใหม่</small>
                 <small v-else>กรอกข้อมูลครั้งเดียว ระบบจะสร้าง PDF และ Draft ให้อัตโนมัติ</small>
             </div>
             <Tag v-if="selectedMaster" :value="selectedMaster.code" severity="info" />
@@ -182,7 +207,7 @@ function formatMoney(value) {
         </div>
 
         <Message v-if="!loading && activeMasters.length === 0 && !isEdit" severity="warn" :closable="false">
-            ยังไม่มี Master ที่พร้อมใช้งาน กรุณาให้ Superadmin เปิดใช้งาน Master หลังตั้งค่า Workflow และกรอบลายเซ็นแล้ว
+            ยังไม่มี Master ที่พร้อมใช้งาน กรุณาให้ Superadmin เปิดใช้งาน Master หลังตั้งค่า Workflow แล้ว
         </Message>
 
         <section class="form-section">

@@ -392,6 +392,12 @@ export const api = {
             body: JSON.stringify(body)
         });
     },
+    saveInternalDraftLayout(id, payload) {
+        return request(`/api/signing-documents/${id}/layout`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    },
     sendSigningDocument(id, payload = {}) {
         const { body, headers } = splitIdempotencyPayload(payload);
         return request(`/api/signing-documents/${id}/send`, {

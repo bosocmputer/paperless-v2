@@ -990,6 +990,25 @@ func (s *Server) confirmSigningDocument(w http.ResponseWriter, r *http.Request) 
 func (s *Server) cancelSigningDocument(w http.ResponseWriter, r *http.Request) {
 	actor, _ := currentUser(r)
 	documentID := strings.TrimSpace(r.PathValue("id"))
+	var req models.CancelSigningDocumentRequest
+	if err := decodeLimitedJSON(w, r, 16<<10, &req); err != nil {
+		return
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if len([]rune(req.Reason)) > 1000 {
+		writeError(w, http.StatusBadRequest, "cancel_reason_invalid", "เหตุผลการยกเลิกยาวเกิน 1,000 ตัวอักษร")
+		return
+	}
+	documentForPolicy, err := s.store.FindSigningDocumentByID(r.Context(), documentID)
+	if err != nil {
+		if s.writeSigningDocumentTransitionError(w, err, "cancel_signing_document_failed", "Cannot cancel signing document right now.") {
+			return
+		}
+	}
+	if documentForPolicy.DocumentSource == "internal" && req.Reason == "" {
+		writeError(w, http.StatusBadRequest, "cancel_reason_required", "กรุณาระบุเหตุผลการยกเลิกเอกสารภายใน")
+		return
+	}
 	scope := "signing_document_cancel:" + documentID
 	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
 		writeError(w, http.StatusBadRequest, "idempotency_key_required", "Idempotency-Key is required when cancelling a signing document.")
@@ -1005,7 +1024,7 @@ func (s *Server) cancelSigningDocument(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	document, err := s.store.CancelSigningDocument(r.Context(), documentID, actor.ID, clientIP(r), r.UserAgent())
+	document, err := s.store.CancelSigningDocument(r.Context(), documentID, actor.ID, req.Reason, clientIP(r), r.UserAgent(), actor.Role == "superadmin")
 	if s.writeSigningDocumentTransitionError(w, err, "cancel_signing_document_failed", "Cannot cancel signing document right now.") {
 		return
 	}
@@ -1013,6 +1032,113 @@ func (s *Server) cancelSigningDocument(w http.ResponseWriter, r *http.Request) {
 	s.completeIdempotency(scope, actor.ID, r, http.StatusOK, payload)
 	idempotencyCompleted = true
 	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) saveInternalDraftLayout(w http.ResponseWriter, r *http.Request) {
+	actor, _ := currentUser(r)
+	documentID := strings.TrimSpace(r.PathValue("id"))
+	var req models.SaveSigningDocumentLayoutRequest
+	if err := decodeLimitedJSON(w, r, 256<<10, &req); err != nil {
+		return
+	}
+	if req.ExpectedVersion < 1 {
+		writeError(w, http.StatusBadRequest, "layout_version_required", "กรุณาโหลด Draft ล่าสุดก่อนจัดวางกรอบ")
+		return
+	}
+	document, err := s.store.FindSigningDocumentByID(r.Context(), documentID)
+	if err != nil {
+		s.writeSigningDocumentTransitionError(w, err, "save_draft_layout_failed", "Cannot load signing document right now.")
+		return
+	}
+	if document.DocumentSource != "internal" || document.Status != "draft" {
+		writeError(w, http.StatusConflict, "internal_draft_layout_unavailable", "จัดวางกรอบได้เฉพาะ Draft เอกสารภายใน")
+		return
+	}
+	if document.CreatedBy != actor.ID && actor.Role != "superadmin" {
+		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
+		return
+	}
+	if document.OriginalFile == nil || document.OriginalFile.PageCount < 1 {
+		writeError(w, http.StatusConflict, "internal_draft_pdf_missing", "ไม่พบ PDF ฉบับจริงสำหรับจัดวางกรอบ")
+		return
+	}
+	configs := internalLayoutConfigs(document)
+	if len(configs) == 0 {
+		writeError(w, http.StatusConflict, "internal_workflow_missing", "ไม่พบ Workflow snapshot ของ Draft นี้")
+		return
+	}
+	layoutBoxes, selectedConfigs, placements, issues := validateSigningDocumentLayout(req.LayoutBoxes, configs, document.OriginalFile.PageCount)
+	issues = append(issues, internalLayoutCoverageIssues(configs, layoutBoxes)...)
+	if len(issues) == 0 {
+		issues = append(issues, s.inactiveSigningLayoutUserIssues(r.Context(), selectedConfigs, layoutBoxes)...)
+	}
+	legalBoxes, legalIssues := normalizeAndValidateLegalNoticeBoxes(req.LegalNoticeBoxes, nil, document.OriginalFile.PageCount, true)
+	issues = append(issues, legalIssues...)
+	if len(issues) > 0 {
+		writeValidationIssues(w, http.StatusBadRequest, "signature_layout_invalid", issues)
+		return
+	}
+	legalSnapshots := make([]models.LegalNoticeSnapshot, 0, len(legalBoxes))
+	for _, box := range legalBoxes {
+		legalSnapshots = append(legalSnapshots, legalNoticeSnapshotFromBox(box, "per_document"))
+	}
+	currentFile, ok := s.createInitialLegalNoticePDF(w, r, *document.OriginalFile, legalSnapshots, actor.ID)
+	if !ok {
+		return
+	}
+	saved, err := s.store.SaveInternalDraftLayout(r.Context(), store.SaveInternalDraftLayoutInput{
+		DocumentID: documentID, ExpectedVersion: req.ExpectedVersion, Configs: selectedConfigs,
+		LayoutBoxes: layoutBoxes, SignaturePlacements: placements,
+		LegalNoticeSnapshot: legalSnapshots[0], LegalNoticeBoxes: legalSnapshots, CurrentFile: currentFile,
+		ActorID: actor.ID, IPAddress: clientIP(r), UserAgent: r.UserAgent(), AllowSuperAdmin: actor.Role == "superadmin",
+	})
+	if err != nil {
+		if currentFile.ID != "" && currentFile.ID != document.OriginalFile.ID {
+			s.cleanupUploadedFileBestEffort(currentFile, "internal_layout_save_failed")
+		}
+		if s.writeSigningDocumentTransitionError(w, err, "save_draft_layout_failed", "บันทึกกรอบลายเซ็นไม่สำเร็จ") {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "save_draft_layout_failed", "บันทึกกรอบลายเซ็นไม่สำเร็จ")
+		return
+	}
+	_ = s.store.WriteAudit(r.Context(), actor.ID, "internal_document.layout_save", "signing_document", documentID, clientIP(r), r.UserAgent())
+	writeJSON(w, http.StatusOK, map[string]any{"document": s.withExternalURLs(r, saved)})
+}
+
+func documentConfigsFromSteps(steps []models.SigningDocumentStep) []models.DocumentConfigStep {
+	configs := make([]models.DocumentConfigStep, 0, len(steps))
+	for _, step := range steps {
+		configs = append(configs, models.DocumentConfigStep{
+			ID: step.ID, PositionCode: step.PositionCode, PositionName: step.PositionName,
+			SequenceNo: step.SequenceNo, ConditionType: step.ConditionType,
+			User01: step.User01, User02: step.User02, User03: step.User03,
+		})
+	}
+	return configs
+}
+
+// Internal drafts keep the workflow snapshot from creation time. The live
+// workflow can change while the creator is arranging the real PDF.
+func internalLayoutConfigs(document models.SigningDocument) []models.DocumentConfigStep {
+	if len(document.ConfigSnapshot) > 0 {
+		return append([]models.DocumentConfigStep(nil), document.ConfigSnapshot...)
+	}
+	return documentConfigsFromSteps(document.Steps)
+}
+
+func internalLayoutCoverageIssues(configs []models.DocumentConfigStep, boxes []models.SignatureTemplateBoxRequest) []models.SignatureValidationIssue {
+	covered := map[string]bool{}
+	for _, box := range boxes {
+		covered[strings.ToLower(strings.TrimSpace(box.PositionCode))] = true
+	}
+	issues := []models.SignatureValidationIssue{}
+	for _, step := range configs {
+		if !covered[strings.ToLower(strings.TrimSpace(step.PositionCode))] {
+			issues = append(issues, signatureIssue("internal_step_layout_required", step.PositionCode, fmt.Sprintf("กรุณาวางกรอบลายเซ็นสำหรับตำแหน่ง %s ก่อนส่งเอกสาร", step.PositionName)))
+		}
+	}
+	return issues
 }
 
 func (s *Server) writeSigningDocumentTransitionError(w http.ResponseWriter, err error, code, message string) bool {
@@ -1029,6 +1155,10 @@ func (s *Server) writeSigningDocumentTransitionError(w http.ResponseWriter, err 
 	}
 	if errors.Is(err, store.ErrInternalDocumentPrintRequired) {
 		writeError(w, http.StatusConflict, "internal_document_print_required", "กรุณาพิมพ์ PDF revision ล่าสุดก่อนส่ง")
+		return true
+	}
+	if errors.Is(err, store.ErrSigningDocumentLayoutRequired) {
+		writeError(w, http.StatusConflict, "internal_document_layout_required", "กรุณาจัดวางกรอบลายเซ็นและข้อความกฎหมายบน PDF ก่อนส่งเอกสาร")
 		return true
 	}
 	s.logger.Error(message, "error", err)
@@ -1827,6 +1957,11 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 
 func canAccessSigningDocumentAsAdmin(document models.SigningDocument, actor models.User) bool {
 	if !strings.EqualFold(strings.TrimSpace(document.Status), "draft") {
+		return true
+	}
+	// Draft ownership remains strict for SML documents. Internal drafts are a
+	// PaperLess-only exception: a superadmin may recover their layout safely.
+	if strings.EqualFold(strings.TrimSpace(document.DocumentSource), "internal") && strings.EqualFold(strings.TrimSpace(actor.Role), "superadmin") {
 		return true
 	}
 	return strings.TrimSpace(document.CreatedBy) != "" && strings.TrimSpace(document.CreatedBy) == strings.TrimSpace(actor.ID)

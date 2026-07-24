@@ -144,7 +144,7 @@ If sync reports a missing or invalid signature, PaperLess preserves the previous
 
 Internal documents require SML API `GET /api/v1/company-profile`, the PaperLess additive migration, and the matching frontend. Deploy in this order: SML API, PaperLess API, PaperLess Web. Keep `INTERNAL_DOCUMENTS_ENABLED=false` until all three services are healthy, then enable it and recreate only the PaperLess API/Web services.
 
-After enabling the flag, verify that the selected tenant has exactly one usable row in `public.erp_company_profile`. Open `Master เอกสารภายใน` as superadmin and confirm the three seeded Masters are inactive. Configure Workflow and Active Template before activating a Master. Do not guess customer signers or activate a production Master with a test Workflow.
+After enabling the flag, verify that the selected tenant has exactly one usable row in `public.erp_company_profile`. Open `Master เอกสารภายใน` as superadmin and confirm the three seeded Masters are inactive. Configure the Workflow before activating a Master; internal signature/legal frames are placed later on each real Draft PDF, so an Active Template is not required. Do not guess customer signers or activate a production Master with a test Workflow.
 
 Safe smoke checks before customer configuration:
 

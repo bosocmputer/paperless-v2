@@ -16,27 +16,43 @@ import (
 )
 
 type CreateSigningDocumentInput struct {
-	DocumentSource      string
-	InternalDocumentID  string
-	SMLDataGroup        string
-	SMLDataCode         string
-	ScreenCode          string
-	Format              models.SMLDocFormat
-	Candidate           models.SMLDocumentCandidate
-	SignatureTemplateID string
-	TemplateSnapshot    any
+	DocumentSource        string
+	InternalDocumentID    string
+	SMLDataGroup          string
+	SMLDataCode           string
+	ScreenCode            string
+	Format                models.SMLDocFormat
+	Candidate             models.SMLDocumentCandidate
+	SignatureTemplateID   string
+	TemplateSnapshot      any
+	LegalNoticeSnapshot   models.LegalNoticeSnapshot
+	LegalNoticeBoxes      []models.LegalNoticeSnapshot
+	SignaturePlacements   []models.SignaturePlacementSnapshot
+	SignNotePlacements    []models.SignNotePlacementSnapshot
+	LayoutBoxes           []models.SignatureTemplateBoxRequest
+	Configs               []models.DocumentConfigStep
+	File                  models.UploadedFile
+	CurrentFile           *models.UploadedFile
+	CurrentLegalVersion   string
+	AllowEmptyDraftLayout bool
+	ActorID               string
+	IPAddress             string
+	UserAgent             string
+}
+
+type SaveInternalDraftLayoutInput struct {
+	DocumentID          string
+	ExpectedVersion     int
+	Configs             []models.DocumentConfigStep
+	LayoutBoxes         []models.SignatureTemplateBoxRequest
+	SignaturePlacements []models.SignaturePlacementSnapshot
 	LegalNoticeSnapshot models.LegalNoticeSnapshot
 	LegalNoticeBoxes    []models.LegalNoticeSnapshot
-	SignaturePlacements []models.SignaturePlacementSnapshot
-	SignNotePlacements  []models.SignNotePlacementSnapshot
-	LayoutBoxes         []models.SignatureTemplateBoxRequest
-	Configs             []models.DocumentConfigStep
-	File                models.UploadedFile
-	CurrentFile         *models.UploadedFile
-	CurrentLegalVersion string
+	CurrentFile         models.UploadedFile
 	ActorID             string
 	IPAddress           string
 	UserAgent           string
+	AllowSuperAdmin     bool
 }
 
 type SignTaskResult struct {
@@ -153,14 +169,14 @@ INSERT INTO signing_documents (
     screen_code, doc_format_code, doc_no, sml_table, trans_flag, party_code, party_name, party_type,
     doc_date, total_amount, sml_is_lock_record, status, current_version,
     original_file_id, current_file_id, signature_template_id, config_snapshot, template_snapshot, legal_notice_snapshot,
-    signature_placement_snapshot, legal_notice_boxes_snapshot, sign_note_placement_snapshot, created_by
+	    signature_placement_snapshot, legal_notice_boxes_snapshot, sign_note_placement_snapshot, layout_ready, created_by
 )
-VALUES ($1,NULLIF($2,'')::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NULLIF($14,'')::date,$15,$16,'draft',1,$17,$18,NULLIF($19,'')::uuid,$20::jsonb,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,$25::jsonb,NULLIF($26,'')::uuid)
+VALUES ($1,NULLIF($2,'')::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NULLIF($14,'')::date,$15,$16,'draft',1,$17,$18,NULLIF($19,'')::uuid,$20::jsonb,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,$25::jsonb,$26,NULLIF($27,'')::uuid)
 RETURNING id::text
 `, defaultDocumentSource(input.DocumentSource), input.InternalDocumentID, tenant, dataGroup, dataCode, input.ScreenCode, input.Format.Code, input.Candidate.DocNo, input.Candidate.Table, input.Candidate.TransFlag,
 		input.Candidate.PartyCode, input.Candidate.PartyName, input.Candidate.PartyType, input.Candidate.DocDate,
 		input.Candidate.TotalAmount, input.Candidate.IsLockRecord, input.File.ID, currentFileID, input.SignatureTemplateID,
-		string(configSnapshot), string(templateSnapshot), string(legalNoticeSnapshot), string(signaturePlacementSnapshot), string(legalNoticeBoxesSnapshot), string(signNotePlacementSnapshot), input.ActorID).Scan(&documentID)
+		string(configSnapshot), string(templateSnapshot), string(legalNoticeSnapshot), string(signaturePlacementSnapshot), string(legalNoticeBoxesSnapshot), string(signNotePlacementSnapshot), !input.AllowEmptyDraftLayout, input.ActorID).Scan(&documentID)
 	if err != nil {
 		if strings.Contains(err.Error(), "signing_documents_active_doc_unique_idx") {
 			return models.SigningDocument{}, ErrSigningDocumentDuplicate
@@ -208,6 +224,9 @@ RETURNING id::text
 		}
 
 		boxes := boxesByPosition[strings.ToLower(step.PositionCode)]
+		if input.AllowEmptyDraftLayout && len(input.LayoutBoxes) == 0 {
+			continue
+		}
 		signers, err := signerRowsForStep(step, boxes, stepStatus)
 		if err != nil {
 			return models.SigningDocument{}, err
@@ -250,6 +269,141 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
 		return models.SigningDocument{}, err
 	}
 	return s.FindSigningDocumentByID(ctx, documentID)
+}
+
+// SaveInternalDraftLayout replaces the unsigned draft layout after the creator has
+// positioned it against the real generated PDF. It deliberately rebuilds signer rows
+// in the same transaction so a draft can never be sent with stale placements.
+func (s *Store) SaveInternalDraftLayout(ctx context.Context, input SaveInternalDraftLayoutInput) (models.SigningDocument, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status, source, createdBy string
+	var currentVersion int
+	if err := tx.QueryRow(ctx, `
+SELECT status, document_source, COALESCE(created_by::text,''), current_version
+FROM signing_documents
+WHERE id=$1 AND ($2='' OR sml_tenant=$2)
+FOR UPDATE`, input.DocumentID, tenantFilterValue(ctx)).Scan(&status, &source, &createdBy, &currentVersion); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.SigningDocument{}, ErrSigningDocumentNotFound
+		}
+		return models.SigningDocument{}, err
+	}
+	if source != "internal" || status != "draft" {
+		return models.SigningDocument{}, ErrSigningDocumentInvalidStatus
+	}
+	if createdBy == "" || (createdBy != input.ActorID && !input.AllowSuperAdmin) {
+		return models.SigningDocument{}, ErrSigningDocumentNotFound
+	}
+	if input.ExpectedVersion > 0 && input.ExpectedVersion != currentVersion {
+		return models.SigningDocument{}, ErrInternalDocumentRevisionConflict
+	}
+	if input.CurrentFile.ID == "" {
+		return models.SigningDocument{}, ErrSigningDocumentInvalidStatus
+	}
+
+	layoutSnapshot, err := json.Marshal(map[string]any{
+		"source":              "internal_draft_layout",
+		"pageCount":           input.CurrentFile.PageCount,
+		"boxes":               input.LayoutBoxes,
+		"signaturePlacements": input.SignaturePlacements,
+		"legalNoticeBoxes":    input.LegalNoticeBoxes,
+	})
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
+	legalSnapshot, err := json.Marshal(input.LegalNoticeSnapshot)
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
+	legalBoxes, err := json.Marshal(input.LegalNoticeBoxes)
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
+	placements, err := json.Marshal(input.SignaturePlacements)
+	if err != nil {
+		return models.SigningDocument{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM signing_document_signers WHERE document_id=$1`, input.DocumentID); err != nil {
+		return models.SigningDocument{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE signing_document_steps SET status='waiting', completed_at=NULL WHERE document_id=$1`, input.DocumentID); err != nil {
+		return models.SigningDocument{}, err
+	}
+	var nextVersion int
+	if err := tx.QueryRow(ctx, `
+UPDATE signing_documents
+SET current_file_id=$2,
+    current_version=current_version+1,
+    signature_template_id=NULL,
+    template_snapshot=$3::jsonb,
+    signature_placement_snapshot=$4::jsonb,
+    legal_notice_snapshot=$5::jsonb,
+    legal_notice_boxes_snapshot=$6::jsonb,
+    layout_ready=true,
+    updated_at=now()
+WHERE id=$1
+RETURNING current_version`, input.DocumentID, input.CurrentFile.ID, string(layoutSnapshot), string(placements), string(legalSnapshot), string(legalBoxes)).Scan(&nextVersion); err != nil {
+		return models.SigningDocument{}, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO signing_document_versions(document_id,version_no,file_id,kind,created_by) VALUES($1,$2,$3,'current',NULLIF($4,'')::uuid)`, input.DocumentID, nextVersion, input.CurrentFile.ID, input.ActorID); err != nil {
+		return models.SigningDocument{}, err
+	}
+
+	boxesByPosition := map[string][]models.SignatureTemplateBoxRequest{}
+	for _, box := range input.LayoutBoxes {
+		key := strings.ToLower(strings.TrimSpace(box.PositionCode))
+		boxesByPosition[key] = append(boxesByPosition[key], box)
+	}
+	for key := range boxesByPosition {
+		sort.Slice(boxesByPosition[key], func(i, j int) bool { return boxesByPosition[key][i].SignerSlot < boxesByPosition[key][j].SignerSlot })
+	}
+	configs := append([]models.DocumentConfigStep(nil), input.Configs...)
+	sort.Slice(configs, func(i, j int) bool {
+		if configs[i].SequenceNo == configs[j].SequenceNo {
+			return configs[i].PositionCode < configs[j].PositionCode
+		}
+		return configs[i].SequenceNo < configs[j].SequenceNo
+	})
+	for _, step := range configs {
+		var stepID string
+		if err := tx.QueryRow(ctx, `SELECT id::text FROM signing_document_steps WHERE document_id=$1 AND position_code=$2 ORDER BY id LIMIT 1`, input.DocumentID, step.PositionCode).Scan(&stepID); err != nil {
+			return models.SigningDocument{}, err
+		}
+		signers, err := signerRowsForStep(step, boxesByPosition[strings.ToLower(strings.TrimSpace(step.PositionCode))], "waiting")
+		if err != nil {
+			return models.SigningDocument{}, err
+		}
+		for _, signer := range signers {
+			if _, err := tx.Exec(ctx, `
+INSERT INTO signing_document_signers (
+    document_id, step_id, position_code, position_name, sequence_no, condition_type,
+    signer_slot, signer_type, signer_user, signer_name, status,
+    page_no, x_ratio, y_ratio, width_ratio, height_ratio, label, attachment_requirements_snapshot
+)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)`,
+				input.DocumentID, stepID, step.PositionCode, step.PositionName, step.SequenceNo, step.ConditionType,
+				signer.SignerSlot, signer.SignerType, signer.SignerUser, signer.SignerName, signer.Status,
+				signer.PageNo, signer.XRatio, signer.YRatio, signer.WidthRatio, signer.HeightRatio, signer.Label,
+				attachmentRequirementsJSON(signer.AttachmentRequirementsSnapshot)); err != nil {
+				return models.SigningDocument{}, err
+			}
+		}
+	}
+	if err := insertSigningEvent(ctx, tx, input.DocumentID, input.ActorID, "", "internal_draft_layout_saved", "จัดวางกรอบลายเซ็นบน PDF เอกสารภายในแล้ว", input.IPAddress, input.UserAgent, map[string]any{
+		"signatureBoxCount": len(input.LayoutBoxes), "legalNoticeBoxCount": len(input.LegalNoticeBoxes), "pdfPageCount": input.CurrentFile.PageCount,
+	}); err != nil {
+		return models.SigningDocument{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return models.SigningDocument{}, err
+	}
+	return s.FindSigningDocumentByID(ctx, input.DocumentID)
 }
 
 func consumeSigningDocumentUpload(ctx context.Context, tx pgx.Tx, fileID, actorID string) error {
@@ -578,7 +732,8 @@ func (s *Store) SendSigningDocument(ctx context.Context, documentID, actorID, ip
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var status, createdBy, documentSource, internalDocumentID string
-	if err := tx.QueryRow(ctx, `SELECT status, COALESCE(created_by::text, ''), document_source, COALESCE(internal_document_id::text,'') FROM signing_documents WHERE id = $1 FOR UPDATE`, documentID).Scan(&status, &createdBy, &documentSource, &internalDocumentID); err != nil {
+	var layoutReady bool
+	if err := tx.QueryRow(ctx, `SELECT status, COALESCE(created_by::text, ''), document_source, COALESCE(internal_document_id::text,''), layout_ready FROM signing_documents WHERE id = $1 FOR UPDATE`, documentID).Scan(&status, &createdBy, &documentSource, &internalDocumentID, &layoutReady); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.SigningDocument{}, ErrSigningDocumentNotFound
 		}
@@ -591,12 +746,16 @@ func (s *Store) SendSigningDocument(ctx context.Context, documentID, actorID, ip
 		return models.SigningDocument{}, ErrSigningDocumentNotFound
 	}
 	if documentSource == "internal" {
+		if !layoutReady {
+			return models.SigningDocument{}, ErrSigningDocumentLayoutRequired
+		}
 		var printable bool
 		if err := tx.QueryRow(ctx, `
 SELECT EXISTS(
   SELECT 1
   FROM internal_documents d
-  JOIN internal_document_print_events p ON p.document_id=d.id AND p.revision=d.revision
+  JOIN signing_documents s ON s.id=d.signing_document_id
+  JOIN internal_document_print_events p ON p.document_id=d.id AND p.revision=d.revision AND p.file_id=s.current_file_id
   WHERE d.id=NULLIF($1,'')::uuid AND d.signing_document_id=$2
 )`, internalDocumentID, documentID).Scan(&printable); err != nil {
 			return models.SigningDocument{}, err
@@ -772,7 +931,7 @@ LIMIT $3
 	return ids, rows.Err()
 }
 
-func (s *Store) CancelSigningDocument(ctx context.Context, documentID, actorID, ipAddress, userAgent string) (models.SigningDocument, error) {
+func (s *Store) CancelSigningDocument(ctx context.Context, documentID, actorID, reason, ipAddress, userAgent string, allowInternalSuperAdmin bool) (models.SigningDocument, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return models.SigningDocument{}, err
@@ -790,10 +949,18 @@ FOR UPDATE`, documentID).Scan(&status, &createdBy, &documentSource, &internalDoc
 		}
 		return models.SigningDocument{}, err
 	}
-	if status == "draft" && (strings.TrimSpace(createdBy) == "" || strings.TrimSpace(createdBy) != strings.TrimSpace(actorID)) {
+	if documentSource == "internal" && strings.TrimSpace(createdBy) != strings.TrimSpace(actorID) && !allowInternalSuperAdmin {
+		return models.SigningDocument{}, ErrSigningDocumentNotFound
+	}
+	if status == "draft" && (strings.TrimSpace(createdBy) == "" || strings.TrimSpace(createdBy) != strings.TrimSpace(actorID)) && !allowInternalSuperAdmin {
 		return models.SigningDocument{}, ErrSigningDocumentNotFound
 	}
 	if status == "completed" || status == "cancelled" {
+		return models.SigningDocument{}, ErrSigningDocumentInvalidStatus
+	}
+	// An internal document may be cancelled only while it is still a draft or
+	// actively collecting signatures. Never race a completed/finalising record.
+	if documentSource == "internal" && status != "draft" && status != "in_progress" {
 		return models.SigningDocument{}, ErrSigningDocumentInvalidStatus
 	}
 	if _, err := tx.Exec(ctx, `
@@ -807,6 +974,13 @@ WHERE id = $1
 		if _, err := tx.Exec(ctx, `UPDATE internal_documents SET status='cancelled',updated_at=now() WHERE id=$1`, internalDocumentID); err != nil {
 			return models.SigningDocument{}, err
 		}
+		// Keep already signed steps intact for audit, and stop only pending work.
+		if _, err := tx.Exec(ctx, `UPDATE signing_document_steps SET status='skipped' WHERE document_id=$1 AND status IN ('waiting','pending')`, documentID); err != nil {
+			return models.SigningDocument{}, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE signing_document_signers SET status='skipped' WHERE document_id=$1 AND status IN ('waiting','pending')`, documentID); err != nil {
+			return models.SigningDocument{}, err
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 UPDATE external_signing_tokens
@@ -815,7 +989,7 @@ WHERE document_id = $1 AND status IN ('active', 'verified')
 `, documentID); err != nil {
 		return models.SigningDocument{}, err
 	}
-	if err := insertSigningEvent(ctx, tx, documentID, actorID, "", "document_cancelled", "ยกเลิกเอกสารเซ็น", ipAddress, userAgent, map[string]any{"previousStatus": status}); err != nil {
+	if err := insertSigningEvent(ctx, tx, documentID, actorID, "", "document_cancelled", "ยกเลิกเอกสารเซ็น", ipAddress, userAgent, map[string]any{"previousStatus": status, "reason": strings.TrimSpace(reason)}); err != nil {
 		return models.SigningDocument{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -2488,14 +2662,15 @@ SELECT d.id::text, d.document_source, COALESCE(d.internal_document_id::text,''),
        d.sml_is_lock_record, d.status, d.current_version,
        COALESCE(d.original_file_id::text,''), COALESCE(d.current_file_id::text,''), COALESCE(d.final_file_id::text,''),
        COALESCE(d.signature_template_id::text,''), COALESCE(d.created_by::text,''),
-       d.created_at, d.updated_at, d.completed_at, d.locked_at, COALESCE(d.legal_notice_snapshot, '{}'::jsonb)::text,
+	       d.created_at, d.updated_at, d.completed_at, d.locked_at, COALESCE(d.config_snapshot, '[]'::jsonb)::text, COALESCE(d.legal_notice_snapshot, '{}'::jsonb)::text,
        COALESCE(d.signature_placement_snapshot, '[]'::jsonb)::text, COALESCE(d.legal_notice_boxes_snapshot, '[]'::jsonb)::text,
        COALESCE(d.sign_note_placement_snapshot, '[]'::jsonb)::text,
+	   d.layout_ready,
        COALESCE(ac.attachment_count, 0),
 	   COALESCE(idoc.revision, 0),
 	   CASE WHEN idoc.id IS NULL THEN false ELSE EXISTS(
 	       SELECT 1 FROM internal_document_print_events ipe
-	       WHERE ipe.document_id=idoc.id AND ipe.revision=idoc.revision
+	       WHERE ipe.document_id=idoc.id AND ipe.revision=idoc.revision AND ipe.file_id=d.current_file_id
 	   ) END,
        COALESCE(of.id::text,''), COALESCE(of.original_name,''), COALESCE(of.stored_name,''), COALESCE(of.storage_path,''), COALESCE(of.content_type,''), COALESCE(of.size_bytes,0), COALESCE(of.page_count,0), COALESCE(of.sha256,''), COALESCE(of.created_by::text,''), of.created_at,
        COALESCE(cf.id::text,''), COALESCE(cf.original_name,''), COALESCE(cf.stored_name,''), COALESCE(cf.storage_path,''), COALESCE(cf.content_type,''), COALESCE(cf.size_bytes,0), COALESCE(cf.page_count,0), COALESCE(cf.sha256,''), COALESCE(cf.created_by::text,''), cf.created_at,
@@ -2528,7 +2703,7 @@ FROM signing_document_signers sg
 func scanSigningDocument(row rowScanner) (models.SigningDocument, error) {
 	var doc models.SigningDocument
 	var completedAt, lockedAt sql.NullTime
-	var legalNoticeRaw, signaturePlacementsRaw, legalNoticeBoxesRaw, signNotePlacementsRaw string
+	var configSnapshotRaw, legalNoticeRaw, signaturePlacementsRaw, legalNoticeBoxesRaw, signNotePlacementsRaw string
 	var original, current, final models.UploadedFile
 	var originalCreated, currentCreated, finalCreated sql.NullTime
 	err := row.Scan(
@@ -2537,7 +2712,7 @@ func scanSigningDocument(row rowScanner) (models.SigningDocument, error) {
 		&doc.PartyCode, &doc.PartyName, &doc.PartyType, &doc.DocDate, &doc.TotalAmount,
 		&doc.SMLIsLockRecord, &doc.Status, &doc.CurrentVersion,
 		&doc.OriginalFileID, &doc.CurrentFileID, &doc.FinalFileID, &doc.SignatureTemplateID, &doc.CreatedBy,
-		&doc.CreatedAt, &doc.UpdatedAt, &completedAt, &lockedAt, &legalNoticeRaw, &signaturePlacementsRaw, &legalNoticeBoxesRaw, &signNotePlacementsRaw,
+		&doc.CreatedAt, &doc.UpdatedAt, &completedAt, &lockedAt, &configSnapshotRaw, &legalNoticeRaw, &signaturePlacementsRaw, &legalNoticeBoxesRaw, &signNotePlacementsRaw, &doc.LayoutReady,
 		&doc.AttachmentCount, &doc.InternalRevision, &doc.InternalPrinted,
 		&original.ID, &original.OriginalName, &original.StoredName, &original.StoragePath, &original.ContentType, &original.SizeBytes, &original.PageCount, &original.SHA256, &original.CreatedBy, &originalCreated,
 		&current.ID, &current.OriginalName, &current.StoredName, &current.StoragePath, &current.ContentType, &current.SizeBytes, &current.PageCount, &current.SHA256, &current.CreatedBy, &currentCreated,
@@ -2553,6 +2728,7 @@ func scanSigningDocument(row rowScanner) (models.SigningDocument, error) {
 		doc.LockedAt = &lockedAt.Time
 	}
 	doc.LegalNoticeSnapshot = parseLegalNoticeSnapshot(legalNoticeRaw)
+	_ = json.Unmarshal([]byte(configSnapshotRaw), &doc.ConfigSnapshot)
 	doc.SignaturePlacements = parseSignaturePlacementSnapshots(signaturePlacementsRaw)
 	doc.LegalNoticeBoxes = parseLegalNoticeSnapshots(legalNoticeBoxesRaw)
 	doc.SignNotePlacements = parseSignNotePlacementSnapshots(signNotePlacementsRaw)

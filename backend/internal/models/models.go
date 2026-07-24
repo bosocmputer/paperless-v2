@@ -664,6 +664,7 @@ type SigningDocument struct {
 	InternalDocumentID  string                       `json:"internalDocumentId,omitempty"`
 	InternalRevision    int                          `json:"internalRevision,omitempty"`
 	InternalPrinted     bool                         `json:"internalCurrentRevisionPrinted,omitempty"`
+	LayoutReady         bool                         `json:"layoutReady"`
 	SMLTenant           string                       `json:"smlTenant"`
 	SMLDataGroup        string                       `json:"smlDataGroup"`
 	SMLDataCode         string                       `json:"smlDataCode"`
@@ -693,6 +694,7 @@ type SigningDocument struct {
 	LegalNoticeBoxes    []LegalNoticeSnapshot        `json:"legalNoticeBoxes,omitempty"`
 	SignaturePlacements []SignaturePlacementSnapshot `json:"signaturePlacements,omitempty"`
 	SignNotePlacements  []SignNotePlacementSnapshot  `json:"signNotePlacements,omitempty"`
+	ConfigSnapshot      []DocumentConfigStep         `json:"-"`
 	OriginalFile        *UploadedFile                `json:"originalFile,omitempty"`
 	CurrentFile         *UploadedFile                `json:"currentFile,omitempty"`
 	FinalFile           *UploadedFile                `json:"finalFile,omitempty"`
@@ -949,6 +951,18 @@ type SigningDocumentPrintEvent struct {
 type CreateSigningDocumentRequest struct {
 	DocFormatCode string `json:"docFormatCode"`
 	DocNo         string `json:"docNo"`
+}
+
+// SaveSigningDocumentLayoutRequest is used only by internal-document drafts.
+// The layout is intentionally captured against the actual generated PDF, not a template sample.
+type SaveSigningDocumentLayoutRequest struct {
+	ExpectedVersion  int                           `json:"expectedVersion"`
+	LayoutBoxes      []SignatureTemplateBoxRequest `json:"layoutBoxes"`
+	LegalNoticeBoxes []LegalNoticeBoxRequest       `json:"legalNoticeBoxes"`
+}
+
+type CancelSigningDocumentRequest struct {
+	Reason string `json:"reason"`
 }
 
 type CreatePrintCopyRequest struct {
