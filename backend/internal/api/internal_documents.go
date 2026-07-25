@@ -17,6 +17,8 @@ import (
 
 const internalDocumentScreenCode = "INTERNAL"
 
+const internalTemplateSampleLayoutVersion = "approval-area-v2"
+
 var (
 	internalMasterCodePattern = regexp.MustCompile(`^[A-Z0-9][A-Z0-9_-]{0,19}$`)
 	internalPrefixPattern     = regexp.MustCompile(`^[A-Z0-9][A-Z0-9_-]{0,19}$`)
@@ -551,20 +553,31 @@ func (s *Server) resolveConfigDocumentFormat(ctx context.Context, code string) (
 
 func (s *Server) ensureInternalMasterSample(ctx context.Context, master models.InternalDocumentMaster, actorID string) error {
 	_, active, err := s.store.GetSignatureTemplateState(ctx, internalDocumentScreenCode, master.Code)
-	if err != nil || active != nil {
+	if err != nil {
 		return err
+	}
+	if active != nil && active.SampleFile != nil && active.SampleFile.OriginalName == internalTemplateSampleOriginalName(master.Code) {
+		return nil
 	}
 	doc := models.InternalDocument{MasterName: master.Name, DocumentNo: master.Prefix + "260101-001", DocumentDate: "2026-01-01", RequiredDate: "2026-01-15", RequesterName: "ตัวอย่างผู้ขอเบิก", PositionName: "ตำแหน่ง", DepartmentName: "ส่วนงาน/ฝ่าย/แผนก", Purpose: "ตัวอย่างวัตถุประสงค์ของเอกสาร", TotalAmount: "1000.00", CompanySnapshot: models.InternalDocumentCompanySnapshot{DisplayName: "ชื่อบริษัทจากระบบ SML", Address1: "ที่อยู่บริษัท", TelephoneNumber: "00-0000-0000", TaxNumber: "0000000000000"}, Items: []models.InternalDocumentItem{{SequenceNo: 1, Description: "ตัวอย่างรายการ", Amount: "1000.00"}}}
 	data, pages, err := renderInternalDocumentPDF(doc)
 	if err != nil {
 		return err
 	}
-	file, err := s.storeUploadedBytes(ctx, data, "internal-"+master.Code+"-sample.pdf", "internal-sample.pdf", "application/pdf", ".pdf", pages, actorID)
+	file, err := s.storeUploadedBytes(ctx, data, internalTemplateSampleOriginalName(master.Code), "internal-sample.pdf", "application/pdf", ".pdf", pages, actorID)
 	if err != nil {
+		return err
+	}
+	if active != nil {
+		_, err = s.store.ReplaceActiveSignatureTemplateSample(ctx, internalDocumentScreenCode, master.Code, file.ID)
 		return err
 	}
 	_, err = s.store.UpsertActiveSignatureTemplateSample(ctx, internalDocumentScreenCode, master.Code, file.ID, actorID)
 	return err
+}
+
+func internalTemplateSampleOriginalName(code string) string {
+	return "internal-" + strings.ToUpper(strings.TrimSpace(code)) + "-sample-" + internalTemplateSampleLayoutVersion + ".pdf"
 }
 
 func (s *Server) ensureInternalMasterSamples(ctx context.Context, masters []models.InternalDocumentMaster, actorID string) {

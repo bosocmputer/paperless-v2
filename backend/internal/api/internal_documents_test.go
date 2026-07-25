@@ -66,6 +66,14 @@ func TestInternalApprovalLayoutRejectsBoxesOutsideBlankArea(t *testing.T) {
 	}
 }
 
+func TestInternalTemplateSampleOriginalNameTracksApprovalAreaLayout(t *testing.T) {
+	got := internalTemplateSampleOriginalName("adv")
+	want := "internal-ADV-sample-approval-area-v2.pdf"
+	if got != want {
+		t.Fatalf("sample name = %q, want %q", got, want)
+	}
+}
+
 func TestInternalDocumentsNeverRequireSMLFinalization(t *testing.T) {
 	if requiresSMLFinalization(models.SigningDocument{DocumentSource: "internal"}) {
 		fatalUnexpectedSMLFinalization(t)

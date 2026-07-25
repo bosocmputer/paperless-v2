@@ -55,6 +55,20 @@ func (s *Server) getSignatureTemplateState(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	screenCode := normalizeScreenCode(format.ScreenCode)
+	if format.Source == "internal" {
+		master, err := s.store.FindInternalDocumentMasterByCode(r.Context(), format.Code)
+		if err != nil {
+			s.logger.Error("load internal master for signature template sample failed", "error", err, "docFormatCode", format.Code)
+			writeError(w, http.StatusInternalServerError, "internal_template_sample_failed", "Cannot prepare internal document PDF sample right now.")
+			return
+		}
+		actor, _ := currentUser(r)
+		if err := s.ensureInternalMasterSample(r.Context(), master, actor.ID); err != nil {
+			s.logger.Error("refresh internal signature template sample failed", "error", err, "docFormatCode", format.Code)
+			writeError(w, http.StatusInternalServerError, "internal_template_sample_failed", "Cannot prepare internal document PDF sample right now.")
+			return
+		}
+	}
 
 	configs, err := s.store.ListDocumentConfigSteps(r.Context(), screenCode, format.Code)
 	if err != nil {

@@ -1933,6 +1933,31 @@ WHERE sml_tenant = $1
 	return s.FindSignatureTemplateByID(ctx, templateID)
 }
 
+// ReplaceActiveSignatureTemplateSample refreshes a system-managed PDF sample
+// without changing the superadmin's saved signature boxes or workflow layout.
+func (s *Store) ReplaceActiveSignatureTemplateSample(ctx context.Context, screenCode, docFormatCode, uploadedFileID string) (models.SignatureTemplate, error) {
+	tenant := NormalizeSMLTenant(tenantFilterValue(ctx))
+	var templateID string
+	err := s.pool.QueryRow(ctx, `
+UPDATE signature_templates
+SET sample_file_id = $4,
+    revision = revision + 1,
+    updated_at = now()
+WHERE sml_tenant = $1
+  AND screen_code = $2
+  AND lower(doc_format_code) = lower($3)
+  AND status = 'active'
+RETURNING id::text
+`, tenant, screenCode, docFormatCode, uploadedFileID).Scan(&templateID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.SignatureTemplate{}, ErrSignatureTemplateNotFound
+	}
+	if err != nil {
+		return models.SignatureTemplate{}, err
+	}
+	return s.FindSignatureTemplateByID(ctx, templateID)
+}
+
 func (s *Store) ListSignatureTemplateBoxes(ctx context.Context, templateID string) ([]models.SignatureTemplateBox, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT id::text, template_id::text, position_code, signer_slot, signer_type, signer_user, page_no,
