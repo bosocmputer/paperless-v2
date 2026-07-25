@@ -60,7 +60,7 @@ Admin or superadmin then creates the real document:
 2. Enter the requester, position, department, purpose, required date, and at least one expense row.
 3. Save once. PaperLess reserves the document number, creates the PDF, and creates the draft automatically; no PDF upload is required.
 4. Use `แก้ไขแบบฟอร์ม` while the document is still a draft. Each save creates a new immutable revision.
-5. Review the fixed one-page A4 PDF. It supports up to 15 expense rows and maps the six blank approval cells to the configured Workflow automatically.
+5. Review the fixed one-page A4 PDF. It supports up to 15 expense rows and uses the signature boxes that a Superadmin configured once in the Workflow's approval area.
 6. Open `พิมพ์ PDF` for the latest revision when a printable copy is needed. Printing is optional and recorded for audit.
 7. Send the draft to the normal signing Workflow. No per-document placement is required.
 

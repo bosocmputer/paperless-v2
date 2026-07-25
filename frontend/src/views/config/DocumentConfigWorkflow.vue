@@ -41,8 +41,6 @@ const isInternalDocument = computed(() => {
     const format = workflow.value?.docFormat || {};
     return String(format.source || '').toLowerCase() === 'internal' || String(format.screenCode || format.screen_code || '').toUpperCase() === 'INTERNAL';
 });
-const internalSignatureSlotCount = computed(() => steps.value.reduce((total, step) => total + workflowSignatureSlotCount(step), 0));
-const internalSignatureSlotLimit = 6;
 const activeUserOptions = computed(() => {
     const options = users.value
         .filter((user) => user.status === 'active')
@@ -350,9 +348,6 @@ function validateSteps(list) {
             }
         }
     });
-    if (isInternalDocument.value && internalSignatureSlotCount.value > internalSignatureSlotLimit) {
-        issues.push({ key: '', message: `Workflow เอกสารภายในใช้ช่องลายเซ็น ${internalSignatureSlotCount.value} ช่อง แต่แบบฟอร์ม A4 รองรับสูงสุด ${internalSignatureSlotLimit} ช่อง` });
-    }
     return issues;
 }
 
@@ -420,10 +415,6 @@ function rowStatus(step) {
 
 function signerValues(step) {
     return [step.user01, step.user02, step.user03].map((value) => String(value || '').trim()).filter(Boolean);
-}
-
-function workflowSignatureSlotCount(step) {
-    return Number(step.conditionType) === 2 ? Math.max(1, signerValues(step).length) : 1;
 }
 
 function signerUsername(value) {
@@ -566,15 +557,20 @@ function normalizeCode(value) {
                 <Tag v-if="dirty" severity="warn" value="ยังไม่บันทึก" />
                 <Tag v-else severity="success" value="บันทึกแล้ว" />
                 <Button label="เพิ่มขั้นตอน" icon="pi pi-plus" severity="secondary" @click="openCreateStep" />
-                <Button v-if="!isInternalDocument" label="กรอบเริ่มต้น" icon="pi pi-map-marker" severity="secondary" outlined @click="router.push({ name: 'signature-template', params: { docFormatCode } })" />
+                <Button
+                    :label="isInternalDocument ? 'จัดวางกรอบลายเซ็น' : 'กรอบเริ่มต้น'"
+                    icon="pi pi-map-marker"
+                    severity="secondary"
+                    outlined
+                    @click="router.push({ name: 'signature-template', params: { docFormatCode } })"
+                />
                 <Button label="บันทึก Workflow" icon="pi pi-save" :loading="saving" :disabled="Boolean(saveDisabledReason)" @click="requestSave" />
             </div>
         </div>
 
         <Message v-if="saveDisabledReason && dirty" severity="warn" class="mb-4" :closable="false">{{ saveDisabledReason }}</Message>
         <Message v-if="isInternalDocument" severity="info" class="mb-4" :closable="false">
-            เอกสารภายในใช้ Workflow สำหรับลำดับและผู้เซ็นเท่านั้น ระบบวางช่องลายเซ็นว่างตามลำดับให้บนแบบฟอร์ม A4 อัตโนมัติ ผู้สร้างไม่ต้องจัดวางกรอบใน Draft
-            <Tag class="ml-2" :value="`ช่องอนุมัติ ${internalSignatureSlotCount}/${internalSignatureSlotLimit}`" :severity="internalSignatureSlotCount > internalSignatureSlotLimit ? 'danger' : 'info'" />
+            Superadmin กำหนดลำดับและผู้เซ็นใน Workflow แล้วเลือก “จัดวางกรอบลายเซ็น” เพื่อวางกรอบในพื้นที่การอนุมัติของ A4 เพียงครั้งเดียว เอกสารที่ผู้ใช้สร้างจะใช้ตำแหน่งนี้อัตโนมัติ
         </Message>
         <Message v-if="conflictMessage" severity="warn" class="mb-4" :closable="false">
             {{ conflictMessage }}

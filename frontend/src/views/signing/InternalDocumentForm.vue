@@ -231,7 +231,7 @@ function formatMoney(value) {
 
         <section class="form-section items-section">
             <div class="section-head">
-                <div><h2>รายการค่าใช้จ่าย</h2><span>สูงสุด {{ maxItemsPerForm }} รายการต่อแบบฟอร์ม A4 · ระบบเว้นแถวที่เหลือเพื่อคงตำแหน่งช่องอนุมัติ</span></div>
+                <div><h2>รายการค่าใช้จ่าย</h2><span>สูงสุด {{ maxItemsPerForm }} รายการต่อแบบฟอร์ม A4 · ระบบเว้นพื้นที่การอนุมัติสำหรับกรอบที่ Superadmin กำหนด</span></div>
                 <div class="flex items-center gap-2">
                     <Tag :value="`${form.items.length}/${maxItemsPerForm}`" :severity="form.items.length > maxItemsPerForm ? 'danger' : 'info'" />
                     <Button label="เพิ่มรายการ" icon="pi pi-plus" severity="secondary" outlined :disabled="form.items.length >= maxItemsPerForm" @click="addItem" />

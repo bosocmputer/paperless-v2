@@ -318,11 +318,6 @@ func (s *Server) createDocumentConfigStep(w http.ResponseWriter, r *http.Request
 		s.writeDocFormatValidationError(w, err)
 		return
 	}
-	if err := s.validateInternalDocumentConfigStepCapacity(r.Context(), resolvedReq, ""); err != nil {
-		writeError(w, http.StatusBadRequest, "internal_workflow_capacity_exceeded", err.Error())
-		return
-	}
-
 	step, err := s.store.CreateDocumentConfigStep(r.Context(), resolvedReq)
 	if errors.Is(err, store.ErrDocumentConfigDuplicate) {
 		writeError(w, http.StatusConflict, "document_config_duplicate", "Position code already exists for this document format.")
@@ -374,11 +369,7 @@ func (s *Server) updateDocumentConfigStep(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "document_config_update_failed", "Cannot update document config right now.")
 		return
 	}
-	if err := s.validateInternalDocumentConfigStepCapacity(r.Context(), resolvedReq, id); err != nil {
-		writeError(w, http.StatusBadRequest, "internal_workflow_capacity_exceeded", err.Error())
-		return
-	}
-	if documentConfigTemplateBreakingChange(current, resolvedReq) && !isInternalDocumentConfigStep(current) && !isInternalDocumentConfigRequest(resolvedReq) {
+	if documentConfigTemplateBreakingChange(current, resolvedReq) {
 		if ok := s.ensureDocumentConfigStepHasNoTemplateBoxes(w, r, current, "changing doc/user/condition fields"); !ok {
 			return
 		}
@@ -423,7 +414,7 @@ func (s *Server) deleteDocumentConfigStep(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "document_config_delete_failed", "Cannot delete document config right now.")
 		return
 	}
-	if !isInternalDocumentConfigStep(current) && !s.ensureDocumentConfigStepHasNoTemplateBoxes(w, r, current, "deleting this position") {
+	if !s.ensureDocumentConfigStepHasNoTemplateBoxes(w, r, current, "deleting this position") {
 		return
 	}
 
@@ -473,36 +464,6 @@ func (s *Server) resolveDocumentConfigStep(ctx context.Context, req models.Docum
 		return req, errDocFormatInvalidScreenCode
 	}
 	return req, nil
-}
-
-func (s *Server) validateInternalDocumentConfigStepCapacity(ctx context.Context, req models.DocumentConfigStepRequest, replaceID string) error {
-	if !isInternalDocumentConfigRequest(req) {
-		return nil
-	}
-	steps, err := s.store.ListDocumentConfigSteps(ctx, normalizeScreenCode(req.ScreenCode), strings.TrimSpace(req.DocFormatCode))
-	if err != nil {
-		return fmt.Errorf("ไม่สามารถตรวจสอบจำนวนช่องอนุมัติได้")
-	}
-	reserved := 0
-	for _, step := range steps {
-		if strings.TrimSpace(step.ID) == strings.TrimSpace(replaceID) {
-			continue
-		}
-		reserved += internalWorkflowSlotCount([]models.DocumentConfigStep{step})
-	}
-	requested := internalWorkflowSlotCountFromRequests([]models.DocumentConfigStepRequest{req})
-	if reserved+requested > internalDocumentMaxSignatureSlots {
-		return fmt.Errorf("แบบฟอร์มเอกสารภายใน A4 รองรับช่องอนุมัติสูงสุด %d ช่อง แต่ Workflow นี้ต้องใช้ %d ช่อง", internalDocumentMaxSignatureSlots, reserved+requested)
-	}
-	return nil
-}
-
-func isInternalDocumentConfigStep(step models.DocumentConfigStep) bool {
-	return strings.EqualFold(normalizeScreenCode(step.ScreenCode), internalDocumentScreenCode)
-}
-
-func isInternalDocumentConfigRequest(req models.DocumentConfigStepRequest) bool {
-	return strings.EqualFold(normalizeScreenCode(req.ScreenCode), internalDocumentScreenCode)
 }
 
 func (s *Server) loadDocumentConfigWorkflow(ctx context.Context, docFormatCode string) (models.DocumentConfigWorkflow, error) {
@@ -577,11 +538,6 @@ func documentConfigWorkflowSummary(format models.SMLDocFormat, steps []models.Do
 }
 
 func (s *Server) documentConfigPresetWarnings(ctx context.Context, screenCode, docFormatCode string, steps []models.DocumentConfigStep) ([]models.DocumentConfigPresetWarning, error) {
-	if strings.EqualFold(normalizeScreenCode(screenCode), internalDocumentScreenCode) {
-		// Internal documents reserve fixed approval cells in their generated A4
-		// PDF. They do not use signature-template presets.
-		return []models.DocumentConfigPresetWarning{}, nil
-	}
 	counts, err := s.store.ListSignatureTemplateBoxPositionCounts(ctx, screenCode, docFormatCode)
 	if err != nil {
 		return nil, err
@@ -705,11 +661,6 @@ func normalizeDocumentConfigWorkflowSteps(format models.SMLDocFormat, rawSteps [
 			seen[duplicateKey] = true
 		}
 		steps = append(steps, step)
-	}
-	if strings.EqualFold(normalizeScreenCode(format.ScreenCode), internalDocumentScreenCode) {
-		if slotCount := internalWorkflowSlotCountFromRequests(steps); slotCount > internalDocumentMaxSignatureSlots {
-			messages = append(messages, fmt.Sprintf("Internal document A4 form supports at most %d signature slots, but this workflow needs %d.", internalDocumentMaxSignatureSlots, slotCount))
-		}
 	}
 	return steps, messages
 }

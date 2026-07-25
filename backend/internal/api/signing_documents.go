@@ -1058,7 +1058,9 @@ func (s *Server) saveInternalDraftLayout(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusConflict, "internal_fixed_layout_managed", "เอกสารภายในชุดนี้กำหนดตำแหน่งลายเซ็นอัตโนมัติจาก Workflow แล้ว จึงไม่ต้องจัดวางกรอบ")
 		return
 	}
-	if document.CreatedBy != actor.ID && actor.Role != "superadmin" {
+	// Per-document placement is retained only as a migration path for legacy
+	// drafts. New internal documents always snapshot the superadmin template.
+	if actor.Role != "superadmin" {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
 		return
 	}
@@ -1158,7 +1160,7 @@ func (s *Server) writeSigningDocumentTransitionError(w http.ResponseWriter, err 
 		return true
 	}
 	if errors.Is(err, store.ErrSigningDocumentLayoutRequired) {
-		writeError(w, http.StatusConflict, "internal_document_layout_required", "กรุณาจัดวางกรอบลายเซ็นและข้อความกฎหมายบน PDF ก่อนส่งเอกสาร")
+		writeError(w, http.StatusConflict, "internal_document_layout_required", "กรุณาให้ Superadmin กำหนดกรอบลายเซ็นจาก Workflow ก่อนส่งเอกสาร")
 		return true
 	}
 	s.logger.Error(message, "error", err)

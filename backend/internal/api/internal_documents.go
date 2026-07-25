@@ -46,6 +46,12 @@ func (s *Server) listDocumentTypes(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "document_types_failed", "Cannot load document types right now.")
 			return
 		}
+		s.ensureInternalMasterSamples(r.Context(), masters, actor.ID)
+		masters, err = s.store.ListInternalDocumentMasters(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "document_types_failed", "Cannot load document types right now.")
+			return
+		}
 	}
 	items := make([]models.DocumentType, 0, len(masters)+64)
 	smlWarning := ""
@@ -80,6 +86,12 @@ func (s *Server) listInternalDocumentMasters(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	items, err := s.store.ListInternalDocumentMasters(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_masters_failed", "Cannot load internal document masters right now.")
+		return
+	}
+	s.ensureInternalMasterSamples(r.Context(), items, actor.ID)
+	items, err = s.store.ListInternalDocumentMasters(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_masters_failed", "Cannot load internal document masters right now.")
 		return
@@ -124,6 +136,9 @@ func (s *Server) createInternalDocumentMaster(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "internal_master_create_failed", "Cannot create internal document master right now.")
 		return
 	}
+	if err := s.ensureInternalMasterSample(r.Context(), master, actor.ID); err != nil {
+		s.logger.Warn("create internal master sample PDF failed", "error", err, "masterId", master.ID)
+	}
 	_ = s.store.WriteAudit(r.Context(), actor.ID, "internal_master.create", "internal_document_master", master.ID, clientIP(r), r.UserAgent())
 	writeJSON(w, http.StatusCreated, map[string]any{"master": master})
 }
@@ -160,6 +175,15 @@ func (s *Server) updateInternalDocumentMaster(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if req.Status == "active" {
+		sampleMaster := current
+		sampleMaster.Code = req.Code
+		sampleMaster.Name = req.Name
+		sampleMaster.Prefix = req.Prefix
+		if err := s.ensureInternalMasterSample(r.Context(), sampleMaster, actor.ID); err != nil {
+			s.logger.Error("ensure internal master sample before activation failed", "error", err, "masterId", current.ID)
+			writeError(w, http.StatusConflict, "internal_master_not_ready", "ยังเตรียม PDF ตัวอย่างสำหรับจัดวางกรอบลายเซ็นไม่สำเร็จ")
+			return
+		}
 		if err := s.validateInternalMasterActivation(r.Context(), current.ID, req.Code); err != nil {
 			writeError(w, http.StatusConflict, "internal_master_not_ready", err.Error())
 			return
@@ -221,7 +245,7 @@ func (s *Server) createInternalDocument(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, "internal_master_not_ready", err.Error())
 		return
 	}
-	layoutBoxes, selectedConfigs, signaturePlacements, err := internalFixedSignatureLayout(configs)
+	activeTemplate, layoutBoxes, selectedConfigs, signaturePlacements, err := s.internalActiveTemplateLayout(r.Context(), master.Code, configs, 1)
 	if err != nil {
 		writeError(w, http.StatusConflict, "internal_master_not_ready", err.Error())
 		return
@@ -299,7 +323,14 @@ func (s *Server) createInternalDocument(w http.ResponseWriter, r *http.Request) 
 		DocumentSource: "internal", InternalDocumentID: document.ID,
 		ScreenCode: internalDocumentScreenCode, Format: format, Candidate: candidate,
 		SMLDataGroup: session.SMLDataGroup, SMLDataCode: session.SMLDataCode,
-		TemplateSnapshot:    map[string]any{"source": "internal_fixed_a4_v2", "pageCount": pageCount, "signatureSlotCount": len(layoutBoxes)},
+		SignatureTemplateID: activeTemplate.ID,
+		TemplateSnapshot: map[string]any{
+			"source":              "internal_active_template_v3",
+			"signatureTemplateId": activeTemplate.ID,
+			"pageCount":           pageCount,
+			"boxes":               layoutBoxes,
+			"signaturePlacements": signaturePlacements,
+		},
 		Configs:             selectedConfigs,
 		LayoutBoxes:         layoutBoxes,
 		SignaturePlacements: signaturePlacements,
@@ -384,14 +415,8 @@ func (s *Server) updateInternalDocument(w http.ResponseWriter, r *http.Request) 
 		writeValidationMessages(w, issues)
 		return
 	}
-	signingDocument, err := s.store.FindSigningDocumentByInternalDocumentID(r.Context(), current.ID)
-	if err != nil {
+	if _, err := s.store.FindSigningDocumentByInternalDocumentID(r.Context(), current.ID); err != nil {
 		s.writeInternalDocumentError(w, err)
-		return
-	}
-	layoutBoxes, selectedConfigs, signaturePlacements, err := internalFixedSignatureLayout(internalLayoutConfigs(signingDocument))
-	if err != nil {
-		writeError(w, http.StatusConflict, "internal_master_not_ready", err.Error())
 		return
 	}
 	candidate := current
@@ -420,12 +445,9 @@ func (s *Server) updateInternalDocument(w http.ResponseWriter, r *http.Request) 
 		DepartmentName: normalized.DepartmentName, Purpose: normalized.Purpose,
 		TotalAmount: centsToAmount(totalCents), Items: normalized.Items,
 		OriginalFile: original, CurrentFile: original,
-		TemplateSnapshot:    map[string]any{"source": "internal_fixed_a4_v2", "pageCount": pages, "signatureSlotCount": len(layoutBoxes)},
-		Configs:             selectedConfigs,
-		LayoutBoxes:         layoutBoxes,
-		SignaturePlacements: signaturePlacements,
-		ActorID:             actor.ID,
-		IPAddress:           clientIP(r), UserAgent: r.UserAgent(),
+		PreserveSigningLayout: true,
+		ActorID:               actor.ID,
+		IPAddress:             clientIP(r), UserAgent: r.UserAgent(),
 	})
 	if err != nil {
 		s.cleanupUploadedFileBestEffort(original, "internal_revision_failed")
@@ -485,10 +507,28 @@ func (s *Server) internalWorkflowContext(ctx context.Context, code string) ([]mo
 	if len(configs) == 0 {
 		return nil, fmt.Errorf("กรุณาตั้งค่า Workflow ของเอกสารนี้ก่อน")
 	}
-	if _, _, _, err := internalFixedSignatureLayout(configs); err != nil {
-		return nil, err
-	}
 	return configs, nil
+}
+
+func (s *Server) internalActiveTemplateLayout(ctx context.Context, code string, configs []models.DocumentConfigStep, pageCount int) (*models.SignatureTemplate, []models.SignatureTemplateBoxRequest, []models.DocumentConfigStep, []models.SignaturePlacementSnapshot, error) {
+	_, active, err := s.store.GetSignatureTemplateState(ctx, internalDocumentScreenCode, code)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if active == nil {
+		return nil, nil, nil, nil, fmt.Errorf("กรุณาให้ Superadmin จัดวางกรอบลายเซ็นใน Workflow ก่อน")
+	}
+	if active.SampleFile == nil || active.SampleFile.PageCount != pageCount {
+		return nil, nil, nil, nil, fmt.Errorf("PDF ตัวอย่างของ Workflow เอกสารภายในไม่พร้อม กรุณาเปิดหน้าจัดวางกรอบแล้วบันทึกใหม่")
+	}
+
+	boxes := boxRequestsFromTemplate(active.Boxes)
+	layout, selected, placements, issues := validateSigningDocumentLayout(boxes, configs, pageCount)
+	issues = append(issues, validateInternalApprovalLayoutBoxes(layout)...)
+	if len(issues) > 0 {
+		return nil, nil, nil, nil, fmt.Errorf("Workflow เอกสารภายในยังไม่พร้อม: %s", issues[0].Message)
+	}
+	return active, layout, selected, placements, nil
 }
 
 func (s *Server) resolveConfigDocumentFormat(ctx context.Context, code string) (models.SMLDocFormat, error) {
@@ -507,6 +547,32 @@ func (s *Server) resolveConfigDocumentFormat(ctx context.Context, code string) (
 		format.Source = "sml"
 	}
 	return format, err
+}
+
+func (s *Server) ensureInternalMasterSample(ctx context.Context, master models.InternalDocumentMaster, actorID string) error {
+	_, active, err := s.store.GetSignatureTemplateState(ctx, internalDocumentScreenCode, master.Code)
+	if err != nil || active != nil {
+		return err
+	}
+	doc := models.InternalDocument{MasterName: master.Name, DocumentNo: master.Prefix + "260101-001", DocumentDate: "2026-01-01", RequiredDate: "2026-01-15", RequesterName: "ตัวอย่างผู้ขอเบิก", PositionName: "ตำแหน่ง", DepartmentName: "ส่วนงาน/ฝ่าย/แผนก", Purpose: "ตัวอย่างวัตถุประสงค์ของเอกสาร", TotalAmount: "1000.00", CompanySnapshot: models.InternalDocumentCompanySnapshot{DisplayName: "ชื่อบริษัทจากระบบ SML", Address1: "ที่อยู่บริษัท", TelephoneNumber: "00-0000-0000", TaxNumber: "0000000000000"}, Items: []models.InternalDocumentItem{{SequenceNo: 1, Description: "ตัวอย่างรายการ", Amount: "1000.00"}}}
+	data, pages, err := renderInternalDocumentPDF(doc)
+	if err != nil {
+		return err
+	}
+	file, err := s.storeUploadedBytes(ctx, data, "internal-"+master.Code+"-sample.pdf", "internal-sample.pdf", "application/pdf", ".pdf", pages, actorID)
+	if err != nil {
+		return err
+	}
+	_, err = s.store.UpsertActiveSignatureTemplateSample(ctx, internalDocumentScreenCode, master.Code, file.ID, actorID)
+	return err
+}
+
+func (s *Server) ensureInternalMasterSamples(ctx context.Context, masters []models.InternalDocumentMaster, actorID string) {
+	for _, master := range masters {
+		if err := s.ensureInternalMasterSample(ctx, master, actorID); err != nil {
+			s.logger.Warn("ensure internal master sample failed", "masterId", master.ID, "error", err)
+		}
+	}
 }
 
 func normalizeInternalMasterRequest(req models.InternalDocumentMasterRequest) (models.InternalDocumentMasterRequest, []string) {
@@ -603,7 +669,11 @@ func internalCompanySnapshot(p models.SMLCompanyProfile) models.InternalDocument
 }
 
 func (s *Server) validateInternalMasterActivation(ctx context.Context, id, code string) error {
-	_, err := s.internalWorkflowContext(ctx, code)
+	configs, err := s.internalWorkflowContext(ctx, code)
+	if err != nil {
+		return err
+	}
+	_, _, _, _, err = s.internalActiveTemplateLayout(ctx, code, configs, 1)
 	return err
 }
 

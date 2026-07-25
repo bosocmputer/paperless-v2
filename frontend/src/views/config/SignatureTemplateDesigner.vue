@@ -57,6 +57,7 @@ let discardNavigationConfirmed = false;
 
 const template = computed(() => active.value || draft.value);
 const isInternalDocument = computed(() => docFormat.value?.source === 'internal' || docFormat.value?.screen_code === 'INTERNAL');
+const showLegalNotice = computed(() => !isInternalDocument.value);
 const canEdit = computed(() => !!template.value && template.value.status !== 'archived');
 const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `หน้า ${index + 1}`, value: index + 1 })));
 const currentPageLabel = computed(() => (pageCount.value ? `หน้า ${currentPage.value} / ${pageCount.value}` : 'หน้า - / -'));
@@ -67,7 +68,7 @@ const signNoteKeyPrefix = 'sign_note_box_';
 const legalNoticeText = LEGAL_NOTICE_TEXT;
 const legalNoticePreviewText = LEGAL_NOTICE_DISPLAY_TEXT;
 const legalNoticeOverflow = ref(false);
-const selectedLegalNotice = computed(() => (selectedBoxKey.value === legalNoticeKey && legalNoticeBox.value ? legalOverlayBox(legalNoticeBox.value) : null));
+const selectedLegalNotice = computed(() => (showLegalNotice.value && selectedBoxKey.value === legalNoticeKey && legalNoticeBox.value ? legalOverlayBox(legalNoticeBox.value) : null));
 const selectedSignNote = computed(() => (allowTemplateSignNoteBoxes ? signNoteBoxes.value.find((box) => box.clientKey === selectedBoxKey.value) || null : null));
 const selectedItem = computed(() => selectedLegalNotice.value || selectedSignNote.value || selectedBox.value);
 const selectedIsLegalNotice = computed(() => !!selectedLegalNotice.value);
@@ -88,7 +89,7 @@ const boxesByPage = computed(() => groupBoxesBy((box) => Number(box.pageNo)));
 const signNoteBoxesByPage = computed(() => (allowTemplateSignNoteBoxes ? groupSignNoteBoxesBy((box) => Number(box.pageNo)) : new Map()));
 const currentPageBoxes = computed(() => boxesByPage.value.get(Number(currentPage.value)) || []);
 const currentPageSignNoteBoxes = computed(() => signNoteBoxesByPage.value.get(Number(currentPage.value)) || []);
-const currentPageLegalNotice = computed(() => (legalNoticeBox.value && Number(legalNoticeBox.value.pageNo || 1) === Number(currentPage.value) ? legalOverlayBox(legalNoticeBox.value) : null));
+const currentPageLegalNotice = computed(() => (showLegalNotice.value && legalNoticeBox.value && Number(legalNoticeBox.value.pageNo || 1) === Number(currentPage.value) ? legalOverlayBox(legalNoticeBox.value) : null));
 const validationIssues = computed(() => validateBoxes());
 const validationByPosition = computed(() => {
     const grouped = new Map();
@@ -199,7 +200,7 @@ async function loadState() {
         maxTemplatePages.value = result.maxTemplatePages || 20;
         boxes.value = withClientKeys((active.value || draft.value)?.boxes || []);
         signNoteBoxes.value = [];
-        legalNoticeBox.value = withLegalNoticeClientKey((active.value || draft.value)?.legalNoticeBox || null);
+        legalNoticeBox.value = isInternalDocument.value ? null : withLegalNoticeClientKey((active.value || draft.value)?.legalNoticeBox || null);
         selectedPositionCode.value = configs.value[0]?.positionCode || '';
         selectedBoxKey.value = '';
         dirty.value = false;
@@ -367,6 +368,14 @@ function addBox(step) {
         toast.add({ severity: 'info', summary: 'เพิ่มกรอบครบแล้ว', detail: `${step.positionName} มีกรอบครบตามเงื่อนไขแล้ว`, life: 3000 });
         return;
     }
+    const internalDefault = isInternalDocument.value
+        ? {
+              xRatio: 0.08 + (existing.length % 4) * 0.22,
+              yRatio: 0.815 + Math.floor(existing.length / 4) * 0.06,
+              widthRatio: 0.18,
+              heightRatio: 0.05
+          }
+        : { xRatio: 0.12, yRatio: 0.72, widthRatio: 0.2, heightRatio: 0.08 };
     const box = {
         clientKey: makeClientKey(),
         positionCode: step.positionCode,
@@ -374,10 +383,7 @@ function addBox(step) {
         signerType: 'any',
         signerUser: '',
         pageNo: currentPage.value,
-        xRatio: 0.12,
-        yRatio: 0.72,
-        widthRatio: 0.2,
-        heightRatio: 0.08,
+        ...internalDefault,
         label: step.positionName
     };
 
@@ -735,14 +741,14 @@ async function saveTemplate(showToast = true) {
                 label: box.label || ''
             })),
             signNoteBoxes: [],
-            legalNoticeBox: toLegalNoticePayload(legalNoticeBox.value)
+            legalNoticeBox: showLegalNotice.value ? toLegalNoticePayload(legalNoticeBox.value) : null
         };
         const result = await api.saveSignatureTemplateBoxes(template.value.id, payload);
         active.value = result.template;
         draft.value = null;
         boxes.value = withClientKeys(result.template?.boxes || []);
         signNoteBoxes.value = [];
-        legalNoticeBox.value = withLegalNoticeClientKey(result.template?.legalNoticeBox || null);
+        legalNoticeBox.value = showLegalNotice.value ? withLegalNoticeClientKey(result.template?.legalNoticeBox || null) : null;
         restoreSelectedBox(selectedSnapshot);
         if (!selectedSnapshot && selectedBoxKey.value === legalNoticeKey && legalNoticeBox.value) selectLegalNoticeBox();
         dirty.value = false;
@@ -793,7 +799,7 @@ function validateBoxes() {
             issues.push({ code: 'sign_note_box_too_small', positionCode: box.positionCode, message: `กรอบหมายเหตุของ Position ${box.positionCode} เล็กเกินไป` });
         }
     });
-    if (legalNoticeBox.value) {
+    if (showLegalNotice.value && legalNoticeBox.value) {
         const box = legalNoticeBox.value;
         if (box.pageNo < 1 || box.pageNo > Math.max(storedPageCount.value || pageCount.value || 1, 1)) {
             issues.push({ code: 'legal_notice_page_invalid', message: 'กรอบข้อความกฎหมายอยู่หน้าที่ไม่ถูกต้อง' });
@@ -804,6 +810,19 @@ function validateBoxes() {
         if (box.widthRatio < 0.2 || box.heightRatio < 0.035) {
             issues.push({ code: 'legal_notice_box_too_small', message: 'กรอบข้อความกฎหมายเล็กเกินไป' });
         }
+    }
+
+    if (isInternalDocument.value) {
+        const area = { left: 10 / 210, top: 237 / 297, right: 200 / 210, bottom: 279 / 297 };
+        boxes.value.forEach((box) => {
+            if (Number(box.pageNo) !== 1) {
+                issues.push({ code: 'internal_approval_page_invalid', positionCode: box.positionCode, message: `กรอบของ Position ${box.positionCode} ต้องอยู่หน้า 1 ในพื้นที่การอนุมัติ` });
+                return;
+            }
+            if (box.xRatio < area.left || box.yRatio < area.top || box.xRatio + box.widthRatio > area.right || box.yRatio + box.heightRatio > area.bottom) {
+                issues.push({ code: 'internal_approval_area_required', positionCode: box.positionCode, message: `กรอบของ Position ${box.positionCode} ต้องอยู่ภายในพื้นที่การอนุมัติของแบบฟอร์ม A4` });
+            }
+        });
     }
 
     configs.value.forEach((step) => {
@@ -1151,6 +1170,9 @@ function recordDesignerEvent(event, extra = {}) {
         </div>
 
         <Message v-if="error" severity="error">{{ error }}</Message>
+        <Message v-if="isInternalDocument" severity="info" class="mb-3" :closable="false">
+            วางกรอบลายเซ็นได้เฉพาะในพื้นที่ “การอนุมัติเอกสาร” ด้านล่างของแบบฟอร์ม A4 เอกสารภายในที่สร้างใหม่จะใช้กรอบนี้อัตโนมัติ
+        </Message>
 
         <Toolbar class="pdf-editor-status mb-3">
             <template #start>
@@ -1201,7 +1223,7 @@ function recordDesignerEvent(event, extra = {}) {
                         <canvas ref="canvasRef" class="pdf-canvas"></canvas>
                         <div ref="overlayRef" class="pdf-overlay">
                             <div
-                                v-if="currentPageLegalNotice"
+                                v-if="showLegalNotice && currentPageLegalNotice"
                                 class="signature-box legal-notice-box"
                                 :class="{ selected: selectedBoxKey === legalNoticeKey, readonly: !canEdit, overflow: legalNoticeOverflow }"
                                 :style="legalNoticeStyle(currentPageLegalNotice)"
@@ -1314,7 +1336,7 @@ function recordDesignerEvent(event, extra = {}) {
                     </div>
                 </section>
 
-                <section class="inspector-panel">
+                <section v-if="showLegalNotice" class="inspector-panel">
                     <div class="panel-title">
                         <div>
                             <div class="font-semibold">ข้อความกฎหมาย</div>

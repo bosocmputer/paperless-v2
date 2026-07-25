@@ -78,7 +78,7 @@ async function loadPage() {
     try {
         const [formatsResult, configsResult] = await Promise.all([api.listDocumentTypes(), api.listDocumentConfigs()]);
         docFormats.value = formatsResult.documentTypes || [];
-        configs.value = (configsResult.configs || []).filter((config) => !isInternalConfig(config, docFormats.value));
+        configs.value = configsResult.configs || [];
 
         const codes = [...new Set(configs.value.map((item) => item.docFormatCode).filter(Boolean))];
         const states = {};
@@ -112,12 +112,6 @@ function formatDetail(code) {
     return docFormats.value.find((item) => sameCode(item.code, code));
 }
 
-function isInternalConfig(config, formats) {
-    if (String(config?.screenCode || config?.screen_code || '').toUpperCase() === 'INTERNAL') return true;
-    const format = (formats || []).find((item) => sameCode(item.code, config?.docFormatCode));
-    return String(format?.source || '').toLowerCase() === 'internal' || String(format?.screenCode || format?.screen_code || '').toUpperCase() === 'INTERNAL';
-}
-
 function formatName(row) {
     return row.format?.name_1 || row.format?.name_2 || row.format?.format || '-';
 }
@@ -129,7 +123,7 @@ function formatPattern(row) {
 function resolveTemplateStatus(row) {
     if (row.state?.error) return { label: 'โหลดสถานะไม่ได้', severity: 'danger' };
     if (!row.template) return { label: 'ยังไม่ได้เริ่ม', severity: 'secondary' };
-    if (!row.template.sampleFileId) return { label: 'รออัปโหลด PDF', severity: 'warn' };
+    if (!row.template.sampleFileId) return { label: isInternalRow(row) ? 'กำลังเตรียม PDF ระบบ' : 'รออัปโหลด PDF', severity: 'warn' };
     if (row.issues.length > 0) return { label: 'ต้องแก้ไข', severity: 'warn' };
     if (row.boxCount > 0) return { label: 'มีกรอบเริ่มต้น', severity: 'success' };
     return { label: 'มี PDF ยังไม่วางกรอบ', severity: 'info' };
@@ -137,11 +131,11 @@ function resolveTemplateStatus(row) {
 
 function statusHelper(row) {
     if (row.state?.error) return row.state.error;
-    if (!row.template) return 'เปิดเข้าไปอัปโหลด PDF เพื่อทำกรอบเริ่มต้น ใช้ช่วยตอนส่งเอกสารจริง';
-    if (!row.template.sampleFileId) return 'ยังไม่มี PDF ตัวอย่าง';
+    if (!row.template) return isInternalRow(row) ? 'ระบบกำลังเตรียม PDF A4 จากแบบฟอร์มภายใน' : 'เปิดเข้าไปอัปโหลด PDF เพื่อทำกรอบเริ่มต้น ใช้ช่วยตอนส่งเอกสารจริง';
+    if (!row.template.sampleFileId) return isInternalRow(row) ? 'ระบบยังเตรียม PDF A4 ไม่เสร็จ' : 'ยังไม่มี PDF ตัวอย่าง';
     if (row.firstIssue) return issueLabel(row.firstIssue);
-    if (row.boxCount === 0) return 'ยังไม่มีกรอบเริ่มต้น แต่ไม่กระทบการส่งเซ็นจริง';
-    return 'ใช้เป็นค่าเริ่มต้นได้ และแก้กรอบอีกครั้งตอนอัปโหลดเอกสารจริง';
+    if (row.boxCount === 0) return isInternalRow(row) ? 'วางกรอบลายเซ็นในพื้นที่การอนุมัติก่อนเปิดใช้ Master' : 'ยังไม่มีกรอบเริ่มต้น แต่ไม่กระทบการส่งเซ็นจริง';
+    return isInternalRow(row) ? 'เอกสารภายในใหม่จะใช้กรอบนี้อัตโนมัติ' : 'ใช้เป็นค่าเริ่มต้นได้ และแก้กรอบอีกครั้งตอนอัปโหลดเอกสารจริง';
 }
 
 function issueLabel(issue) {
@@ -176,6 +170,10 @@ function pdfLabel(row) {
 
 function pdfFileName(row) {
     return row.template?.sampleFile?.originalName || '';
+}
+
+function isInternalRow(row) {
+    return String(row.format?.source || '').toLowerCase() === 'internal' || String(row.format?.screenCode || row.format?.screen_code || '').toUpperCase() === 'INTERNAL';
 }
 
 function lastUpdated(row) {
@@ -228,7 +226,7 @@ function normalizeSearch(value) {
         <div class="page-header">
             <div>
                 <div class="font-semibold text-xl mb-1">กรอบเริ่มต้น</div>
-                <p class="text-muted-color m-0">ใช้เป็นตัวช่วยตอนสร้างเอกสารจริง สามารถย้าย ลบ หรือเพิ่มกรอบก่อนส่งเซ็นได้</p>
+                <p class="text-muted-color m-0">Superadmin กำหนดกรอบตาม Workflow; เอกสารภายในใช้กรอบนี้อัตโนมัติ</p>
             </div>
             <div class="header-actions">
                 <InputText v-model="searchQuery" type="search" placeholder="ค้นหา doc, PDF, สถานะ" class="w-full sm:w-80" />

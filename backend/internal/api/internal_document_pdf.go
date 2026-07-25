@@ -22,12 +22,9 @@ var internalLaoFont []byte
 var internalPDFSlots = make(chan struct{}, 2)
 
 const (
-	internalFontThai                  = "InternalThai"
-	internalFontLao                   = "InternalLao"
-	internalDocumentMaxItems          = 15
-	internalDocumentApprovalColumns   = 3
-	internalDocumentApprovalRows      = 2
-	internalDocumentMaxSignatureSlots = internalDocumentApprovalColumns * internalDocumentApprovalRows
+	internalFontThai         = "InternalThai"
+	internalFontLao          = "InternalLao"
+	internalDocumentMaxItems = 15
 )
 
 func renderInternalDocumentPDF(document models.InternalDocument) ([]byte, int, error) {
@@ -173,16 +170,10 @@ func drawInternalSummary(pdf *gofpdf.Fpdf, document models.InternalDocument) {
 	pdf.SetXY(left, y)
 	pdf.CellFormat(width, 7, "การอนุมัติเอกสาร", "1", 1, "C", true, 0, "")
 	y += 7
-	cellWidth := width / internalDocumentApprovalColumns
-	const cellHeight = 21.0
-	for row := 0; row < internalDocumentApprovalRows; row++ {
-		for column := 0; column < internalDocumentApprovalColumns; column++ {
-			x := left + float64(column)*cellWidth
-			cellY := y + float64(row)*cellHeight
-			pdf.Rect(x, cellY, cellWidth, cellHeight, "D")
-		}
-	}
-	y += cellHeight * internalDocumentApprovalRows
+	// Keep one uninterrupted approval area. Signature positions are configured
+	// once by superadmin in the active Workflow template, not by each creator.
+	pdf.Rect(left, y, width, internalApprovalHeightMM, "D")
+	y += internalApprovalHeightMM
 	pdf.SetTextColor(205, 35, 45)
 	pdf.SetFont(internalFontThai, "", 8.5)
 	pdf.SetXY(left, y+1)

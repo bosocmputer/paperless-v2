@@ -170,9 +170,9 @@ func TestNormalizeDocumentConfigWorkflowSteps(t *testing.T) {
 		}
 	})
 
-	t.Run("limits internal workflow to six fixed A4 approval cells", func(t *testing.T) {
+	t.Run("allows internal workflow beyond legacy fixed approval cells", func(t *testing.T) {
 		internalFormat := models.SMLDocFormat{Code: "ADV", ScreenCode: internalDocumentScreenCode}
-		steps := make([]models.DocumentConfigStepRequest, internalDocumentMaxSignatureSlots+1)
+		steps := make([]models.DocumentConfigStepRequest, 7)
 		for index := range steps {
 			steps[index] = models.DocumentConfigStepRequest{
 				PositionCode:  string(rune('A' + index)),
@@ -182,8 +182,8 @@ func TestNormalizeDocumentConfigWorkflowSteps(t *testing.T) {
 			}
 		}
 		_, messages := normalizeDocumentConfigWorkflowSteps(internalFormat, steps)
-		if joined := strings.Join(messages, " "); !strings.Contains(joined, "at most 6 signature slots") {
-			t.Fatalf("messages = %v, want A4 signature slot limit", messages)
+		if len(messages) != 0 {
+			t.Fatalf("messages = %v, want no legacy A4 signature slot limit", messages)
 		}
 	})
 }

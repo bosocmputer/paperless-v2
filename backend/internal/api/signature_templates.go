@@ -54,10 +54,6 @@ func (s *Server) getSignatureTemplateState(w http.ResponseWriter, r *http.Reques
 		s.writeDocFormatValidationError(w, err)
 		return
 	}
-	if strings.EqualFold(format.Source, "internal") || strings.EqualFold(normalizeScreenCode(format.ScreenCode), internalDocumentScreenCode) {
-		writeError(w, http.StatusConflict, "internal_template_not_required", "เอกสารภายในกำหนดช่องลายเซ็นจาก Workflow อัตโนมัติ ไม่ต้องตั้งค่ากรอบเริ่มต้น")
-		return
-	}
 	screenCode := normalizeScreenCode(format.ScreenCode)
 
 	configs, err := s.store.ListDocumentConfigSteps(r.Context(), screenCode, format.Code)
@@ -74,14 +70,24 @@ func (s *Server) getSignatureTemplateState(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	draftIssues := validationIssuesForTemplate(draft, configs, s.cfg.MaxTemplatePages)
+	activeIssues := validationIssuesForTemplate(active, configs, s.cfg.MaxTemplatePages)
+	if strings.EqualFold(screenCode, internalDocumentScreenCode) {
+		if draft != nil {
+			draftIssues = append(draftIssues, validateInternalApprovalLayoutBoxes(boxRequestsFromTemplate(draft.Boxes))...)
+		}
+		if active != nil {
+			activeIssues = append(activeIssues, validateInternalApprovalLayoutBoxes(boxRequestsFromTemplate(active.Boxes))...)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"docFormat":        format,
 		"configs":          configs,
 		"draft":            draft,
 		"active":           active,
 		"maxTemplatePages": s.cfg.MaxTemplatePages,
-		"draftIssues":      validationIssuesForTemplate(draft, configs, s.cfg.MaxTemplatePages),
-		"activeIssues":     validationIssuesForTemplate(active, configs, s.cfg.MaxTemplatePages),
+		"draftIssues":      draftIssues,
+		"activeIssues":     activeIssues,
 	})
 }
 
@@ -99,7 +105,7 @@ func (s *Server) uploadSignatureTemplateSamplePDF(w http.ResponseWriter, r *http
 	}
 	screenCode := normalizeScreenCode(format.ScreenCode)
 	if format.Source == "internal" {
-		writeError(w, http.StatusConflict, "internal_template_not_required", "เอกสารภายในกำหนดช่องลายเซ็นจาก Workflow อัตโนมัติ ไม่ต้องใช้ PDF ตัวอย่าง")
+		writeError(w, http.StatusConflict, "internal_template_sample_managed", "เอกสารภายในใช้ PDF A4 ที่ระบบสร้างให้ จึงไม่ต้องอัปโหลด PDF ตัวอย่าง")
 		return
 	}
 
@@ -210,10 +216,6 @@ func (s *Server) getSignatureTemplateSamplePDF(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load signature template right now.")
 		return
 	}
-	if strings.EqualFold(normalizeScreenCode(template.ScreenCode), internalDocumentScreenCode) {
-		writeError(w, http.StatusConflict, "internal_template_not_required", "เอกสารภายในกำหนดช่องลายเซ็นจาก Workflow อัตโนมัติ ไม่ต้องใช้ PDF ตัวอย่าง")
-		return
-	}
 	if template.SampleFile == nil || template.SampleFile.StoragePath == "" {
 		writeError(w, http.StatusNotFound, "sample_pdf_not_found", "Sample PDF was not found.")
 		return
@@ -254,10 +256,6 @@ func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load signature template right now.")
 		return
 	}
-	if strings.EqualFold(normalizeScreenCode(existingTemplate.ScreenCode), internalDocumentScreenCode) {
-		writeError(w, http.StatusConflict, "internal_template_not_required", "เอกสารภายในกำหนดช่องลายเซ็นจาก Workflow อัตโนมัติ ไม่ต้องแก้กรอบ")
-		return
-	}
 	configs, err := s.store.ListDocumentConfigSteps(r.Context(), existingTemplate.ScreenCode, existingTemplate.DocFormatCode)
 	if err != nil {
 		s.logger.Error("list document configs before save failed", "error", err, "templateID", id)
@@ -271,6 +269,15 @@ func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Reque
 	if noteLimitIssues := validateSignNoteBoxSaveLimits(signNoteBoxes, configs); len(noteLimitIssues) > 0 {
 		writeValidationIssues(w, http.StatusBadRequest, "invalid_signature_boxes", noteLimitIssues)
 		return
+	}
+	if strings.EqualFold(normalizeScreenCode(existingTemplate.ScreenCode), internalDocumentScreenCode) {
+		if areaIssues := validateInternalApprovalLayoutBoxes(boxes); len(areaIssues) > 0 {
+			writeValidationIssues(w, http.StatusBadRequest, "invalid_signature_boxes", areaIssues)
+			return
+		}
+		// The red internal-document notice is part of the generated A4 PDF, so a
+		// per-template legal-notice overlay must never be carried into the snapshot.
+		legalNoticeBox = nil
 	}
 
 	template, err := s.store.ReplaceSignatureTemplateBoxes(r.Context(), id, req.Revision, boxes, signNoteBoxes, legalNoticeBox)
@@ -317,10 +324,6 @@ func (s *Server) publishSignatureTemplate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load signature template right now.")
 		return
 	}
-	if strings.EqualFold(normalizeScreenCode(template.ScreenCode), internalDocumentScreenCode) {
-		writeError(w, http.StatusConflict, "internal_template_not_required", "เอกสารภายในกำหนดช่องลายเซ็นจาก Workflow อัตโนมัติ ไม่ต้องเผยแพร่ Template")
-		return
-	}
 	if template.Status != "draft" {
 		writeError(w, http.StatusBadRequest, "signature_template_not_draft", "Only draft templates can be published.")
 		return
@@ -333,6 +336,9 @@ func (s *Server) publishSignatureTemplate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	issues := validateSignatureTemplate(template, configs, s.cfg.MaxTemplatePages)
+	if strings.EqualFold(normalizeScreenCode(template.ScreenCode), internalDocumentScreenCode) {
+		issues = append(issues, validateInternalApprovalLayoutBoxes(boxRequestsFromTemplate(template.Boxes))...)
+	}
 	if len(issues) > 0 {
 		writeValidationIssues(w, http.StatusBadRequest, "signature_template_invalid", issues)
 		return
@@ -763,6 +769,7 @@ func validateSignNoteBoxSaveLimits(boxes []models.SignatureTemplateBoxRequest, c
 
 func validateSignatureTemplate(template models.SignatureTemplate, configs []models.DocumentConfigStep, maxPages int) []models.SignatureValidationIssue {
 	issues := []models.SignatureValidationIssue{}
+	isInternalTemplate := strings.EqualFold(normalizeScreenCode(template.ScreenCode), internalDocumentScreenCode)
 	if template.SampleFileID == "" {
 		issues = append(issues, signatureIssue("sample_pdf_required", "", "Upload a sample PDF before publishing."))
 	}
@@ -777,9 +784,11 @@ func validateSignatureTemplate(template models.SignatureTemplate, configs []mode
 	issues = append(issues, boxIssues...)
 	normalizedNoteBoxes, noteIssues := normalizeAndValidateSignNoteBoxRequests(boxRequestsFromTemplate(template.SignNoteBoxes), maxPages)
 	issues = append(issues, noteIssues...)
-	legalBoxRequest := legalNoticeBoxRequestFromTemplate(template.LegalNoticeBox)
-	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, false)
-	issues = append(issues, legalIssues...)
+	if !isInternalTemplate {
+		legalBoxRequest := legalNoticeBoxRequestFromTemplate(template.LegalNoticeBox)
+		_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, false)
+		issues = append(issues, legalIssues...)
+	}
 	issues = append(issues, validateSignNoteBoxSaveLimits(normalizedNoteBoxes, configs)...)
 
 	stepsByPosition := map[string]models.DocumentConfigStep{}
