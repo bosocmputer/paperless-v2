@@ -144,7 +144,7 @@ If sync reports a missing or invalid signature, PaperLess preserves the previous
 
 Internal documents require SML API `GET /api/v1/company-profile`, the PaperLess additive migration, and the matching frontend. Deploy in this order: SML API, PaperLess API, PaperLess Web. Keep `INTERNAL_DOCUMENTS_ENABLED=false` until all three services are healthy, then enable it and recreate only the PaperLess API/Web services.
 
-After enabling the flag, verify that the selected tenant has exactly one usable row in `public.erp_company_profile`. Open `Master เอกสารภายใน` as superadmin and confirm the three seeded Masters are inactive. Configure the Workflow before activating a Master; internal signature/legal frames are placed later on each real Draft PDF, so an Active Template is not required. Do not guess customer signers or activate a production Master with a test Workflow.
+After enabling the flag, verify that the selected tenant has exactly one usable row in `public.erp_company_profile`. Open `Master เอกสารภายใน` as superadmin and confirm the three seeded Masters are inactive. Configure the Workflow before activating a Master; internal documents map the six fixed A4 approval cells automatically from that Workflow, so an Active Template is not required. Do not guess customer signers or activate a production Master with a test Workflow.
 
 Safe smoke checks before customer configuration:
 
@@ -153,7 +153,7 @@ Safe smoke checks before customer configuration:
 3. An inactive or incomplete Master cannot create a document and returns a readable configuration error.
 4. Existing SML document create, image upload, and lock flows remain unchanged.
 
-After customer Workflow/Template configuration, create one approved test document, open the generated PDF, edit it once to verify immutable revision behavior, arrange the signature/legal boxes, send it, and complete signing. Printing the latest revision is optional. Confirm logs contain no SML image or SML lock request for that internal document.
+After customer Workflow configuration, create one approved test document with no more than 15 rows, open the generated one-page PDF, edit it once to verify immutable revision behavior and automatic approval-cell placement, send it, and complete signing. Printing the latest revision is optional. Confirm logs contain no SML image or SML lock request for that internal document.
 
 For immediate application rollback set `INTERNAL_DOCUMENTS_ENABLED=false` and restore the previous immutable API/Web image tags. Do not drop the additive tables or columns; existing internal records remain audit data and become visible again when the flag is re-enabled.
 

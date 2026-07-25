@@ -69,6 +69,7 @@ const documentHeaderLine = computed(() => {
 const canViewEvidencePDF = computed(() => document.value?.status === 'completed' && Boolean(document.value?.finalFileId || document.value?.finalFile));
 const isInternalDocument = computed(() => document.value?.documentSource === 'internal');
 const internalLayoutReady = computed(() => !isInternalDocument.value || document.value?.layoutReady === true);
+const needsLegacyInternalLayout = computed(() => isInternalDocument.value && document.value?.status === 'draft' && !internalLayoutReady.value);
 const internalLayoutPDFUrl = computed(() => (document.value?.id ? api.signingDocumentPDFUrlForDocument(document.value, 'original') : ''));
 const canCancelInternalDocument = computed(() => {
     if (!isInternalDocument.value || !['draft', 'in_progress'].includes(document.value?.status)) return false;
@@ -135,7 +136,7 @@ async function loadPage() {
         document.value = result.document;
         syncActiveMenuFromDocument();
         loadDocumentAttachments();
-        if (route.query.open_layout === '1' && document.value?.documentSource === 'internal' && document.value?.status === 'draft') {
+        if (route.query.open_layout === '1' && needsLegacyInternalLayout.value) {
             openInternalLayout();
             const { open_layout, ...query } = route.query;
             router.replace({ query });
@@ -236,7 +237,7 @@ function imageTruncatedDetail(result = {}) {
 }
 
 function confirmSendDocument() {
-    if (isInternalDocument.value && !internalLayoutReady.value) {
+    if (needsLegacyInternalLayout.value) {
         toast.add({ severity: 'warn', summary: 'กรุณาจัดวางกรอบก่อนส่ง', detail: 'วางกรอบลายเซ็นและข้อความกฎหมายบน PDF ฉบับจริงให้ครบก่อนส่งเข้า Workflow', life: 3800 });
         return;
     }
@@ -723,13 +724,13 @@ function movementEventView(event) {
             </div>
             <Tag v-if="document" :value="documentStatusLabel" :severity="signingStatusSeverity(document.status)" />
             <Tag v-if="isInternalDocument" value="เอกสารภายใน" severity="info" />
-            <Tag v-if="isInternalDocument && document?.status === 'draft'" :value="internalLayoutReady ? 'จัดวางกรอบแล้ว' : 'ต้องจัดวางกรอบ'" :severity="internalLayoutReady ? 'success' : 'warn'" />
+            <Tag v-if="isInternalDocument && document?.status === 'draft'" :value="internalLayoutReady ? 'ตำแหน่งเซ็นอัตโนมัติ' : 'ต้องจัดวางกรอบ (เอกสารเดิม)'" :severity="internalLayoutReady ? 'success' : 'warn'" />
             <Button v-if="document && !isInternalDocument" label="ตรวจสอบ Flow" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
             <Button v-if="document?.status === 'draft' && isInternalDocument" label="แก้ไขแบบฟอร์ม" icon="pi pi-pencil" severity="secondary" outlined @click="openInternalEdit" />
-            <Button v-if="document?.status === 'draft' && isInternalDocument" label="จัดวางกรอบ" icon="pi pi-objects-column" severity="secondary" outlined @click="openInternalLayout" />
-            <Button v-if="document?.status === 'draft' && isInternalDocument" label="พิมพ์ PDF" icon="pi pi-print" severity="secondary" outlined :disabled="!internalLayoutReady" v-tooltip.bottom="internalLayoutReady ? 'พิมพ์ PDF revision ล่าสุด (ไม่บังคับก่อนส่ง)' : 'กรุณาจัดวางกรอบก่อนพิมพ์'" :loading="printingInternal" @click="printInternalDraft" />
+            <Button v-if="needsLegacyInternalLayout" label="จัดวางกรอบ" icon="pi pi-objects-column" severity="secondary" outlined @click="openInternalLayout" />
+            <Button v-if="document?.status === 'draft' && isInternalDocument" label="พิมพ์ PDF" icon="pi pi-print" severity="secondary" outlined :disabled="needsLegacyInternalLayout" v-tooltip.bottom="needsLegacyInternalLayout ? 'กรุณาจัดวางกรอบก่อนพิมพ์' : 'พิมพ์ PDF revision ล่าสุด (ไม่บังคับก่อนส่ง)'" :loading="printingInternal" @click="printInternalDraft" />
             <Button v-if="document?.status === 'cancelled' && isInternalDocument" label="สร้างฉบับใหม่" icon="pi pi-copy" severity="secondary" outlined @click="copyInternalDocument" />
-            <Button v-if="document?.status === 'draft'" label="ส่งไปเซ็น" icon="pi pi-send" severity="success" :loading="sending" :disabled="isInternalDocument && !internalLayoutReady" v-tooltip.bottom="isInternalDocument && !internalLayoutReady ? 'กรุณาจัดวางกรอบก่อนส่ง' : 'ส่งไปเซ็น'" @click="confirmSendDocument" />
+            <Button v-if="document?.status === 'draft'" label="ส่งไปเซ็น" icon="pi pi-send" severity="success" :loading="sending" :disabled="needsLegacyInternalLayout" v-tooltip.bottom="needsLegacyInternalLayout ? 'กรุณาจัดวางกรอบก่อนส่ง' : 'ส่งไปเซ็น'" @click="confirmSendDocument" />
             <Button v-if="(document?.status === 'draft' && !isInternalDocument) || canCancelInternalDocument" label="ยกเลิก" icon="pi pi-trash" severity="danger" outlined :loading="cancellingDocument" @click="confirmCancelDocument" />
             <Button v-if="document?.status === 'completed_evidence_failed'" label="สร้าง PDF อีกครั้ง" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
             <Button v-if="document?.status === 'completed_image_failed' && !isInternalDocument" label="ส่งรูป SML อีกครั้ง" icon="pi pi-images" severity="danger" outlined :loading="retryingImages" @click="retryImages" />

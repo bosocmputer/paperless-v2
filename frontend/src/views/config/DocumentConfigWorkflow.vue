@@ -41,6 +41,8 @@ const isInternalDocument = computed(() => {
     const format = workflow.value?.docFormat || {};
     return String(format.source || '').toLowerCase() === 'internal' || String(format.screenCode || format.screen_code || '').toUpperCase() === 'INTERNAL';
 });
+const internalSignatureSlotCount = computed(() => steps.value.reduce((total, step) => total + workflowSignatureSlotCount(step), 0));
+const internalSignatureSlotLimit = 6;
 const activeUserOptions = computed(() => {
     const options = users.value
         .filter((user) => user.status === 'active')
@@ -348,6 +350,9 @@ function validateSteps(list) {
             }
         }
     });
+    if (isInternalDocument.value && internalSignatureSlotCount.value > internalSignatureSlotLimit) {
+        issues.push({ key: '', message: `Workflow เอกสารภายในใช้ช่องลายเซ็น ${internalSignatureSlotCount.value} ช่อง แต่แบบฟอร์ม A4 รองรับสูงสุด ${internalSignatureSlotLimit} ช่อง` });
+    }
     return issues;
 }
 
@@ -415,6 +420,10 @@ function rowStatus(step) {
 
 function signerValues(step) {
     return [step.user01, step.user02, step.user03].map((value) => String(value || '').trim()).filter(Boolean);
+}
+
+function workflowSignatureSlotCount(step) {
+    return Number(step.conditionType) === 2 ? Math.max(1, signerValues(step).length) : 1;
 }
 
 function signerUsername(value) {
@@ -563,7 +572,10 @@ function normalizeCode(value) {
         </div>
 
         <Message v-if="saveDisabledReason && dirty" severity="warn" class="mb-4" :closable="false">{{ saveDisabledReason }}</Message>
-        <Message v-if="isInternalDocument" severity="info" class="mb-4" :closable="false">เอกสารภายในใช้ Workflow สำหรับลำดับและผู้เซ็นเท่านั้น ผู้สร้างจะวางกรอบลายเซ็นและข้อความกฎหมายบน PDF ฉบับจริงใน Draft ก่อนส่ง</Message>
+        <Message v-if="isInternalDocument" severity="info" class="mb-4" :closable="false">
+            เอกสารภายในใช้ Workflow สำหรับลำดับและผู้เซ็นเท่านั้น ระบบวางช่องลายเซ็นว่างตามลำดับให้บนแบบฟอร์ม A4 อัตโนมัติ ผู้สร้างไม่ต้องจัดวางกรอบใน Draft
+            <Tag class="ml-2" :value="`ช่องอนุมัติ ${internalSignatureSlotCount}/${internalSignatureSlotLimit}`" :severity="internalSignatureSlotCount > internalSignatureSlotLimit ? 'danger' : 'info'" />
+        </Message>
         <Message v-if="conflictMessage" severity="warn" class="mb-4" :closable="false">
             {{ conflictMessage }}
             <Button label="โหลดใหม่" icon="pi pi-refresh" text size="small" @click="loadWorkflow" />

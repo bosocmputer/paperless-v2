@@ -169,4 +169,21 @@ func TestNormalizeDocumentConfigWorkflowSteps(t *testing.T) {
 			t.Fatalf("messages = %v, want two missing user messages", messages)
 		}
 	})
+
+	t.Run("limits internal workflow to six fixed A4 approval cells", func(t *testing.T) {
+		internalFormat := models.SMLDocFormat{Code: "ADV", ScreenCode: internalDocumentScreenCode}
+		steps := make([]models.DocumentConfigStepRequest, internalDocumentMaxSignatureSlots+1)
+		for index := range steps {
+			steps[index] = models.DocumentConfigStepRequest{
+				PositionCode:  string(rune('A' + index)),
+				PositionName:  "ผู้อนุมัติ",
+				SequenceNo:    float64(index + 1),
+				ConditionType: 3,
+			}
+		}
+		_, messages := normalizeDocumentConfigWorkflowSteps(internalFormat, steps)
+		if joined := strings.Join(messages, " "); !strings.Contains(joined, "at most 6 signature slots") {
+			t.Fatalf("messages = %v, want A4 signature slot limit", messages)
+		}
+	})
 }

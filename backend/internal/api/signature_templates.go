@@ -54,6 +54,10 @@ func (s *Server) getSignatureTemplateState(w http.ResponseWriter, r *http.Reques
 		s.writeDocFormatValidationError(w, err)
 		return
 	}
+	if strings.EqualFold(format.Source, "internal") || strings.EqualFold(normalizeScreenCode(format.ScreenCode), internalDocumentScreenCode) {
+		writeError(w, http.StatusConflict, "internal_template_not_required", "เอกสารภายในกำหนดช่องลายเซ็นจาก Workflow อัตโนมัติ ไม่ต้องตั้งค่ากรอบเริ่มต้น")
+		return
+	}
 	screenCode := normalizeScreenCode(format.ScreenCode)
 
 	configs, err := s.store.ListDocumentConfigSteps(r.Context(), screenCode, format.Code)
@@ -95,7 +99,7 @@ func (s *Server) uploadSignatureTemplateSamplePDF(w http.ResponseWriter, r *http
 	}
 	screenCode := normalizeScreenCode(format.ScreenCode)
 	if format.Source == "internal" {
-		writeError(w, http.StatusBadRequest, "internal_template_sample_managed", "เอกสารภายในใช้ Sample PDF ที่ระบบสร้างให้อัตโนมัติ")
+		writeError(w, http.StatusConflict, "internal_template_not_required", "เอกสารภายในกำหนดช่องลายเซ็นจาก Workflow อัตโนมัติ ไม่ต้องใช้ PDF ตัวอย่าง")
 		return
 	}
 
@@ -206,6 +210,10 @@ func (s *Server) getSignatureTemplateSamplePDF(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load signature template right now.")
 		return
 	}
+	if strings.EqualFold(normalizeScreenCode(template.ScreenCode), internalDocumentScreenCode) {
+		writeError(w, http.StatusConflict, "internal_template_not_required", "เอกสารภายในกำหนดช่องลายเซ็นจาก Workflow อัตโนมัติ ไม่ต้องใช้ PDF ตัวอย่าง")
+		return
+	}
 	if template.SampleFile == nil || template.SampleFile.StoragePath == "" {
 		writeError(w, http.StatusNotFound, "sample_pdf_not_found", "Sample PDF was not found.")
 		return
@@ -244,6 +252,10 @@ func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		s.logger.Error("load signature template before save failed", "error", err, "templateID", id)
 		writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load signature template right now.")
+		return
+	}
+	if strings.EqualFold(normalizeScreenCode(existingTemplate.ScreenCode), internalDocumentScreenCode) {
+		writeError(w, http.StatusConflict, "internal_template_not_required", "เอกสารภายในกำหนดช่องลายเซ็นจาก Workflow อัตโนมัติ ไม่ต้องแก้กรอบ")
 		return
 	}
 	configs, err := s.store.ListDocumentConfigSteps(r.Context(), existingTemplate.ScreenCode, existingTemplate.DocFormatCode)
@@ -303,6 +315,10 @@ func (s *Server) publishSignatureTemplate(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		s.logger.Error("load signature template before publish failed", "error", err, "templateID", id)
 		writeError(w, http.StatusInternalServerError, "signature_template_failed", "Cannot load signature template right now.")
+		return
+	}
+	if strings.EqualFold(normalizeScreenCode(template.ScreenCode), internalDocumentScreenCode) {
+		writeError(w, http.StatusConflict, "internal_template_not_required", "เอกสารภายในกำหนดช่องลายเซ็นจาก Workflow อัตโนมัติ ไม่ต้องเผยแพร่ Template")
 		return
 	}
 	if template.Status != "draft" {

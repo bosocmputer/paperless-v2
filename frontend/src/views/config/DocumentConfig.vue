@@ -92,6 +92,10 @@ function openPreset(docFormatCode) {
     router.push({ name: 'signature-template', params: { docFormatCode } });
 }
 
+function isInternalWorkflow(workflow) {
+    return String(workflow?.docFormat?.source || '').toLowerCase() === 'internal' || String(workflow?.screenCode || '').toUpperCase() === 'INTERNAL';
+}
+
 function openCreate() {
     selectedNewDocFormat.value = availableDocFormatOptions.value[0]?.value || '';
     createVisible.value = true;
@@ -265,9 +269,10 @@ function sameCode(left, right) {
                     </div>
                 </template>
             </Column>
-            <Column field="warningCount" header="กรอบเริ่มต้น" sortable style="min-width: 10rem">
+            <Column field="warningCount" header="ตำแหน่งเซ็น" sortable style="min-width: 10rem">
                 <template #body="{ data }">
-                    <Tag v-if="data.warningCount > 0" severity="warn" :value="`${data.warningCount} แจ้งเตือน`" />
+                    <Tag v-if="isInternalWorkflow(data)" severity="info" value="อัตโนมัติ (A4)" />
+                    <Tag v-else-if="data.warningCount > 0" severity="warn" :value="`${data.warningCount} แจ้งเตือน`" />
                     <Tag v-else severity="success" value="ปกติ" />
                 </template>
             </Column>
@@ -288,7 +293,7 @@ function sameCode(left, right) {
                             title="คัดลอกจาก Workflow อื่นมาแทนรายการนี้"
                             @click="openCopy(data)"
                         />
-                        <Button icon="pi pi-map-marker" severity="secondary" rounded outlined aria-label="กรอบเริ่มต้น" @click="openPreset(data.docFormatCode)" />
+                        <Button v-if="!isInternalWorkflow(data)" icon="pi pi-map-marker" severity="secondary" rounded outlined aria-label="กรอบเริ่มต้น" @click="openPreset(data.docFormatCode)" />
                     </div>
                 </template>
             </Column>

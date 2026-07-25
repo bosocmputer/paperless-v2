@@ -1054,6 +1054,10 @@ func (s *Server) saveInternalDraftLayout(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusConflict, "internal_draft_layout_unavailable", "จัดวางกรอบได้เฉพาะ Draft เอกสารภายใน")
 		return
 	}
+	if document.LayoutReady && len(document.SignaturePlacements) > 0 && len(document.LegalNoticeBoxes) == 0 {
+		writeError(w, http.StatusConflict, "internal_fixed_layout_managed", "เอกสารภายในชุดนี้กำหนดตำแหน่งลายเซ็นอัตโนมัติจาก Workflow แล้ว จึงไม่ต้องจัดวางกรอบ")
+		return
+	}
 	if document.CreatedBy != actor.ID && actor.Role != "superadmin" {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
 		return

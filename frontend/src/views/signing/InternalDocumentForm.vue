@@ -14,6 +14,7 @@ const masters = ref([]);
 const internalDocument = ref(null);
 const copySource = ref(null);
 const idempotencyKey = ref(crypto.randomUUID?.() || `internal-${Date.now()}-${Math.random()}`);
+const maxItemsPerForm = 15;
 const form = reactive({
     masterId: '',
     documentDate: new Date(),
@@ -125,7 +126,7 @@ function markDirty() {
 }
 
 function addItem() {
-    if (form.items.length >= 100) return;
+    if (form.items.length >= maxItemsPerForm) return;
     form.items.push(newItem());
     markDirty();
 }
@@ -144,6 +145,7 @@ function validateForm() {
     if (!form.masterId) return 'กรุณาเลือกประเภทเอกสาร';
     if (!form.requesterName.trim()) return 'กรุณากรอกชื่อผู้ขอเบิก';
     if (!form.purpose.trim()) return 'กรุณากรอกวัตถุประสงค์';
+    if (form.items.length > maxItemsPerForm) return `แบบฟอร์ม A4 รองรับสูงสุด ${maxItemsPerForm} รายการ`;
     const invalidIndex = form.items.findIndex((item) => !String(item.description || '').trim() || Number(item.amount || 0) <= 0);
     if (invalidIndex >= 0) return `กรุณาตรวจสอบรายการที่ ${invalidIndex + 1}`;
     return '';
@@ -229,8 +231,11 @@ function formatMoney(value) {
 
         <section class="form-section items-section">
             <div class="section-head">
-                <div><h2>รายการค่าใช้จ่าย</h2><span>สูงสุด 100 รายการ</span></div>
-                <Button label="เพิ่มรายการ" icon="pi pi-plus" severity="secondary" outlined :disabled="form.items.length >= 100" @click="addItem" />
+                <div><h2>รายการค่าใช้จ่าย</h2><span>สูงสุด {{ maxItemsPerForm }} รายการต่อแบบฟอร์ม A4 · ระบบเว้นแถวที่เหลือเพื่อคงตำแหน่งช่องอนุมัติ</span></div>
+                <div class="flex items-center gap-2">
+                    <Tag :value="`${form.items.length}/${maxItemsPerForm}`" :severity="form.items.length > maxItemsPerForm ? 'danger' : 'info'" />
+                    <Button label="เพิ่มรายการ" icon="pi pi-plus" severity="secondary" outlined :disabled="form.items.length >= maxItemsPerForm" @click="addItem" />
+                </div>
             </div>
             <DataTable :value="form.items" dataKey="clientKey" responsiveLayout="scroll" class="items-table">
                 <Column header="ลำดับ" style="width: 5rem"><template #body="{ index }"><span class="sequence">{{ index + 1 }}</span></template></Column>

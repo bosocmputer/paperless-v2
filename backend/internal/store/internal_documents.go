@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -292,23 +293,42 @@ WHERE id=$1 AND status IN ('generating','generation_failed')`, internalID, versi
 }
 
 type UpdateInternalDocumentRevisionInput struct {
-	InternalID       string
-	ExpectedRevision int
-	RequiredDate     time.Time
-	RequesterName    string
-	PositionName     string
-	DepartmentName   string
-	Purpose          string
-	TotalAmount      string
-	Items            []models.InternalDocumentItem
-	OriginalFile     models.UploadedFile
-	CurrentFile      models.UploadedFile
-	ActorID          string
-	IPAddress        string
-	UserAgent        string
+	InternalID          string
+	ExpectedRevision    int
+	RequiredDate        time.Time
+	RequesterName       string
+	PositionName        string
+	DepartmentName      string
+	Purpose             string
+	TotalAmount         string
+	Items               []models.InternalDocumentItem
+	OriginalFile        models.UploadedFile
+	CurrentFile         models.UploadedFile
+	TemplateSnapshot    any
+	Configs             []models.DocumentConfigStep
+	LayoutBoxes         []models.SignatureTemplateBoxRequest
+	SignaturePlacements []models.SignaturePlacementSnapshot
+	ActorID             string
+	IPAddress           string
+	UserAgent           string
 }
 
 func (s *Store) UpdateInternalDocumentRevision(ctx context.Context, input UpdateInternalDocumentRevisionInput) (models.InternalDocument, error) {
+	if len(input.Configs) == 0 || len(input.LayoutBoxes) == 0 || len(input.SignaturePlacements) == 0 {
+		return models.InternalDocument{}, fmt.Errorf("internal document signature layout is required")
+	}
+	configSnapshot, err := json.Marshal(input.Configs)
+	if err != nil {
+		return models.InternalDocument{}, err
+	}
+	templateSnapshot, err := json.Marshal(input.TemplateSnapshot)
+	if err != nil {
+		return models.InternalDocument{}, err
+	}
+	placementSnapshot, err := json.Marshal(input.SignaturePlacements)
+	if err != nil {
+		return models.InternalDocument{}, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return models.InternalDocument{}, err
@@ -367,27 +387,83 @@ SET original_file_id=$2,
     current_version=current_version+1,
     party_name=$4,
     total_amount=$5::numeric,
-    template_snapshot='{ "source": "internal_draft_layout_required" }'::jsonb,
+    config_snapshot=$6::jsonb,
+    template_snapshot=$7::jsonb,
     signature_template_id=NULL,
-    signature_placement_snapshot='[]'::jsonb,
+    signature_placement_snapshot=$8::jsonb,
     legal_notice_snapshot='{}'::jsonb,
     legal_notice_boxes_snapshot='[]'::jsonb,
-    layout_ready=false,
+    layout_ready=true,
     updated_at=now()
 WHERE id=$1
-RETURNING current_version`, signingID, input.OriginalFile.ID, input.CurrentFile.ID, input.RequesterName, input.TotalAmount).Scan(&signingVersion); err != nil {
+RETURNING current_version`, signingID, input.OriginalFile.ID, input.CurrentFile.ID, input.RequesterName, input.TotalAmount, string(configSnapshot), string(templateSnapshot), string(placementSnapshot)).Scan(&signingVersion); err != nil {
 		return models.InternalDocument{}, err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO signing_document_versions(document_id,version_no,file_id,kind,created_by) VALUES($1,$2,$3,'original',$5),($1,$2,$4,'current',$5)`, signingID, signingVersion, input.OriginalFile.ID, input.CurrentFile.ID, input.ActorID); err != nil {
 		return models.InternalDocument{}, err
 	}
-	if err := insertSigningEvent(ctx, tx, signingID, input.ActorID, "", "internal_document_revised", "แก้ไขแบบฟอร์มเอกสารภายในและต้องจัดวางกรอบใหม่", input.IPAddress, input.UserAgent, map[string]any{"internalRevision": next, "layoutInvalidated": true}); err != nil {
+	if err := insertInternalRevisionSignerRows(ctx, tx, signingID, input.Configs, input.LayoutBoxes); err != nil {
+		return models.InternalDocument{}, err
+	}
+	if err := insertSigningEvent(ctx, tx, signingID, input.ActorID, "", "internal_document_revised", "แก้ไขแบบฟอร์มเอกสารภายในและจัดตำแหน่งลายเซ็นอัตโนมัติตาม Workflow", input.IPAddress, input.UserAgent, map[string]any{"internalRevision": next, "layoutMode": "fixed_a4_v2", "signatureSlotCount": len(input.LayoutBoxes)}); err != nil {
 		return models.InternalDocument{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return models.InternalDocument{}, err
 	}
 	return s.FindInternalDocumentByID(ctx, input.InternalID)
+}
+
+// insertInternalRevisionSignerRows rebuilds signer rows from the document's
+// workflow snapshot. The fixed A4 boxes are already assigned by sequence.
+func insertInternalRevisionSignerRows(ctx context.Context, tx pgx.Tx, documentID string, configs []models.DocumentConfigStep, layoutBoxes []models.SignatureTemplateBoxRequest) error {
+	sorted := append([]models.DocumentConfigStep(nil), configs...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].SequenceNo == sorted[j].SequenceNo {
+			return strings.ToLower(sorted[i].PositionCode) < strings.ToLower(sorted[j].PositionCode)
+		}
+		return sorted[i].SequenceNo < sorted[j].SequenceNo
+	})
+	boxesByPosition := map[string][]models.SignatureTemplateBoxRequest{}
+	for _, box := range layoutBoxes {
+		key := strings.ToLower(strings.TrimSpace(box.PositionCode))
+		boxesByPosition[key] = append(boxesByPosition[key], box)
+	}
+	for key := range boxesByPosition {
+		sort.SliceStable(boxesByPosition[key], func(i, j int) bool {
+			return boxesByPosition[key][i].SignerSlot < boxesByPosition[key][j].SignerSlot
+		})
+	}
+	for _, step := range sorted {
+		var stepID string
+		if err := tx.QueryRow(ctx, `
+SELECT id::text
+FROM signing_document_steps
+WHERE document_id=$1 AND lower(position_code)=lower($2)
+`, documentID, step.PositionCode).Scan(&stepID); err != nil {
+			return err
+		}
+		signers, err := signerRowsForStep(step, boxesByPosition[strings.ToLower(strings.TrimSpace(step.PositionCode))], "waiting")
+		if err != nil {
+			return err
+		}
+		for _, signer := range signers {
+			if _, err := tx.Exec(ctx, `
+INSERT INTO signing_document_signers (
+    document_id, step_id, position_code, position_name, sequence_no, condition_type,
+    signer_slot, signer_type, signer_user, signer_name, status,
+    page_no, x_ratio, y_ratio, width_ratio, height_ratio, label, attachment_requirements_snapshot
+)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
+`, documentID, stepID, step.PositionCode, step.PositionName, step.SequenceNo, step.ConditionType,
+				signer.SignerSlot, signer.SignerType, signer.SignerUser, signer.SignerName, signer.Status,
+				signer.PageNo, signer.XRatio, signer.YRatio, signer.WidthRatio, signer.HeightRatio, signer.Label,
+				attachmentRequirementsJSON(signer.AttachmentRequirementsSnapshot)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) FindInternalDocumentByID(ctx context.Context, id string) (models.InternalDocument, error) {

@@ -78,7 +78,7 @@ async function loadPage() {
     try {
         const [formatsResult, configsResult] = await Promise.all([api.listDocumentTypes(), api.listDocumentConfigs()]);
         docFormats.value = formatsResult.documentTypes || [];
-        configs.value = configsResult.configs || [];
+        configs.value = (configsResult.configs || []).filter((config) => !isInternalConfig(config, docFormats.value));
 
         const codes = [...new Set(configs.value.map((item) => item.docFormatCode).filter(Boolean))];
         const states = {};
@@ -110,6 +110,12 @@ function openDocumentConfig() {
 
 function formatDetail(code) {
     return docFormats.value.find((item) => sameCode(item.code, code));
+}
+
+function isInternalConfig(config, formats) {
+    if (String(config?.screenCode || config?.screen_code || '').toUpperCase() === 'INTERNAL') return true;
+    const format = (formats || []).find((item) => sameCode(item.code, config?.docFormatCode));
+    return String(format?.source || '').toLowerCase() === 'internal' || String(format?.screenCode || format?.screen_code || '').toUpperCase() === 'INTERNAL';
 }
 
 function formatName(row) {

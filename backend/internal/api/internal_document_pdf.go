@@ -22,8 +22,12 @@ var internalLaoFont []byte
 var internalPDFSlots = make(chan struct{}, 2)
 
 const (
-	internalFontThai = "InternalThai"
-	internalFontLao  = "InternalLao"
+	internalFontThai                  = "InternalThai"
+	internalFontLao                   = "InternalLao"
+	internalDocumentMaxItems          = 15
+	internalDocumentApprovalColumns   = 3
+	internalDocumentApprovalRows      = 2
+	internalDocumentMaxSignatureSlots = internalDocumentApprovalColumns * internalDocumentApprovalRows
 )
 
 func renderInternalDocumentPDF(document models.InternalDocument) ([]byte, int, error) {
@@ -42,28 +46,14 @@ func renderInternalDocumentPDF(document models.InternalDocument) ([]byte, int, e
 	if len(items) == 0 {
 		return nil, 0, fmt.Errorf("internal document must contain at least one item")
 	}
-	pageCount := int(math.Ceil(float64(len(items)) / 15.0))
-	if pageCount < 1 {
-		pageCount = 1
+	if len(items) > internalDocumentMaxItems {
+		return nil, 0, fmt.Errorf("internal document supports at most %d items", internalDocumentMaxItems)
 	}
-	if pageCount > 25 {
-		return nil, 0, fmt.Errorf("internal document exceeds 25 PDF pages")
-	}
-	for page := 0; page < pageCount; page++ {
-		pdf.AddPage()
-		isFirst := page == 0
-		isLast := page == pageCount-1
-		drawInternalHeader(pdf, document, isFirst, page+1, pageCount)
-		start := page * 15
-		end := start + 15
-		if end > len(items) {
-			end = len(items)
-		}
-		drawInternalItemsTable(pdf, items[start:end], start, isLast)
-		if isLast {
-			drawInternalSummary(pdf, document)
-		}
-	}
+
+	pdf.AddPage()
+	drawInternalHeader(pdf, document, true, 1, 1)
+	drawInternalItemsTable(pdf, items)
+	drawInternalSummary(pdf, document)
 
 	var output bytes.Buffer
 	if err := pdf.Output(&output); err != nil {
@@ -72,7 +62,7 @@ func renderInternalDocumentPDF(document models.InternalDocument) ([]byte, int, e
 	if pdf.Error() != nil {
 		return nil, 0, pdf.Error()
 	}
-	return output.Bytes(), pageCount, nil
+	return output.Bytes(), 1, nil
 }
 
 func drawInternalHeader(pdf *gofpdf.Fpdf, document models.InternalDocument, full bool, pageNo, pageCount int) {
@@ -136,7 +126,7 @@ func drawLabeledCell(pdf *gofpdf.Fpdf, x, y, width, height float64, label, value
 	drawInternalMixedCell(pdf, x+2+width*0.32, y+1.2, width*0.66-3, 5, value, 9, "L")
 }
 
-func drawInternalItemsTable(pdf *gofpdf.Fpdf, items []models.InternalDocumentItem, offset int, finalPage bool) {
+func drawInternalItemsTable(pdf *gofpdf.Fpdf, items []models.InternalDocumentItem) {
 	y := pdf.GetY()
 	if y < 38 {
 		y = 38
@@ -150,16 +140,12 @@ func drawInternalItemsTable(pdf *gofpdf.Fpdf, items []models.InternalDocumentIte
 	pdf.CellFormat(cols[1], 8, "รายการ", "1", 0, "C", true, 0, "")
 	pdf.CellFormat(cols[2], 8, "จำนวนเงินประมาณ (บาท)", "1", 1, "C", true, 0, "")
 	y += 8
-	rowCount := len(items)
-	if finalPage && rowCount < 5 {
-		rowCount = 5
-	}
-	for i := 0; i < rowCount; i++ {
+	for i := 0; i < internalDocumentMaxItems; i++ {
 		pdf.SetXY(left, y)
 		if i < len(items) {
 			item := items[i]
 			pdf.SetFont(internalFontThai, "", 8.5)
-			pdf.CellFormat(cols[0], 9, strconv.Itoa(offset+i+1), "1", 0, "C", false, 0, "")
+			pdf.CellFormat(cols[0], 9, strconv.Itoa(i+1), "1", 0, "C", false, 0, "")
 			pdf.Rect(left+cols[0], y, cols[1], 9, "D")
 			drawInternalMixedCell(pdf, left+cols[0]+1.2, y, cols[1]-2.4, 9, item.Description, 8.5, "L")
 			pdf.SetXY(left+cols[0]+cols[1], y)
@@ -187,16 +173,16 @@ func drawInternalSummary(pdf *gofpdf.Fpdf, document models.InternalDocument) {
 	pdf.SetXY(left, y)
 	pdf.CellFormat(width, 7, "การอนุมัติเอกสาร", "1", 1, "C", true, 0, "")
 	y += 7
-	cellWidth := width / 2
-	for i, label := range []string{"ผู้ขอเบิก", "ผู้อนุมัติ/ตรวจสอบ"} {
-		x := left + float64(i)*cellWidth
-		pdf.Rect(x, y, cellWidth, 34, "D")
-		pdf.SetXY(x, y+1)
-		pdf.CellFormat(cellWidth, 6, label, "", 0, "C", false, 0, "")
-		pdf.SetXY(x, y+27)
-		pdf.CellFormat(cellWidth, 5, "วันที่ ______ / ______ / ______", "", 0, "C", false, 0, "")
+	cellWidth := width / internalDocumentApprovalColumns
+	const cellHeight = 21.0
+	for row := 0; row < internalDocumentApprovalRows; row++ {
+		for column := 0; column < internalDocumentApprovalColumns; column++ {
+			x := left + float64(column)*cellWidth
+			cellY := y + float64(row)*cellHeight
+			pdf.Rect(x, cellY, cellWidth, cellHeight, "D")
+		}
 	}
-	y += 34
+	y += cellHeight * internalDocumentApprovalRows
 	pdf.SetTextColor(205, 35, 45)
 	pdf.SetFont(internalFontThai, "", 8.5)
 	pdf.SetXY(left, y+1)

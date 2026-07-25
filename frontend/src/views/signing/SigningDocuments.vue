@@ -268,8 +268,12 @@ function attachmentFileUrlForDialog(attachment) {
     return api.signingDocumentAttachmentFileUrl(attachmentsDocument.value.id, attachment.id);
 }
 
+function needsLegacyInternalLayout(doc) {
+    return isInternalDocument(doc) && doc?.status === 'draft' && doc.layoutReady !== true;
+}
+
 function confirmSend(doc) {
-    if (isInternalDocument(doc) && !doc.layoutReady) {
+    if (needsLegacyInternalLayout(doc)) {
         toast.add({ severity: 'warn', summary: 'กรุณาจัดวางกรอบก่อนส่ง', detail: 'วางกรอบลายเซ็นและข้อความกฎหมายบน PDF ฉบับจริงให้ครบก่อนส่งเข้า Workflow', life: 4000 });
         return;
     }
@@ -626,7 +630,7 @@ function selectInput(event) {
                 <template #body="{ data }">
                     <div class="status-cell">
                         <Tag :value="documentStatusLabel(data)" :severity="signingStatusSeverity(data.status)" />
-                        <Tag v-if="isInternalDocument(data) && data.status === 'draft'" :value="data.layoutReady ? 'จัดวางกรอบแล้ว' : 'ต้องจัดวางกรอบ'" :severity="data.layoutReady ? 'success' : 'warn'" />
+                        <Tag v-if="isInternalDocument(data) && data.status === 'draft'" :value="data.layoutReady ? 'ตำแหน่งเซ็นอัตโนมัติ' : 'ต้องจัดวางกรอบ (เอกสารเดิม)'" :severity="data.layoutReady ? 'success' : 'warn'" />
                         <small v-if="waitingSummary(data)" class="status-hint">{{ waitingSummary(data) }}</small>
                     </div>
                 </template>
@@ -644,13 +648,13 @@ function selectInput(event) {
                             outlined
                             severity="success"
                             aria-label="ส่งไปเซ็น"
-                            :disabled="isInternalDocument(data) && !data.layoutReady"
-                            v-tooltip.top="isInternalDocument(data) && !data.layoutReady ? 'กรุณาจัดวางกรอบก่อนส่ง' : 'ส่งไปเซ็น'"
+                            :disabled="needsLegacyInternalLayout(data)"
+                            v-tooltip.top="needsLegacyInternalLayout(data) ? 'กรุณาจัดวางกรอบก่อนส่ง' : 'ส่งไปเซ็น'"
                             :loading="isTransitioning(data.id)"
                             @click="confirmSend(data)"
                         />
                         <Button v-if="data.status === 'draft' && isInternalDocument(data)" icon="pi pi-pencil" rounded outlined severity="secondary" aria-label="แก้ไขแบบฟอร์ม" v-tooltip.top="'แก้ไขแบบฟอร์ม'" @click="openInternalEdit(data)" />
-                        <Button v-if="data.status === 'draft' && isInternalDocument(data)" icon="pi pi-objects-column" rounded outlined severity="secondary" aria-label="จัดวางกรอบบน PDF" v-tooltip.top="data.layoutReady ? 'แก้ไขกรอบบน PDF' : 'จัดวางกรอบบน PDF'" @click="openInternalLayout(data)" />
+                        <Button v-if="needsLegacyInternalLayout(data)" icon="pi pi-objects-column" rounded outlined severity="secondary" aria-label="จัดวางกรอบบน PDF" v-tooltip.top="'จัดวางกรอบบน PDF สำหรับเอกสารเดิม'" @click="openInternalLayout(data)" />
                         <Button
                             v-if="data.status === 'draft' && isInternalDocument(data)"
                             icon="pi pi-print"
@@ -658,8 +662,8 @@ function selectInput(event) {
                             outlined
                             severity="secondary"
                             aria-label="พิมพ์ PDF"
-                            :disabled="!data.layoutReady"
-                            v-tooltip.top="!data.layoutReady ? 'กรุณาจัดวางกรอบก่อนพิมพ์' : 'พิมพ์ PDF revision ล่าสุด (ไม่บังคับก่อนส่ง)'"
+                            :disabled="needsLegacyInternalLayout(data)"
+                            v-tooltip.top="needsLegacyInternalLayout(data) ? 'กรุณาจัดวางกรอบก่อนพิมพ์' : 'พิมพ์ PDF revision ล่าสุด (ไม่บังคับก่อนส่ง)'"
                             :loading="isTransitioning(data.id)"
                             @click="printInternalDraft(data)"
                         />

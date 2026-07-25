@@ -164,7 +164,7 @@ function openWorkflow(master) {
                 <template #body="{ data }">
                     <div class="readiness-tags">
                         <Tag :value="data.workflowReady ? 'Workflow พร้อม' : 'ยังไม่มี Workflow'" :severity="data.workflowReady ? 'success' : 'warn'" />
-                        <Tag value="จัดวางกรอบใน Draft" severity="info" />
+                        <Tag value="ตำแหน่งเซ็นอัตโนมัติ (A4)" severity="info" />
                     </div>
                 </template>
             </Column>
