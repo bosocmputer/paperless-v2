@@ -276,13 +276,6 @@ func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Reque
 		writeValidationIssues(w, http.StatusBadRequest, "invalid_signature_boxes", noteLimitIssues)
 		return
 	}
-	if strings.EqualFold(normalizeScreenCode(existingTemplate.ScreenCode), internalDocumentScreenCode) {
-		if areaIssues := validateInternalApprovalLayout(boxes, legalNoticeBox); len(areaIssues) > 0 {
-			writeValidationIssues(w, http.StatusBadRequest, "invalid_signature_boxes", areaIssues)
-			return
-		}
-	}
-
 	template, err := s.store.ReplaceSignatureTemplateBoxes(r.Context(), id, req.Revision, boxes, signNoteBoxes, legalNoticeBox)
 	if errors.Is(err, store.ErrSignatureTemplateNotFound) {
 		writeError(w, http.StatusNotFound, "signature_template_not_found", "Signature template was not found.")
@@ -692,13 +685,9 @@ func validateSignaturePreset(template models.SignatureTemplate, configs []models
 	issues = append(issues, boxIssues...)
 	normalizedNoteBoxes, noteIssues := normalizeAndValidateSignNoteBoxRequests(boxRequestsFromTemplate(template.SignNoteBoxes), maxPages)
 	issues = append(issues, noteIssues...)
-	isInternalTemplate := strings.EqualFold(normalizeScreenCode(template.ScreenCode), internalDocumentScreenCode)
 	legalBoxRequest := legalNoticeBoxRequestFromTemplate(template.LegalNoticeBox)
-	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, isInternalTemplate)
+	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, false)
 	issues = append(issues, legalIssues...)
-	if isInternalTemplate {
-		issues = append(issues, validateInternalApprovalLayout(normalizedBoxes, legalBoxRequest)...)
-	}
 	issues = append(issues, validateSignatureBoxSaveLimits(normalizedBoxes, configs)...)
 	issues = append(issues, validateSignNoteBoxSaveLimits(normalizedNoteBoxes, configs)...)
 	sort.SliceStable(issues, func(i, j int) bool {
@@ -773,7 +762,6 @@ func validateSignNoteBoxSaveLimits(boxes []models.SignatureTemplateBoxRequest, c
 
 func validateSignatureTemplate(template models.SignatureTemplate, configs []models.DocumentConfigStep, maxPages int) []models.SignatureValidationIssue {
 	issues := []models.SignatureValidationIssue{}
-	isInternalTemplate := strings.EqualFold(normalizeScreenCode(template.ScreenCode), internalDocumentScreenCode)
 	if template.SampleFileID == "" {
 		issues = append(issues, signatureIssue("sample_pdf_required", "", "Upload a sample PDF before publishing."))
 	}
@@ -789,11 +777,8 @@ func validateSignatureTemplate(template models.SignatureTemplate, configs []mode
 	normalizedNoteBoxes, noteIssues := normalizeAndValidateSignNoteBoxRequests(boxRequestsFromTemplate(template.SignNoteBoxes), maxPages)
 	issues = append(issues, noteIssues...)
 	legalBoxRequest := legalNoticeBoxRequestFromTemplate(template.LegalNoticeBox)
-	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, isInternalTemplate)
+	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, false)
 	issues = append(issues, legalIssues...)
-	if isInternalTemplate {
-		issues = append(issues, validateInternalApprovalLayout(normalizedBoxes, legalBoxRequest)...)
-	}
 	issues = append(issues, validateSignNoteBoxSaveLimits(normalizedNoteBoxes, configs)...)
 
 	stepsByPosition := map[string]models.DocumentConfigStep{}

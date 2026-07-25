@@ -327,6 +327,10 @@ func (s *Server) createInternalDocument(w http.ResponseWriter, r *http.Request) 
 	session, _ := currentSession(r)
 	format := models.SMLDocFormat{Code: master.Code, Name1: master.Name, ScreenCode: internalDocumentScreenCode}
 	candidate := models.SMLDocumentCandidate{DocNo: document.DocumentNo, DocDate: document.DocumentDate, TotalAmount: float64(totalCents) / 100, PartyName: document.RequesterName}
+	legalNoticeSnapshot := models.LegalNoticeSnapshot{}
+	if len(legalNotices) > 0 {
+		legalNoticeSnapshot = legalNotices[0]
+	}
 	signingDocument, err := s.store.CreateSigningDocument(r.Context(), store.CreateSigningDocumentInput{
 		DocumentSource: "internal", InternalDocumentID: document.ID,
 		ScreenCode: internalDocumentScreenCode, Format: format, Candidate: candidate,
@@ -343,7 +347,7 @@ func (s *Server) createInternalDocument(w http.ResponseWriter, r *http.Request) 
 		Configs:             selectedConfigs,
 		LayoutBoxes:         layoutBoxes,
 		SignaturePlacements: signaturePlacements,
-		LegalNoticeSnapshot: legalNotices[0],
+		LegalNoticeSnapshot: legalNoticeSnapshot,
 		LegalNoticeBoxes:    legalNotices,
 		File:                uploaded,
 		CurrentFile:         &currentFile,
@@ -543,7 +547,7 @@ func (s *Server) internalActiveTemplateLayout(ctx context.Context, code string, 
 		return nil, nil, nil, nil, nil, err
 	}
 	if active == nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("กรุณาให้ Superadmin จัดวางกรอบลายเซ็นและข้อความกฎหมายใน Workflow ก่อน")
+		return nil, nil, nil, nil, nil, fmt.Errorf("กรุณาให้ Superadmin จัดวางกรอบลายเซ็นตาม Workflow ก่อน")
 	}
 	if active.SampleFile == nil || active.SampleFile.PageCount != pageCount {
 		return nil, nil, nil, nil, nil, fmt.Errorf("PDF ตัวอย่างของ Workflow เอกสารภายในไม่พร้อม กรุณาเปิดหน้าจัดวางกรอบแล้วบันทึกใหม่")
@@ -551,13 +555,16 @@ func (s *Server) internalActiveTemplateLayout(ctx context.Context, code string, 
 
 	boxes := boxRequestsFromTemplate(active.Boxes)
 	layout, selected, placements, issues := validateSigningDocumentLayout(boxes, configs, pageCount)
-	legalBox, legalIssues := normalizeAndValidateLegalNoticeBox(legalNoticeBoxRequestFromTemplate(active.LegalNoticeBox), pageCount, true)
+	legalBox, legalIssues := normalizeAndValidateLegalNoticeBox(legalNoticeBoxRequestFromTemplate(active.LegalNoticeBox), pageCount, false)
 	issues = append(issues, legalIssues...)
-	issues = append(issues, validateInternalApprovalLayout(layout, legalBox)...)
 	if len(issues) > 0 {
 		return nil, nil, nil, nil, nil, fmt.Errorf("Workflow เอกสารภายในยังไม่พร้อม: %s", issues[0].Message)
 	}
-	return active, layout, selected, placements, []models.LegalNoticeSnapshot{legalNoticeSnapshotFromBox(*legalBox, "preset")}, nil
+	legalNotices := []models.LegalNoticeSnapshot{}
+	if legalBox != nil {
+		legalNotices = append(legalNotices, legalNoticeSnapshotFromBox(*legalBox, "preset"))
+	}
+	return active, layout, selected, placements, legalNotices, nil
 }
 
 func (s *Server) resolveConfigDocumentFormat(ctx context.Context, code string) (models.SMLDocFormat, error) {

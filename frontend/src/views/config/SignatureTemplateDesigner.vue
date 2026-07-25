@@ -662,15 +662,6 @@ function signatureBoxDisplayLabel(box) {
     return box.label || box.signerUser || box.positionCode;
 }
 
-function isInsideInternalApprovalArea(box) {
-    const area = { left: 10 / 210, top: 237 / 297, right: 200 / 210, bottom: 279 / 297 };
-    return Number(box.pageNo) === 1 && box.xRatio >= area.left && box.yRatio >= area.top && box.xRatio + box.widthRatio <= area.right && box.yRatio + box.heightRatio <= area.bottom;
-}
-
-function boxesOverlap(first, second) {
-    return first.xRatio < second.xRatio + second.widthRatio && first.xRatio + first.widthRatio > second.xRatio && first.yRatio < second.yRatio + second.heightRatio && first.yRatio + first.heightRatio > second.yRatio;
-}
-
 function legalNoticeStyle(box) {
     return {
         ...boxStyle(box),
@@ -840,26 +831,6 @@ function validateBoxes() {
         }
         if (box.widthRatio < 0.2 || box.heightRatio < 0.035) {
             issues.push({ code: 'legal_notice_box_too_small', message: 'กรอบข้อความกฎหมายเล็กเกินไป' });
-        }
-    }
-
-    if (isInternalDocument.value) {
-        boxes.value.forEach((box) => {
-            if (!isInsideInternalApprovalArea(box)) {
-                issues.push({ code: 'internal_approval_area_required', positionCode: box.positionCode, message: `กรอบของ Position ${box.positionCode} ต้องอยู่ภายในพื้นที่การอนุมัติของแบบฟอร์ม A4` });
-            }
-        });
-        if (!legalNoticeBox.value) {
-            issues.push({ code: 'internal_legal_notice_required', message: 'กรุณาวางกรอบข้อความกฎหมายในพื้นที่การอนุมัติของแบบฟอร์ม A4' });
-        } else {
-            if (!isInsideInternalApprovalArea(legalNoticeBox.value)) {
-                issues.push({ code: 'internal_legal_notice_area_required', message: 'กรอบข้อความกฎหมายต้องอยู่ภายในพื้นที่การอนุมัติของแบบฟอร์ม A4' });
-            }
-            boxes.value.forEach((box) => {
-                if (Number(box.pageNo) === Number(legalNoticeBox.value.pageNo) && boxesOverlap(box, legalNoticeBox.value)) {
-                    issues.push({ code: 'internal_approval_box_overlap', positionCode: box.positionCode, message: `กรอบของ Position ${box.positionCode} ทับกับกรอบข้อความกฎหมาย` });
-                }
-            });
         }
     }
 
@@ -1378,7 +1349,7 @@ function recordDesignerEvent(event, extra = {}) {
                         </div>
                         <Tag :value="legalNoticeBox ? 'มีกรอบแล้ว' : 'ยังไม่มีกรอบ'" :severity="legalNoticeBox ? 'success' : 'warn'" />
                     </div>
-                    <Message v-if="!legalNoticeBox" severity="info" class="mb-3">{{ isInternalDocument ? 'วางกรอบนี้ในพื้นที่การอนุมัติของแบบฟอร์ม A4 ก่อนใช้งานเอกสารภายใน' : 'กรอบนี้เป็นค่าเริ่มต้น ตอนส่งเอกสารจริง admin ยังปรับตำแหน่งได้อีกครั้ง' }}</Message>
+                    <Message v-if="!legalNoticeBox" severity="info" class="mb-3">{{ isInternalDocument ? 'เพิ่มกรอบนี้เมื่อต้องการแสดงข้อความกฎหมายบน PDF เอกสารภายใน' : 'กรอบนี้เป็นค่าเริ่มต้น ตอนส่งเอกสารจริง admin ยังปรับตำแหน่งได้อีกครั้ง' }}</Message>
                     <div class="flex flex-wrap gap-2">
                         <Button v-if="!legalNoticeBox" label="เพิ่มกรอบข้อความ" icon="pi pi-plus" :disabled="!canAddBoxes" @click="addLegalNoticeBox" />
                         <Button v-else label="เลือกกรอบ" icon="pi pi-mouse-pointer" severity="secondary" outlined @click="selectLegalNoticeBox({ scrollIntoView: true })" />

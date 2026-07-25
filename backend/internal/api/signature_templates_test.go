@@ -31,6 +31,28 @@ func TestValidateSignatureTemplatePOConditions(t *testing.T) {
 	}
 }
 
+func TestValidateInternalSignatureTemplateAllowsFreePlacementWithoutLegalNotice(t *testing.T) {
+	configs := []models.DocumentConfigStep{
+		{PositionCode: "1", PositionName: "ผู้อนุมัติ", ConditionType: 1},
+	}
+	template := models.SignatureTemplate{
+		ScreenCode:   internalDocumentScreenCode,
+		SampleFileID: "file-1",
+		SampleFile:   &models.UploadedFile{PageCount: 1},
+		Boxes: []models.SignatureTemplateBox{
+			// The free-placement internal layout may overlap a legal-notice box
+			// or sit anywhere on the generated A4 form. Only generic box bounds
+			// and workflow signer rules remain enforced.
+			{PositionCode: "1", SignerSlot: 1, SignerType: "any", PageNo: 1, XRatio: 0.12, YRatio: 0.12, WidthRatio: 0.26, HeightRatio: 0.12},
+		},
+	}
+
+	issues := validateSignatureTemplate(template, configs, 20)
+	if len(issues) != 0 {
+		t.Fatalf("expected free internal layout without legal notice to be valid, got %#v", issues)
+	}
+}
+
 func TestValidateSignatureTemplateRejectsMissingConditionTwoUser(t *testing.T) {
 	configs := []models.DocumentConfigStep{
 		{PositionCode: "3", PositionName: "ผู้อนุมัติ", User01: "901:นาย A", User02: "902:นาย B", ConditionType: 2},
