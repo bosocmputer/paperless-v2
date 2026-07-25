@@ -48,3 +48,35 @@ func validateInternalApprovalLayoutBoxes(boxes []models.SignatureTemplateBoxRequ
 	}
 	return issues
 }
+
+// validateInternalApprovalLayout keeps every configurable mark in the blank
+// approval area. The red advance-clearance note is drawn by the form itself
+// and is intentionally outside this configurable layout.
+func validateInternalApprovalLayout(boxes []models.SignatureTemplateBoxRequest, legalNoticeBox *models.LegalNoticeBoxRequest) []models.SignatureValidationIssue {
+	issues := validateInternalApprovalLayoutBoxes(boxes)
+	if legalNoticeBox == nil {
+		return append(issues, signatureIssue("internal_legal_notice_required", "", "กรุณาวางกรอบข้อความกฎหมายในพื้นที่การอนุมัติของแบบฟอร์ม A4"))
+	}
+
+	area := internalDocumentApprovalArea()
+	if legalNoticeBox.PageNo != 1 {
+		issues = append(issues, signatureIssue("internal_legal_notice_page_invalid", "", "กรอบข้อความกฎหมายเอกสารภายในต้องอยู่หน้า 1 ในพื้นที่การอนุมัติ"))
+	} else if legalNoticeBox.XRatio < area.left || legalNoticeBox.YRatio < area.top || legalNoticeBox.XRatio+legalNoticeBox.WidthRatio > area.left+area.width || legalNoticeBox.YRatio+legalNoticeBox.HeightRatio > area.top+area.height {
+		issues = append(issues, signatureIssue("internal_legal_notice_area_required", "", "กรอบข้อความกฎหมายต้องอยู่ภายในพื้นที่การอนุมัติของแบบฟอร์ม A4"))
+	}
+
+	for _, box := range boxes {
+		if box.PageNo != legalNoticeBox.PageNo || !layoutBoxesOverlap(box, *legalNoticeBox) {
+			continue
+		}
+		issues = append(issues, signatureIssue("internal_approval_box_overlap", box.PositionCode, fmt.Sprintf("กรอบลายเซ็น %s ทับกับกรอบข้อความกฎหมาย", box.PositionCode)))
+	}
+	return issues
+}
+
+func layoutBoxesOverlap(signatureBox models.SignatureTemplateBoxRequest, legalBox models.LegalNoticeBoxRequest) bool {
+	return signatureBox.XRatio < legalBox.XRatio+legalBox.WidthRatio &&
+		signatureBox.XRatio+signatureBox.WidthRatio > legalBox.XRatio &&
+		signatureBox.YRatio < legalBox.YRatio+legalBox.HeightRatio &&
+		signatureBox.YRatio+signatureBox.HeightRatio > legalBox.YRatio
+}

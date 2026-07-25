@@ -66,6 +66,35 @@ func TestInternalApprovalLayoutRejectsBoxesOutsideBlankArea(t *testing.T) {
 	}
 }
 
+func TestInternalApprovalLayoutRequiresLegalNoticeAndRejectsOverlap(t *testing.T) {
+	area := internalDocumentApprovalArea()
+	boxes := []models.SignatureTemplateBoxRequest{{
+		PositionCode: "approver", SignerType: "any", PageNo: 1,
+		XRatio: area.left + 0.02, YRatio: area.top + 0.02,
+		WidthRatio: 0.2, HeightRatio: 0.05,
+	}}
+
+	if issues := validateInternalApprovalLayout(boxes, nil); !hasSignatureIssue(issues, "internal_legal_notice_required") {
+		t.Fatalf("expected legal notice requirement, got %#v", issues)
+	}
+
+	overlap := &models.LegalNoticeBoxRequest{
+		PageNo: 1, XRatio: area.left + 0.03, YRatio: area.top + 0.03,
+		WidthRatio: 0.2, HeightRatio: 0.04,
+	}
+	if issues := validateInternalApprovalLayout(boxes, overlap); !hasSignatureIssue(issues, "internal_approval_box_overlap") {
+		t.Fatalf("expected overlap issue, got %#v", issues)
+	}
+
+	valid := &models.LegalNoticeBoxRequest{
+		PageNo: 1, XRatio: area.left, YRatio: area.top + 0.10,
+		WidthRatio: area.width, HeightRatio: 0.04,
+	}
+	if issues := validateInternalApprovalLayout(boxes, valid); len(issues) != 0 {
+		t.Fatalf("expected internal approval layout to be valid, got %#v", issues)
+	}
+}
+
 func TestInternalTemplateSampleOriginalNameTracksApprovalAreaLayout(t *testing.T) {
 	got := internalTemplateSampleOriginalName("adv")
 	want := "internal-ADV-sample-approval-area-v2.pdf"

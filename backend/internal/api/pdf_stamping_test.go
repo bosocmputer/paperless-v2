@@ -416,6 +416,49 @@ func TestStampPDFWithLegalNoticeWorksBeforeAnySignature(t *testing.T) {
 	}
 }
 
+func TestStampInternalPDFShowsConfiguredWorkflowPositionBeforeSigning(t *testing.T) {
+	pdftotext, err := exec.LookPath("pdftotext")
+	if err != nil {
+		t.Skip("pdftotext is required for position-label extraction check")
+	}
+
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.pdf")
+	pdf := gofpdf.New("P", "pt", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Helvetica", "", 12)
+	pdf.Text(72, 72, "source")
+	if err := pdf.OutputFileAndClose(source); err != nil {
+		t.Fatalf("create source pdf: %v", err)
+	}
+
+	out, err := stampInternalPDFWithSignaturePlacementsLegalNoticesAndSignNotes(source, 1, nil, nil, []models.SignaturePlacementSnapshot{{
+		PositionCode: "2",
+		PositionName: "Workflow approver",
+		SignerSlot:   1,
+		SignerType:   "any",
+		PageNo:       1,
+		XRatio:       0.1,
+		YRatio:       0.8,
+		WidthRatio:   0.25,
+		HeightRatio:  0.08,
+	}}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("stamp internal position label: %v", err)
+	}
+	outPDF := filepath.Join(dir, "internal-position-label.pdf")
+	if err := os.WriteFile(outPDF, out, 0o600); err != nil {
+		t.Fatalf("write internal stamped pdf: %v", err)
+	}
+	textBytes, err := exec.Command(pdftotext, "-layout", outPDF, "-").Output()
+	if err != nil {
+		t.Fatalf("extract internal position text: %v", err)
+	}
+	if text := string(textBytes); !strings.Contains(text, "Workflow approver") {
+		t.Fatalf("expected workflow position label in PDF, got %q", text)
+	}
+}
+
 func TestStampPDFWithSignerNotePlacement(t *testing.T) {
 	pdftotext, err := exec.LookPath("pdftotext")
 	if err != nil {

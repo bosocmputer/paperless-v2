@@ -1246,6 +1246,35 @@ func (s *Server) createInitialLegalNoticePDF(w http.ResponseWriter, r *http.Requ
 	return currentFile, true
 }
 
+// createInitialInternalTemplatePDF prepares the first view of an internal
+// document. Unlike a regular document it also paints the Workflow position
+// label in every configured approval box, so the blank approval area remains
+// understandable before anyone has signed it.
+func (s *Server) createInitialInternalTemplatePDF(w http.ResponseWriter, r *http.Request, uploaded models.UploadedFile, placements []models.SignaturePlacementSnapshot, legalNotices []models.LegalNoticeSnapshot, actorID string) (models.UploadedFile, bool) {
+	if uploaded.StoragePath == "" || uploaded.PageCount <= 0 {
+		writeError(w, http.StatusBadRequest, "document_pdf_invalid", "Uploaded PDF is invalid.")
+		return models.UploadedFile{}, false
+	}
+	stamped, err := stampInternalPDFWithSignaturePlacementsLegalNoticesAndSignNotes(uploaded.StoragePath, uploaded.PageCount, nil, nil, placements, legalNotices, nil, nil)
+	if err != nil {
+		s.logger.Error("create initial internal template pdf failed", "error", err, "fileID", uploaded.ID)
+		writeError(w, http.StatusInternalServerError, "pdf_internal_template_failed", "Cannot prepare internal document PDF right now.")
+		return models.UploadedFile{}, false
+	}
+	pageCount := uploaded.PageCount
+	if count, err := readPDFPageCount(stamped); err == nil && count > 0 {
+		pageCount = count
+	}
+	name := fmt.Sprintf("%s-prepared.pdf", strings.TrimSuffix(filepath.Base(uploaded.OriginalName), filepath.Ext(uploaded.OriginalName)))
+	currentFile, err := s.storeUploadedBytes(r.Context(), stamped, name, "internal-template-document.pdf", "application/pdf", ".pdf", pageCount, actorID)
+	if err != nil {
+		s.logger.Error("store initial internal template pdf failed", "error", err, "fileID", uploaded.ID)
+		writeError(w, http.StatusInternalServerError, "pdf_internal_template_store_failed", "Cannot store prepared internal document PDF right now.")
+		return models.UploadedFile{}, false
+	}
+	return currentFile, true
+}
+
 func currentPDFNeedsLegalNoticeRefresh(document models.SigningDocument) bool {
 	if len(documentLegalNotices(document)) == 0 {
 		return false

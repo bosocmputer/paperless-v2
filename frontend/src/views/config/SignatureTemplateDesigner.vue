@@ -57,7 +57,9 @@ let discardNavigationConfirmed = false;
 
 const template = computed(() => active.value || draft.value);
 const isInternalDocument = computed(() => docFormat.value?.source === 'internal' || docFormat.value?.screen_code === 'INTERNAL');
-const showLegalNotice = computed(() => !isInternalDocument.value);
+// Every document source uses the same legal notice. Internal documents only
+// constrain where it may be placed: inside the approval area of the A4 form.
+const showLegalNotice = computed(() => true);
 const canEdit = computed(() => !!template.value && template.value.status !== 'archived');
 const pageOptions = computed(() => Array.from({ length: pageCount.value }, (_, index) => ({ label: `หน้า ${index + 1}`, value: index + 1 })));
 const currentPageLabel = computed(() => (pageCount.value ? `หน้า ${currentPage.value} / ${pageCount.value}` : 'หน้า - / -'));
@@ -200,7 +202,7 @@ async function loadState() {
         maxTemplatePages.value = result.maxTemplatePages || 20;
         boxes.value = withClientKeys((active.value || draft.value)?.boxes || []);
         signNoteBoxes.value = [];
-        legalNoticeBox.value = isInternalDocument.value ? null : withLegalNoticeClientKey((active.value || draft.value)?.legalNoticeBox || null);
+        legalNoticeBox.value = withLegalNoticeClientKey((active.value || draft.value)?.legalNoticeBox || null);
         selectedPositionCode.value = configs.value[0]?.positionCode || '';
         selectedBoxKey.value = '';
         dirty.value = false;
@@ -397,11 +399,11 @@ function addBox(step) {
         box.signerType = 'internal';
         box.signerUser = user;
         box.signerSlot = Math.max(1, stepUsers(step).indexOf(user) + 1);
-        box.label = user || step.positionName;
+        box.label = isInternalDocument.value ? step.positionName : user || step.positionName;
     }
     if (step.conditionType === 3) {
         box.signerType = 'external';
-        box.label = 'บุคคลภายนอก';
+        box.label = isInternalDocument.value ? step.positionName : 'บุคคลภายนอก';
     }
 
     boxes.value.push(box);
@@ -501,13 +503,24 @@ function addLegalNoticeBox() {
         selectLegalNoticeBox({ scrollIntoView: true });
         return;
     }
+    const internalDefault = isInternalDocument.value
+        ? {
+              pageNo: 1,
+              xRatio: 10 / 210,
+              yRatio: 265 / 297,
+              widthRatio: 190 / 210,
+              heightRatio: 14 / 297
+          }
+        : {
+              pageNo: currentPage.value,
+              xRatio: 0.2,
+              yRatio: 0.62,
+              widthRatio: 0.6,
+              heightRatio: 0.065
+          };
     legalNoticeBox.value = {
         clientKey: legalNoticeKey,
-        pageNo: currentPage.value,
-        xRatio: 0.2,
-        yRatio: 0.62,
-        widthRatio: 0.6,
-        heightRatio: 0.065,
+        ...internalDefault,
         label: 'ข้อความกฎหมาย',
         source: 'preset'
     };
@@ -627,7 +640,7 @@ function updateBoxSignerUser(box, value) {
     box.signerType = 'internal';
     box.signerUser = user;
     box.signerSlot = option?.slot || Math.max(1, Number(box.signerSlot || 1));
-    box.label = isSignNoteKey(box.clientKey) ? 'หมายเหตุผู้เซ็น' : user || selectedBoxStep.value.positionName;
+    box.label = isSignNoteKey(box.clientKey) ? 'หมายเหตุผู้เซ็น' : isInternalDocument.value ? selectedBoxStep.value.positionName : user || selectedBoxStep.value.positionName;
     dirty.value = true;
 }
 
@@ -638,6 +651,24 @@ function boxStyle(box) {
         width: `${box.widthRatio * 100}%`,
         height: `${box.heightRatio * 100}%`
     };
+}
+
+function signatureBoxDisplayLabel(box) {
+    if (!box) return '-';
+    if (isInternalDocument.value) {
+        const step = configs.value.find((item) => item.positionCode === box.positionCode);
+        if (step?.positionName) return step.positionName;
+    }
+    return box.label || box.signerUser || box.positionCode;
+}
+
+function isInsideInternalApprovalArea(box) {
+    const area = { left: 10 / 210, top: 237 / 297, right: 200 / 210, bottom: 279 / 297 };
+    return Number(box.pageNo) === 1 && box.xRatio >= area.left && box.yRatio >= area.top && box.xRatio + box.widthRatio <= area.right && box.yRatio + box.heightRatio <= area.bottom;
+}
+
+function boxesOverlap(first, second) {
+    return first.xRatio < second.xRatio + second.widthRatio && first.xRatio + first.widthRatio > second.xRatio && first.yRatio < second.yRatio + second.heightRatio && first.yRatio + first.heightRatio > second.yRatio;
 }
 
 function legalNoticeStyle(box) {
@@ -738,7 +769,7 @@ async function saveTemplate(showToast = true) {
                 yRatio: Number(box.yRatio),
                 widthRatio: Number(box.widthRatio),
                 heightRatio: Number(box.heightRatio),
-                label: box.label || ''
+            label: isInternalDocument.value ? signatureBoxDisplayLabel(box) : box.label || ''
             })),
             signNoteBoxes: [],
             legalNoticeBox: showLegalNotice.value ? toLegalNoticePayload(legalNoticeBox.value) : null
@@ -813,16 +844,23 @@ function validateBoxes() {
     }
 
     if (isInternalDocument.value) {
-        const area = { left: 10 / 210, top: 237 / 297, right: 200 / 210, bottom: 279 / 297 };
         boxes.value.forEach((box) => {
-            if (Number(box.pageNo) !== 1) {
-                issues.push({ code: 'internal_approval_page_invalid', positionCode: box.positionCode, message: `กรอบของ Position ${box.positionCode} ต้องอยู่หน้า 1 ในพื้นที่การอนุมัติ` });
-                return;
-            }
-            if (box.xRatio < area.left || box.yRatio < area.top || box.xRatio + box.widthRatio > area.right || box.yRatio + box.heightRatio > area.bottom) {
+            if (!isInsideInternalApprovalArea(box)) {
                 issues.push({ code: 'internal_approval_area_required', positionCode: box.positionCode, message: `กรอบของ Position ${box.positionCode} ต้องอยู่ภายในพื้นที่การอนุมัติของแบบฟอร์ม A4` });
             }
         });
+        if (!legalNoticeBox.value) {
+            issues.push({ code: 'internal_legal_notice_required', message: 'กรุณาวางกรอบข้อความกฎหมายในพื้นที่การอนุมัติของแบบฟอร์ม A4' });
+        } else {
+            if (!isInsideInternalApprovalArea(legalNoticeBox.value)) {
+                issues.push({ code: 'internal_legal_notice_area_required', message: 'กรอบข้อความกฎหมายต้องอยู่ภายในพื้นที่การอนุมัติของแบบฟอร์ม A4' });
+            }
+            boxes.value.forEach((box) => {
+                if (Number(box.pageNo) === Number(legalNoticeBox.value.pageNo) && boxesOverlap(box, legalNoticeBox.value)) {
+                    issues.push({ code: 'internal_approval_box_overlap', positionCode: box.positionCode, message: `กรอบของ Position ${box.positionCode} ทับกับกรอบข้อความกฎหมาย` });
+                }
+            });
+        }
     }
 
     configs.value.forEach((step) => {
@@ -1156,7 +1194,7 @@ function recordDesignerEvent(event, extra = {}) {
                 <Button icon="pi pi-arrow-left" severity="secondary" rounded outlined aria-label="กลับ" @click="requestBackNavigation" />
                 <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
                     <div class="font-semibold text-xl whitespace-nowrap truncate">กรอบเริ่มต้น {{ docFormatCode }}</div>
-                    <p class="text-muted-color m-0 min-w-0 truncate">{{ docTitle }} · ใช้เป็นค่าเริ่มต้นตอนส่งเอกสารจริง</p>
+                    <p class="text-muted-color m-0 min-w-0 truncate">{{ docTitle }} · {{ isInternalDocument ? 'ใช้เป็นค่าเริ่มต้นตอนสร้างเอกสารภายใน' : 'ใช้เป็นค่าเริ่มต้นตอนส่งเอกสารจริง' }}</p>
                 </div>
             </div>
 
@@ -1170,11 +1208,7 @@ function recordDesignerEvent(event, extra = {}) {
         </div>
 
         <Message v-if="error" severity="error">{{ error }}</Message>
-        <Message v-if="isInternalDocument" severity="info" class="mb-3" :closable="false">
-            วางกรอบลายเซ็นได้เฉพาะในพื้นที่ “การอนุมัติเอกสาร” ด้านล่างของแบบฟอร์ม A4 เอกสารภายในที่สร้างใหม่จะใช้กรอบนี้อัตโนมัติ
-        </Message>
-
-        <Toolbar class="pdf-editor-status mb-3">
+        <Toolbar v-if="!isInternalDocument" class="pdf-editor-status mb-3">
             <template #start>
                 <div class="min-w-0">
                     <div class="font-bold">ไฟล์ PDF สำหรับกรอบเริ่มต้น {{ docFormatCode }}</div>
@@ -1182,9 +1216,8 @@ function recordDesignerEvent(event, extra = {}) {
                 </div>
             </template>
             <template #end>
-                <input v-if="!isInternalDocument" ref="fileInput" type="file" accept="application/pdf,.pdf" class="hidden" @change="handleFileChange" />
-                <Button v-if="!isInternalDocument" :label="template?.sampleFileId ? 'เปลี่ยน PDF' : 'เลือกไฟล์ PDF'" :icon="template?.sampleFileId ? 'pi pi-refresh' : 'pi pi-upload'" :loading="uploading" @click="triggerUpload" />
-                <Tag v-else value="PDF จากแบบฟอร์มระบบ" severity="info" />
+                <input ref="fileInput" type="file" accept="application/pdf,.pdf" class="hidden" @change="handleFileChange" />
+                <Button :label="template?.sampleFileId ? 'เปลี่ยน PDF' : 'เลือกไฟล์ PDF'" :icon="template?.sampleFileId ? 'pi pi-refresh' : 'pi pi-upload'" :loading="uploading" @click="triggerUpload" />
             </template>
         </Toolbar>
 
@@ -1259,7 +1292,7 @@ function recordDesignerEvent(event, extra = {}) {
                                 :style="boxStyle(box)"
                                 @pointerdown="startBoxPointer($event, box, 'move')"
                             >
-                                <div class="signature-box-label">{{ box.label || box.signerUser || box.positionCode }}</div>
+                                <div class="signature-box-label">{{ signatureBoxDisplayLabel(box) }}</div>
                                 <button v-if="canEdit" class="signature-box-delete" type="button" aria-label="ลบกรอบ" @pointerdown.stop @click.stop="deleteBox(box)">
                                     <i class="pi pi-times"></i>
                                 </button>
@@ -1293,10 +1326,11 @@ function recordDesignerEvent(event, extra = {}) {
                                 :id="`box-label-${selectedItem.clientKey}`"
                                 :modelValue="selectedItem.label"
                                 maxlength="80"
-                                :disabled="!canEdit || selectedIsLegalNotice || selectedIsSignNote"
+                                :disabled="!canEdit || selectedIsLegalNotice || selectedIsSignNote || isInternalDocument"
                                 @update:modelValue="updateBoxLabel(selectedItem, $event)"
                             />
                             <small v-if="selectedIsLegalNotice" class="text-muted-color">{{ legalNoticeText }}</small>
+                            <small v-else-if="isInternalDocument" class="text-muted-color">ชื่อกรอบใช้ตำแหน่งจาก Workflow อัตโนมัติ</small>
                             <small v-else-if="allowTemplateSignNoteBoxes && selectedIsSignNote" class="text-muted-color">ข้อความจริงมาจากช่องหมายเหตุที่ผู้เซ็นกรอกตอนยืนยันเอกสาร</small>
                         </div>
 
@@ -1309,7 +1343,7 @@ function recordDesignerEvent(event, extra = {}) {
                                     :options="pageOptions"
                                     optionLabel="label"
                                     optionValue="value"
-                                    :disabled="!canEdit || pageOptions.length <= 1"
+                                :disabled="!canEdit || pageOptions.length <= 1 || (isInternalDocument && selectedIsLegalNotice)"
                                     @update:modelValue="updateBoxPage(selectedItem, $event)"
                                 />
                             </div>
@@ -1344,7 +1378,7 @@ function recordDesignerEvent(event, extra = {}) {
                         </div>
                         <Tag :value="legalNoticeBox ? 'มีกรอบแล้ว' : 'ยังไม่มีกรอบ'" :severity="legalNoticeBox ? 'success' : 'warn'" />
                     </div>
-                    <Message v-if="!legalNoticeBox" severity="info" class="mb-3">กรอบนี้เป็นค่าเริ่มต้น ตอนส่งเอกสารจริง admin ยังปรับตำแหน่งได้อีกครั้ง</Message>
+                    <Message v-if="!legalNoticeBox" severity="info" class="mb-3">{{ isInternalDocument ? 'วางกรอบนี้ในพื้นที่การอนุมัติของแบบฟอร์ม A4 ก่อนใช้งานเอกสารภายใน' : 'กรอบนี้เป็นค่าเริ่มต้น ตอนส่งเอกสารจริง admin ยังปรับตำแหน่งได้อีกครั้ง' }}</Message>
                     <div class="flex flex-wrap gap-2">
                         <Button v-if="!legalNoticeBox" label="เพิ่มกรอบข้อความ" icon="pi pi-plus" :disabled="!canAddBoxes" @click="addLegalNoticeBox" />
                         <Button v-else label="เลือกกรอบ" icon="pi pi-mouse-pointer" severity="secondary" outlined @click="selectLegalNoticeBox({ scrollIntoView: true })" />
@@ -1398,7 +1432,7 @@ function recordDesignerEvent(event, extra = {}) {
                                     :class="{ active: selectedBoxKey === box.clientKey }"
                                     @click.stop="selectBox(box, { scrollIntoView: true })"
                                 >
-                                    <span>{{ box.label || box.signerUser || box.positionCode }}</span>
+                                    <span>{{ signatureBoxDisplayLabel(box) }}</span>
                                     <small>หน้า {{ box.pageNo }} / {{ signerTypeShortLabel(box.signerType) }}</small>
                                 </button>
                             </div>

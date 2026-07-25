@@ -71,7 +71,7 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		signatureFiles[signer.SignatureFileID] = file
 	}
 
-	stamped, err := stampPDFWithSignaturePlacementsLegalNoticesAndSignNotes(document.OriginalFile.StoragePath, document.OriginalFile.PageCount, signers, signatureFiles, signaturePlacements, legalNotices, signNotePlacements, nil)
+	stamped, err := stampDocumentPDF(document, signers, signatureFiles, signaturePlacements, legalNotices, signNotePlacements, nil)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 			LegalText:           legalText,
 			LegalTextVersion:    legalTextVersion,
 		}
-		stamped, err = stampPDFWithSignaturePlacementsLegalNoticesAndSignNotes(document.OriginalFile.StoragePath, document.OriginalFile.PageCount, signers, signatureFiles, signaturePlacements, legalNotices, signNotePlacements, &evidence)
+		stamped, err = stampDocumentPDF(document, signers, signatureFiles, signaturePlacements, legalNotices, signNotePlacements, &evidence)
 		if err != nil {
 			return err
 		}
@@ -129,6 +129,13 @@ func (s *Server) refreshStampedPDF(ctx context.Context, documentID string, final
 		"signNotePlacementCount":       len(signNotePlacements),
 		"signNoteRuntimeBoxCount":      countSignerRuntimeNoteBoxes(signers),
 	})
+}
+
+func stampDocumentPDF(document models.SigningDocument, signers []models.SigningDocumentSigner, signatureFiles map[string]models.UploadedFile, signaturePlacements []models.SignaturePlacementSnapshot, legalNotices []models.LegalNoticeSnapshot, signNotePlacements []models.SignNotePlacementSnapshot, evidence *finalEvidencePage) ([]byte, error) {
+	if strings.EqualFold(strings.TrimSpace(document.DocumentSource), "internal") {
+		return stampInternalPDFWithSignaturePlacementsLegalNoticesAndSignNotes(document.OriginalFile.StoragePath, document.OriginalFile.PageCount, signers, signatureFiles, signaturePlacements, legalNotices, signNotePlacements, evidence)
+	}
+	return stampPDFWithSignaturePlacementsLegalNoticesAndSignNotes(document.OriginalFile.StoragePath, document.OriginalFile.PageCount, signers, signatureFiles, signaturePlacements, legalNotices, signNotePlacements, evidence)
 }
 
 func legalNoticeDisplayVersion(notice *models.LegalNoticeSnapshot) string {
@@ -292,6 +299,17 @@ func stampPDFWithSignaturePlacementsAndLegalNotices(sourcePath string, pageCount
 }
 
 func stampPDFWithSignaturePlacementsLegalNoticesAndSignNotes(sourcePath string, pageCount int, signers []models.SigningDocumentSigner, signatureFiles map[string]models.UploadedFile, placements []models.SignaturePlacementSnapshot, legalNotices []models.LegalNoticeSnapshot, signNotePlacements []models.SignNotePlacementSnapshot, evidence *finalEvidencePage) ([]byte, error) {
+	return stampPDFWithSignaturePlacementsLegalNoticesSignNotesAndPositionLabels(sourcePath, pageCount, signers, signatureFiles, placements, legalNotices, signNotePlacements, evidence, false)
+}
+
+// Internal forms reserve one open approval area. Showing the configured
+// workflow position above each signature makes that otherwise blank area
+// understandable before and after users sign.
+func stampInternalPDFWithSignaturePlacementsLegalNoticesAndSignNotes(sourcePath string, pageCount int, signers []models.SigningDocumentSigner, signatureFiles map[string]models.UploadedFile, placements []models.SignaturePlacementSnapshot, legalNotices []models.LegalNoticeSnapshot, signNotePlacements []models.SignNotePlacementSnapshot, evidence *finalEvidencePage) ([]byte, error) {
+	return stampPDFWithSignaturePlacementsLegalNoticesSignNotesAndPositionLabels(sourcePath, pageCount, signers, signatureFiles, placements, legalNotices, signNotePlacements, evidence, true)
+}
+
+func stampPDFWithSignaturePlacementsLegalNoticesSignNotesAndPositionLabels(sourcePath string, pageCount int, signers []models.SigningDocumentSigner, signatureFiles map[string]models.UploadedFile, placements []models.SignaturePlacementSnapshot, legalNotices []models.LegalNoticeSnapshot, signNotePlacements []models.SignNotePlacementSnapshot, evidence *finalEvidencePage, showInternalPositionLabels bool) ([]byte, error) {
 	if pageCount <= 0 {
 		return nil, fmt.Errorf("pdf page count is missing")
 	}
@@ -306,7 +324,7 @@ func stampPDFWithSignaturePlacementsLegalNoticesAndSignNotes(sourcePath string, 
 	pdf.SetAutoPageBreak(false, 0)
 	pdf.SetCompression(true)
 	noteStamps := signNotePlacementsForSigners(signers, signNotePlacements)
-	if len(legalNotices) > 0 || len(noteStamps) > 0 || evidence != nil {
+	if len(legalNotices) > 0 || len(noteStamps) > 0 || evidence != nil || showInternalPositionLabels {
 		if err := setupEvidenceFont(pdf); err != nil {
 			return nil, err
 		}
@@ -326,8 +344,17 @@ func stampPDFWithSignaturePlacementsLegalNoticesAndSignNotes(sourcePath string, 
 	for _, note := range noteStamps {
 		signNotesByPage[note.PageNo] = append(signNotesByPage[note.PageNo], note)
 	}
+	placementsByPage := map[int][]models.SignaturePlacementSnapshot{}
+	if showInternalPositionLabels {
+		for _, placement := range placements {
+			placementsByPage[placement.PageNo] = append(placementsByPage[placement.PageNo], placement)
+		}
+	}
 
 	if err := importPDFPages(pdf, importer, sourcePath, pageCount, func(pageNo int, size gofpdf.SizeType) {
+		for _, placement := range placementsByPage[pageNo] {
+			drawInternalSignaturePositionLabel(pdf, placement, size)
+		}
 		for _, notice := range legalNoticesByPage[pageNo] {
 			drawLegalNoticeBox(pdf, notice, size)
 		}
@@ -344,6 +371,14 @@ func stampPDFWithSignaturePlacementsLegalNoticesAndSignNotes(sourcePath string, 
 			w := clampRatio(signer.WidthRatio) * size.Wd
 			h := clampRatio(signer.HeightRatio) * size.Ht
 			if w <= 0 || h <= 0 {
+				continue
+			}
+			if showInternalPositionLabels {
+				captionHeight := internalSignaturePositionLabelHeight(h)
+				y += captionHeight
+				h -= captionHeight
+			}
+			if h <= 0 {
 				continue
 			}
 			pdf.ImageOptions(file.StoragePath, x, y, w, h, false, gofpdf.ImageOptions{ImageType: imageTypeForContent(file.ContentType), ReadDpi: false}, 0, "")
@@ -568,6 +603,42 @@ func drawLegalNoticeBox(pdf *gofpdf.Fpdf, notice models.LegalNoticeSnapshot, siz
 		pdf.CellFormat(textWidth, lineHeight, line, "", 0, "C", false, 0, "")
 		textY += lineHeight
 	}
+}
+
+func drawInternalSignaturePositionLabel(pdf *gofpdf.Fpdf, placement models.SignaturePlacementSnapshot, size gofpdf.SizeType) {
+	text := strings.TrimSpace(placement.PositionName)
+	if text == "" {
+		text = strings.TrimSpace(placement.Label)
+	}
+	if text == "" {
+		return
+	}
+	x := clampRatio(placement.XRatio) * size.Wd
+	y := clampRatio(placement.YRatio) * size.Ht
+	w := clampRatio(placement.WidthRatio) * size.Wd
+	h := clampRatio(placement.HeightRatio) * size.Ht
+	if w <= 0 || h <= 0 {
+		return
+	}
+	labelHeight := internalSignaturePositionLabelHeight(h)
+	pdf.SetFillColor(255, 255, 255)
+	pdf.Rect(x, y, w, labelHeight, "F")
+	pdf.SetTextColor(55, 65, 81)
+	pdf.SetFont(evidenceFontFamily, "", 8)
+	text = fitEllipsis(pdf, text, maxFloat(8, w-8))
+	pdf.SetXY(x+4, y+1)
+	pdf.CellFormat(maxFloat(8, w-8), labelHeight-1, text, "", 0, "C", false, 0, "")
+}
+
+func internalSignaturePositionLabelHeight(boxHeight float64) float64 {
+	height := boxHeight * 0.24
+	if height < 10 {
+		height = 10
+	}
+	if height > 16 {
+		height = 16
+	}
+	return height
 }
 
 func drawSignerNoteBox(pdf *gofpdf.Fpdf, note signNoteStamp, size gofpdf.SizeType) {

@@ -86,14 +86,6 @@ func (s *Server) getSignatureTemplateState(w http.ResponseWriter, r *http.Reques
 
 	draftIssues := validationIssuesForTemplate(draft, configs, s.cfg.MaxTemplatePages)
 	activeIssues := validationIssuesForTemplate(active, configs, s.cfg.MaxTemplatePages)
-	if strings.EqualFold(screenCode, internalDocumentScreenCode) {
-		if draft != nil {
-			draftIssues = append(draftIssues, validateInternalApprovalLayoutBoxes(boxRequestsFromTemplate(draft.Boxes))...)
-		}
-		if active != nil {
-			activeIssues = append(activeIssues, validateInternalApprovalLayoutBoxes(boxRequestsFromTemplate(active.Boxes))...)
-		}
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"docFormat":        format,
 		"configs":          configs,
@@ -285,13 +277,10 @@ func (s *Server) saveSignatureTemplateBoxes(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if strings.EqualFold(normalizeScreenCode(existingTemplate.ScreenCode), internalDocumentScreenCode) {
-		if areaIssues := validateInternalApprovalLayoutBoxes(boxes); len(areaIssues) > 0 {
+		if areaIssues := validateInternalApprovalLayout(boxes, legalNoticeBox); len(areaIssues) > 0 {
 			writeValidationIssues(w, http.StatusBadRequest, "invalid_signature_boxes", areaIssues)
 			return
 		}
-		// The red internal-document notice is part of the generated A4 PDF, so a
-		// per-template legal-notice overlay must never be carried into the snapshot.
-		legalNoticeBox = nil
 	}
 
 	template, err := s.store.ReplaceSignatureTemplateBoxes(r.Context(), id, req.Revision, boxes, signNoteBoxes, legalNoticeBox)
@@ -350,9 +339,6 @@ func (s *Server) publishSignatureTemplate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	issues := validateSignatureTemplate(template, configs, s.cfg.MaxTemplatePages)
-	if strings.EqualFold(normalizeScreenCode(template.ScreenCode), internalDocumentScreenCode) {
-		issues = append(issues, validateInternalApprovalLayoutBoxes(boxRequestsFromTemplate(template.Boxes))...)
-	}
 	if len(issues) > 0 {
 		writeValidationIssues(w, http.StatusBadRequest, "signature_template_invalid", issues)
 		return
@@ -706,9 +692,13 @@ func validateSignaturePreset(template models.SignatureTemplate, configs []models
 	issues = append(issues, boxIssues...)
 	normalizedNoteBoxes, noteIssues := normalizeAndValidateSignNoteBoxRequests(boxRequestsFromTemplate(template.SignNoteBoxes), maxPages)
 	issues = append(issues, noteIssues...)
+	isInternalTemplate := strings.EqualFold(normalizeScreenCode(template.ScreenCode), internalDocumentScreenCode)
 	legalBoxRequest := legalNoticeBoxRequestFromTemplate(template.LegalNoticeBox)
-	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, false)
+	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, isInternalTemplate)
 	issues = append(issues, legalIssues...)
+	if isInternalTemplate {
+		issues = append(issues, validateInternalApprovalLayout(normalizedBoxes, legalBoxRequest)...)
+	}
 	issues = append(issues, validateSignatureBoxSaveLimits(normalizedBoxes, configs)...)
 	issues = append(issues, validateSignNoteBoxSaveLimits(normalizedNoteBoxes, configs)...)
 	sort.SliceStable(issues, func(i, j int) bool {
@@ -798,10 +788,11 @@ func validateSignatureTemplate(template models.SignatureTemplate, configs []mode
 	issues = append(issues, boxIssues...)
 	normalizedNoteBoxes, noteIssues := normalizeAndValidateSignNoteBoxRequests(boxRequestsFromTemplate(template.SignNoteBoxes), maxPages)
 	issues = append(issues, noteIssues...)
-	if !isInternalTemplate {
-		legalBoxRequest := legalNoticeBoxRequestFromTemplate(template.LegalNoticeBox)
-		_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, false)
-		issues = append(issues, legalIssues...)
+	legalBoxRequest := legalNoticeBoxRequestFromTemplate(template.LegalNoticeBox)
+	_, legalIssues := normalizeAndValidateLegalNoticeBox(legalBoxRequest, maxPages, isInternalTemplate)
+	issues = append(issues, legalIssues...)
+	if isInternalTemplate {
+		issues = append(issues, validateInternalApprovalLayout(normalizedBoxes, legalBoxRequest)...)
 	}
 	issues = append(issues, validateSignNoteBoxSaveLimits(normalizedNoteBoxes, configs)...)
 
