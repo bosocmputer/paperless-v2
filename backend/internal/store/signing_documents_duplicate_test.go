@@ -8,8 +8,8 @@ import (
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 )
 
-func TestBuildSigningDocumentDuplicateCheckResultBlocksUnfinishedStatuses(t *testing.T) {
-	for _, status := range []string{"draft", "in_progress", "pending_confirm", "auto_confirming", "completed_evidence_failed", "completed_image_failed", "completed_lock_failed"} {
+func TestBuildSigningDocumentDuplicateCheckResultBlocksProtectedStatuses(t *testing.T) {
+	for _, status := range []string{"draft", "in_progress", "pending_confirm", "auto_confirming", "completed", "completed_evidence_failed", "completed_image_failed", "completed_lock_failed", "sml_source_changed", "sml_source_missing"} {
 		t.Run(status, func(t *testing.T) {
 			result := buildSigningDocumentDuplicateCheckResult([]models.SigningDocumentReference{{
 				ID:            "doc-1",
@@ -30,19 +30,18 @@ func TestBuildSigningDocumentDuplicateCheckResultBlocksUnfinishedStatuses(t *tes
 	}
 }
 
-func TestBuildSigningDocumentDuplicateCheckResultAllowsFinishedStatusesWithWarning(t *testing.T) {
+func TestBuildSigningDocumentDuplicateCheckResultAllowsRejectedAndCancelledWithWarning(t *testing.T) {
 	result := buildSigningDocumentDuplicateCheckResult([]models.SigningDocumentReference{
-		{ID: "doc-1", DocNo: "PO26060001", DocFormatCode: "PO", Status: "completed"},
-		{ID: "doc-2", DocNo: "PO26060001", DocFormatCode: "PO", Status: "rejected"},
-		{ID: "doc-3", DocNo: "PO26060001", DocFormatCode: "PO", Status: "cancelled"},
+		{ID: "doc-1", DocNo: "PO26060001", DocFormatCode: "PO", Status: "rejected"},
+		{ID: "doc-2", DocNo: "PO26060001", DocFormatCode: "PO", Status: "cancelled"},
 	})
 	if !result.CanCreate {
-		t.Fatal("finished/cancelled/rejected documents should not block new draft creation")
+		t.Fatal("cancelled/rejected documents should not block a corrective draft")
 	}
 	if result.BlockingDocument != nil {
 		t.Fatalf("did not expect blocking document, got %#v", result.BlockingDocument)
 	}
-	if len(result.PreviousDocuments) != 3 {
+	if len(result.PreviousDocuments) != 2 {
 		t.Fatalf("expected previous documents to be returned, got %d", len(result.PreviousDocuments))
 	}
 	if !strings.Contains(result.Message, "เคยมีเอกสารนี้") {
@@ -61,13 +60,13 @@ func TestBuildSigningDocumentDuplicateCheckResultPrefersLatestBlockingDocument(t
 	if result.BlockingDocument == nil || result.BlockingDocument.ID != "doc-block" {
 		t.Fatalf("expected first blocking document, got %#v", result.BlockingDocument)
 	}
-	if len(result.PreviousDocuments) != 1 || result.PreviousDocuments[0].ID != "doc-old" {
-		t.Fatalf("expected finished document to remain as previous context, got %#v", result.PreviousDocuments)
+	if len(result.PreviousDocuments) != 0 {
+		t.Fatalf("a completed document is terminal and must block its document number, got %#v", result.PreviousDocuments)
 	}
 }
 
-func TestBuildSigningDocumentBatchDuplicateCheckResultBlocksCompletedAndRejected(t *testing.T) {
-	for _, status := range []string{"completed", "rejected"} {
+func TestBuildSigningDocumentBatchDuplicateCheckResultBlocksCompleted(t *testing.T) {
+	for _, status := range []string{"completed"} {
 		t.Run(status, func(t *testing.T) {
 			result := buildSigningDocumentBatchDuplicateCheckResult([]models.SigningDocumentReference{{
 				ID:            "doc-1",

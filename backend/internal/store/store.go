@@ -66,6 +66,8 @@ var (
 	ErrSigningDocumentUploadNotFound    = errors.New("signing document upload not found")
 	ErrSigningDocumentInvalidStatus     = errors.New("signing document status does not allow this action")
 	ErrSigningDocumentLayoutRequired    = errors.New("signing document layout is required before sending")
+	ErrSigningDocumentReasonRequired    = errors.New("signing document cancellation reason is required")
+	ErrSigningTaskRejectReasonRequired  = errors.New("signing task rejection reason is required")
 	ErrSigningTaskNotFound              = errors.New("signing task not found")
 	ErrSigningTaskUnavailable           = errors.New("signing task is not available")
 	ErrRequiredAttachmentsMissing       = errors.New("required signing attachments are missing")
@@ -545,7 +547,11 @@ CREATE TABLE IF NOT EXISTS signing_documents (
     doc_date DATE,
     total_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
     sml_is_lock_record INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'auto_confirming', 'rejected', 'completed', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'cancelled')),
+    status TEXT NOT NULL CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'auto_confirming', 'rejected', 'completed', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'sml_source_changed', 'sml_source_missing', 'cancelled')),
+    attempt_no INTEGER NOT NULL DEFAULT 1 CHECK (attempt_no > 0),
+    previous_document_id UUID REFERENCES signing_documents(id),
+    sml_source_revision TEXT NOT NULL DEFAULT '',
+    sml_source_checked_at TIMESTAMPTZ,
     current_version INTEGER NOT NULL DEFAULT 1 CHECK (current_version > 0),
     original_file_id UUID REFERENCES uploaded_files(id),
     current_file_id UUID REFERENCES uploaded_files(id),
@@ -638,17 +644,50 @@ ALTER TABLE signing_documents
 ADD COLUMN IF NOT EXISTS layout_ready BOOLEAN NOT NULL DEFAULT true;
 
 ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS attempt_no INTEGER NOT NULL DEFAULT 1;
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS previous_document_id UUID REFERENCES signing_documents(id);
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS sml_source_revision TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS sml_source_checked_at TIMESTAMPTZ;
+
+-- A previous deployment may contain multiple terminal attempts for the same
+-- SML document. Give the historical chain deterministic numbers before the
+-- uniqueness guard is created. Re-running this statement produces the same
+-- result because its ordering is stable.
+WITH numbered_attempts AS (
+    SELECT id,
+           row_number() OVER (
+               PARTITION BY sml_tenant, lower(doc_format_code), lower(doc_no)
+               ORDER BY created_at ASC, id ASC
+           )::integer AS attempt_no
+      FROM signing_documents
+)
+UPDATE signing_documents d
+   SET attempt_no = n.attempt_no
+  FROM numbered_attempts n
+ WHERE d.id = n.id
+   AND d.attempt_no IS DISTINCT FROM n.attempt_no;
+
+ALTER TABLE signing_documents
 DROP CONSTRAINT IF EXISTS signing_documents_status_check;
 
 ALTER TABLE signing_documents
 ADD CONSTRAINT signing_documents_status_check
-CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'auto_confirming', 'rejected', 'completed', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'cancelled'));
+CHECK (status IN ('draft', 'in_progress', 'pending_confirm', 'auto_confirming', 'rejected', 'completed', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'sml_source_changed', 'sml_source_missing', 'cancelled'));
 
 DROP INDEX IF EXISTS signing_documents_active_doc_unique_idx;
 
 CREATE UNIQUE INDEX signing_documents_active_doc_unique_idx
-ON signing_documents (sml_tenant, lower(doc_format_code), doc_no)
-WHERE status IN ('draft', 'in_progress', 'pending_confirm', 'auto_confirming', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed');
+ON signing_documents (sml_tenant, lower(doc_format_code), lower(doc_no))
+WHERE status IN ('draft', 'in_progress', 'pending_confirm', 'auto_confirming', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'sml_source_changed', 'sml_source_missing');
+
+CREATE UNIQUE INDEX IF NOT EXISTS signing_documents_attempt_unique_idx
+ON signing_documents (sml_tenant, lower(doc_format_code), lower(doc_no), attempt_no);
 
 DROP INDEX IF EXISTS signing_documents_search_idx;
 

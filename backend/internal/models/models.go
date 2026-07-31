@@ -533,16 +533,17 @@ type SignatureValidationIssue struct {
 }
 
 type SMLDocumentCandidate struct {
-	DocNo         string  `json:"doc_no"`
-	DocDate       string  `json:"doc_date"`
-	DocFormatCode string  `json:"doc_format_code"`
-	TransFlag     int     `json:"trans_flag"`
-	Table         string  `json:"table"`
-	PartyCode     string  `json:"party_code"`
-	PartyName     string  `json:"party_name"`
-	PartyType     string  `json:"party_type"`
-	TotalAmount   float64 `json:"total_amount"`
-	IsLockRecord  int     `json:"is_lock_record"`
+	DocNo          string  `json:"doc_no"`
+	DocDate        string  `json:"doc_date"`
+	DocFormatCode  string  `json:"doc_format_code"`
+	TransFlag      int     `json:"trans_flag"`
+	Table          string  `json:"table"`
+	PartyCode      string  `json:"party_code"`
+	PartyName      string  `json:"party_name"`
+	PartyType      string  `json:"party_type"`
+	TotalAmount    float64 `json:"total_amount"`
+	IsLockRecord   int     `json:"is_lock_record"`
+	SourceRevision string  `json:"source_revision,omitempty"`
 }
 
 type SMLRelatedDocumentsGraph struct {
@@ -648,24 +649,31 @@ type SMLRelatedDocumentWarning struct {
 }
 
 type SigningDocumentReference struct {
-	ID                string    `json:"id"`
-	DocNo             string    `json:"docNo"`
-	DocFormatCode     string    `json:"docFormatCode"`
-	Status            string    `json:"status"`
-	CreatedBy         string    `json:"-"`
-	HasCurrentPDF     bool      `json:"hasCurrentPdf"`
-	HasFinalPDF       bool      `json:"hasFinalPdf"`
-	CanOpenPaperless  bool      `json:"canOpenPaperless"`
-	CanViewCurrentPDF bool      `json:"canViewCurrentPdf"`
-	CanViewSignedPDF  bool      `json:"canViewSignedPdf"`
-	CurrentPDFURL     string    `json:"currentPdfUrl,omitempty"`
-	SignedPDFURL      string    `json:"signedPdfUrl,omitempty"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	ID                 string    `json:"id"`
+	AttemptNo          int       `json:"attemptNo"`
+	PreviousDocumentID string    `json:"previousDocumentId,omitempty"`
+	DocNo              string    `json:"docNo"`
+	DocFormatCode      string    `json:"docFormatCode"`
+	Status             string    `json:"status"`
+	CreatedBy          string    `json:"-"`
+	HasCurrentPDF      bool      `json:"hasCurrentPdf"`
+	HasFinalPDF        bool      `json:"hasFinalPdf"`
+	CanOpenPaperless   bool      `json:"canOpenPaperless"`
+	CanViewCurrentPDF  bool      `json:"canViewCurrentPdf"`
+	CanViewSignedPDF   bool      `json:"canViewSignedPdf"`
+	CurrentPDFURL      string    `json:"currentPdfUrl,omitempty"`
+	SignedPDFURL       string    `json:"signedPdfUrl,omitempty"`
+	CreatedAt          time.Time `json:"createdAt"`
+	UpdatedAt          time.Time `json:"updatedAt"`
 }
 
 type SigningDocument struct {
 	ID                  string                       `json:"id"`
+	AttemptNo           int                          `json:"attemptNo"`
+	PreviousDocumentID  string                       `json:"previousDocumentId,omitempty"`
+	NextDocumentID      string                       `json:"nextDocumentId,omitempty"`
+	SMLSourceRevision   string                       `json:"smlSourceRevision,omitempty"`
+	SMLSourceCheckedAt  *time.Time                   `json:"smlSourceCheckedAt,omitempty"`
 	DocumentSource      string                       `json:"documentSource"`
 	InternalDocumentID  string                       `json:"internalDocumentId,omitempty"`
 	InternalRevision    int                          `json:"internalRevision,omitempty"`

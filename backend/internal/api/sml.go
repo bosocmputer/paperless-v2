@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -106,6 +107,13 @@ type smlRequestError struct {
 	Details any
 }
 
+type smlSourceStateError struct {
+	State   string
+	Message string
+}
+
+func (e *smlSourceStateError) Error() string { return e.Message }
+
 func (e *smlRequestError) Error() string {
 	if e.Message != "" {
 		return e.Message
@@ -128,6 +136,57 @@ func (s *Server) hasSMLAPIConfig(ctx context.Context) (string, bool) {
 	return tenant, strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) != "" &&
 		strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) != "" &&
 		strings.TrimSpace(tenant) != ""
+}
+
+// verifySMLDocumentSource compares the immutable PaperLess snapshot with one
+// exact SML lookup. It intentionally never runs in the broad search path.
+func (s *Server) verifySMLDocumentSource(ctx context.Context, document models.SigningDocument) error {
+	if !requiresSMLFinalization(document) {
+		return nil
+	}
+	checkCtx := store.WithSMLTenant(ctx, document.SMLTenant)
+	candidate, err := s.fetchSMLDocumentCandidate(checkCtx, document.DocFormatCode, document.DocNo)
+	if err != nil {
+		var requestErr *smlRequestError
+		if errors.As(err, &requestErr) && requestErr.Code == "document_not_found" {
+			return &smlSourceStateError{State: "sml_source_missing", Message: "ไม่พบเอกสารนี้ใน SML แล้ว กรุณายกเลิกเอกสารและนำเข้า PDF ฉบับล่าสุดใหม่"}
+		}
+		return err
+	}
+	revision := strings.TrimSpace(candidate.SourceRevision)
+	if revision == "" {
+		return fmt.Errorf("SML did not return a document source revision")
+	}
+	if strings.TrimSpace(document.SMLSourceRevision) == "" {
+		if !legacySMLSourceMatchesDocument(candidate, document) {
+			return &smlSourceStateError{State: "sml_source_changed", Message: "ข้อมูลเอกสารใน SML ถูกแก้ไขจากข้อมูลที่นำเข้า กรุณายกเลิกเอกสารและนำเข้า PDF ฉบับล่าสุดใหม่"}
+		}
+		return s.store.RecordSMLSourceCheck(ctx, document.ID, revision)
+	}
+	if document.SMLSourceRevision != revision {
+		return &smlSourceStateError{State: "sml_source_changed", Message: "ข้อมูลเอกสารใน SML ถูกแก้ไขหลังเริ่มงาน กรุณายกเลิกเอกสารและนำเข้า PDF ฉบับล่าสุดใหม่"}
+	}
+	return s.store.RecordSMLSourceCheck(ctx, document.ID, revision)
+}
+
+func legacySMLSourceMatchesDocument(candidate models.SMLDocumentCandidate, document models.SigningDocument) bool {
+	if !strings.EqualFold(strings.TrimSpace(candidate.DocNo), strings.TrimSpace(document.DocNo)) ||
+		!strings.EqualFold(strings.TrimSpace(candidate.DocFormatCode), strings.TrimSpace(document.DocFormatCode)) {
+		return false
+	}
+	if strings.TrimSpace(document.DocDate) != "" && strings.TrimSpace(candidate.DocDate) != strings.TrimSpace(document.DocDate) {
+		return false
+	}
+	if strings.TrimSpace(document.PartyCode) != "" && !strings.EqualFold(strings.TrimSpace(candidate.PartyCode), strings.TrimSpace(document.PartyCode)) {
+		return false
+	}
+	if strings.TrimSpace(document.SMLTable) != "" && !strings.EqualFold(strings.TrimSpace(candidate.Table), strings.TrimSpace(document.SMLTable)) {
+		return false
+	}
+	if document.TransFlag != 0 && candidate.TransFlag != document.TransFlag {
+		return false
+	}
+	return math.Abs(candidate.TotalAmount-document.TotalAmount) < 0.005
 }
 
 func (s *Server) listSMLScreenCodes(w http.ResponseWriter, r *http.Request) {
@@ -495,10 +554,10 @@ func (s *Server) fetchSMLDocumentCandidate(ctx context.Context, docFormatCode, d
 		return models.SMLDocumentCandidate{}, fmt.Errorf("cannot parse SML response")
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return models.SMLDocumentCandidate{}, errors.New(smlErrorMessage(payload.Error, payload.Message, resp.Status))
+		return models.SMLDocumentCandidate{}, newSMLRequestError(payload.Error, payload.Message, resp.Status)
 	}
 	if !payload.Success {
-		return models.SMLDocumentCandidate{}, errors.New(smlErrorMessage(payload.Error, payload.Message, "SML request failed"))
+		return models.SMLDocumentCandidate{}, newSMLRequestError(payload.Error, payload.Message, "SML request failed")
 	}
 	return payload.Data, nil
 }
@@ -534,10 +593,10 @@ func (s *Server) fetchSMLDocumentCandidatesBatch(ctx context.Context, docFormatC
 		return smlDocumentCandidatesBatchResponse{}, fmt.Errorf("cannot parse SML response")
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return smlDocumentCandidatesBatchResponse{}, errors.New(smlErrorMessage(payload.Error, payload.Message, resp.Status))
+		return smlDocumentCandidatesBatchResponse{}, newSMLRequestError(payload.Error, payload.Message, resp.Status)
 	}
 	if !payload.Success {
-		return smlDocumentCandidatesBatchResponse{}, errors.New(smlErrorMessage(payload.Error, payload.Message, "SML request failed"))
+		return smlDocumentCandidatesBatchResponse{}, newSMLRequestError(payload.Error, payload.Message, "SML request failed")
 	}
 	return payload, nil
 }

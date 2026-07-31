@@ -12,7 +12,9 @@ const statusText = {
     completed: 'เสร็จสมบูรณ์',
     completed_evidence_failed: 'สร้าง PDF หลักฐานไม่สำเร็จ',
     completed_image_failed: 'ส่งรูป SML ไม่สำเร็จ',
-    completed_lock_failed: 'Lock SML ไม่สำเร็จ'
+    completed_lock_failed: 'Lock SML ไม่สำเร็จ',
+    sml_source_changed: 'ข้อมูล SML ถูกแก้ไข',
+    sml_source_missing: 'ไม่พบเอกสารใน SML'
 };
 
 const statusSeverity = {
@@ -29,7 +31,9 @@ const statusSeverity = {
     completed: 'success',
     completed_evidence_failed: 'warn',
     completed_image_failed: 'danger',
-    completed_lock_failed: 'danger'
+    completed_lock_failed: 'danger',
+    sml_source_changed: 'warn',
+    sml_source_missing: 'danger'
 };
 
 export function signingStatusLabel(status) {

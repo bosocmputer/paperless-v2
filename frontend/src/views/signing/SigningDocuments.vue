@@ -57,9 +57,9 @@ const pageConfig = computed(() => {
     }
     if (queue.value === 'history') {
         return {
-            title: 'ประวัติเอกสารเซ็น',
-            subtitle: 'เอกสารที่เซ็นครบและจัดเก็บเสร็จสมบูรณ์',
-            empty: 'ยังไม่มีประวัติเอกสารเซ็น',
+            title: 'ประวัติเอกสาร',
+            subtitle: 'เอกสารที่เสร็จสมบูรณ์ ถูกปฏิเสธ หรือยกเลิก',
+            empty: 'ยังไม่มีประวัติเอกสาร',
             searchPlaceholder: 'ค้นหาเลขเอกสาร หรือคู่ค้า',
             countSeverity: 'success',
             showCreate: false
@@ -328,16 +328,11 @@ function confirmAdminConfirm(doc) {
 }
 
 function confirmCancel(doc) {
-    if (isInternalDocument(doc)) {
-        openDetail(doc);
-        toast.add({ severity: 'info', summary: 'ระบุเหตุผลการยกเลิก', detail: 'เปิดรายละเอียดเอกสารแล้ว เพื่อระบุเหตุผลและเก็บในประวัติ', life: 3500 });
-        return;
-    }
     confirm.require({
-        header: 'ยกเลิกเอกสาร',
-        message: `ต้องการยกเลิก ${doc.docNo} ใช่ไหม? เอกสารจะไม่ถูกส่งไปเซ็น`,
+        header: 'ลบแบบร่าง',
+        message: `ต้องการลบแบบร่าง ${doc.docNo} ใช่ไหม? เอกสารจะไม่ถูกส่งไปเซ็น และสามารถนำเข้าเลขเดิมใหม่ได้`,
         icon: 'pi pi-exclamation-triangle',
-        acceptLabel: 'ยกเลิกเอกสาร',
+        acceptLabel: 'ลบแบบร่าง',
         rejectLabel: 'กลับ',
         acceptClass: 'p-button-danger',
         accept: () => transitionDocument(doc, 'cancel')
@@ -364,7 +359,7 @@ async function transitionDocument(doc, action) {
                 life: 4000
             });
         } else if (action === 'cancel') {
-            toast.add({ severity: 'success', summary: 'ยกเลิกเอกสารแล้ว', life: 2500 });
+            toast.add({ severity: 'success', summary: 'ลบแบบร่างแล้ว', life: 2500 });
         }
         await loadPage();
     } catch (err) {
@@ -470,12 +465,29 @@ function waitingSummary(doc) {
     if (doc?.status === 'completed_evidence_failed') return 'ต้องสร้าง PDF หลักฐานอีกครั้ง';
     if (doc?.status === 'completed_image_failed') return 'ต้องส่งรูปเอกสารเข้า SML อีกครั้ง';
     if (doc?.status === 'completed_lock_failed') return 'ต้อง Lock SML อีกครั้ง';
+    if (doc?.status === 'sml_source_changed' || doc?.status === 'sml_source_missing') return 'ยกเลิกเอกสารเพื่อสร้างฉบับแก้ไข';
     if (doc?.status === 'rejected') return 'workflow หยุดแล้ว';
     return '';
 }
 
 function isInternalDocument(doc) {
     return doc?.documentSource === 'internal';
+}
+
+function canCreateSMLCorrection(doc) {
+    return !isInternalDocument(doc) && ['rejected', 'cancelled'].includes(doc?.status);
+}
+
+function createSMLCorrection(doc) {
+    if (!doc?.id) return;
+    router.push({
+        name: 'signing-document-create',
+        query: {
+            doc_format_code: doc.docFormatCode,
+            doc_no: doc.docNo,
+            correction_of: doc.id
+        }
+    });
 }
 
 function documentStatusLabel(doc) {
@@ -622,6 +634,7 @@ function selectInput(event) {
                         <span class="whitespace-nowrap">{{ documentLine(data) }}</span>
                     </Button>
                     <Tag v-if="isInternalDocument(data)" value="เอกสารภายใน" severity="info" class="ml-2" />
+                    <Tag v-if="data.attemptNo > 1" :value="`ฉบับที่ ${data.attemptNo}`" severity="secondary" class="ml-2" />
                 </template>
             </Column>
             <Column field="docDate" header="วันที่เอกสาร" sortable style="min-width: 10rem">
@@ -690,6 +703,7 @@ function selectInput(event) {
                             aria-label="ดูเอกสารเซ็นครบ"
                             @click="previewDocumentPDF(data, 'current')"
                         />
+                        <Button v-if="canCreateSMLCorrection(data)" icon="pi pi-copy" rounded outlined severity="secondary" aria-label="สร้างฉบับแก้ไข" v-tooltip.top="'สร้างฉบับแก้ไขด้วย PDF ใหม่'" @click="createSMLCorrection(data)" />
                         <DocumentAttachmentActionButton :count="attachmentCount(data)" @click="openAttachmentsDialog(data)" />
                         <Button v-if="!isInternalDocument(data)" icon="pi pi-sitemap" rounded outlined severity="secondary" aria-label="ดู Flow เอกสาร" @click="openDocumentFlowFromRow(data)" />
                         <Button v-if="queue !== 'draft' && !isInternalDocument(data)" icon="pi pi-list" rounded outlined severity="secondary" aria-label="ตรวจสอบเอกสารอ้างอิง" @click="openReferenceCheck(data)" />
@@ -700,7 +714,8 @@ function selectInput(event) {
                             rounded
                             outlined
                             severity="danger"
-                            aria-label="ยกเลิกเอกสาร"
+                            aria-label="ลบแบบร่าง"
+                            v-tooltip.top="'ลบแบบร่าง'"
                             :loading="isTransitioning(data.id)"
                             @click="confirmCancel(data)"
                         />

@@ -990,11 +990,11 @@ function newRequestKey() {
             <div class="grid gap-3">
                 <Message severity="warn">การปฏิเสธจะหยุด workflow ของเอกสารนี้ และไม่ lock SML</Message>
                 <label class="font-medium">เหตุผล</label>
-                <Textarea v-model="rejectReason" rows="4" autoResize autofocus />
+                <Textarea v-model="rejectReason" rows="4" maxlength="1000" autoResize autofocus placeholder="ระบุเหตุผลการปฏิเสธเพื่อเก็บในประวัติเอกสาร" />
             </div>
             <template #footer>
                 <Button label="ยกเลิก" severity="secondary" outlined @click="rejectVisible = false" />
-                <Button label="ยืนยันปฏิเสธ" severity="danger" :loading="isBusy" @click="rejectTask" />
+                <Button label="ยืนยันปฏิเสธ" severity="danger" :disabled="!rejectReason.trim() || isBusy" :loading="isBusy" @click="rejectTask" />
             </template>
         </Dialog>
 

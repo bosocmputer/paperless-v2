@@ -27,7 +27,7 @@ export function normalizeSigningDocumentQueue(value) {
 export function signingDocumentQueueForStatus(status) {
     const value = String(status || '').trim().toLowerCase();
     if (value === 'draft') return SIGNING_DOCUMENT_QUEUES.draft;
-    if (value === 'completed') return SIGNING_DOCUMENT_QUEUES.history;
+    if (value === 'completed' || value === 'rejected' || value === 'cancelled') return SIGNING_DOCUMENT_QUEUES.history;
     return SIGNING_DOCUMENT_QUEUES.active;
 }
 

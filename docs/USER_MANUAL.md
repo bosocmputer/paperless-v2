@@ -83,10 +83,24 @@ After all required signers are complete, PaperLess automatically generates the s
 - SML documents then upload JPEG snapshots and lock the ERP transaction. If upload or lock fails, admin uses the corresponding retry action.
 - Internal documents finish in PaperLess. They do not show SML Flow/reference checks or SML retry actions.
 
-### 7. Review History And Evidence
+### 7. Correct A Wrong SML Document
 
-Open `ประวัติเอกสารเซ็น`.
+PaperLess never deletes signing evidence. Use the action that matches the document state:
 
+1. A draft that has not been sent: choose `ลบแบบร่าง`. The draft becomes `ยกเลิก` in history and the same SML document number may be imported again with a new PDF.
+2. A document that is currently collecting signatures: the creator, admin, or superadmin chooses `ยกเลิกเอกสาร` and enters a reason. Pending signers are skipped and any external signing link/OTP is revoked.
+3. A signer whose turn has arrived may choose `ปฏิเสธ` and must enter a reason. PaperLess stops the remaining flow and retains the rejection in history.
+4. From a cancelled or rejected SML document, choose `สร้างฉบับแก้ไข`. Upload the corrected PDF again. PaperLess creates a new attempt with the same SML number; it does not copy the old PDF, signatures, attachments, or signer state.
+
+The document detail shows `ฉบับที่ N` and links to the previous/next attempt. A completed SML document remains permanent and cannot be recreated with the same number.
+
+If SML data is changed or deleted after signing begins, PaperLess stops before uploading images or locking SML and shows an attention status. Cancel that attempt, then create a corrected attempt from the latest SML/PDF data. Do not use retry for this case.
+
+### 8. Review History And Evidence
+
+Open `ประวัติเอกสาร`.
+
+- The list includes completed, rejected, and cancelled documents with a clear status tag.
 - `ดูเอกสารเซ็นครบ` opens the current signed document.
 - `ดูหลักฐานการลงนาม` opens the final audit evidence PDF.
 - `พิมพ์เอกสาร` creates a print event before opening the printable PDF.
@@ -136,8 +150,9 @@ External signers only see the signing task. They do not see attachments, admin t
 | User cannot log in | Verify SML account and database permission first, then PaperLess user status |
 | Wrong database selected | Log out and log in again, then select the correct database |
 | PDF preview fails | Refresh/reopen the page; if it persists, report document number to admin |
-| SML image upload failed | Admin uses retry SML images |
-| SML lock failed | Admin retries lock after image upload is successful |
+| SML image upload failed | Admin uses retry SML images on the same document attempt |
+| SML lock failed | Admin retries lock after image upload is successful on the same document attempt |
+| SML source was changed or removed | Cancel the stopped attempt, then create a corrected attempt and upload the newest PDF |
 | Internal document cannot be sent | Arrange signature/legal boxes, then send again; printing the latest PDF revision is optional |
 | Internal Master cannot be activated | Complete its Running pattern and Workflow |
 | Company profile unavailable | Ask SML ERP support to verify one usable row in `public.erp_company_profile` |

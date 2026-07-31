@@ -62,7 +62,7 @@ const model = computed(() => {
                     menuKey: SIGNING_DOCUMENT_MENU_KEYS.active
                 },
                 {
-                    label: 'ประวัติเอกสารเซ็น',
+                    label: 'ประวัติเอกสาร',
                     icon: 'pi pi-fw pi-history',
                     to: '/signing/documents/history',
                     menuKey: SIGNING_DOCUMENT_MENU_KEYS.history,

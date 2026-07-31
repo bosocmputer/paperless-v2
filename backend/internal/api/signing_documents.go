@@ -936,6 +936,17 @@ func (s *Server) sendSigningDocument(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	documentForSource, err := s.store.FindSigningDocumentByID(r.Context(), documentID)
+	if s.writeSigningDocumentTransitionError(w, err, "send_signing_document_failed", "Cannot load signing document right now.") {
+		return
+	}
+	if err := s.verifySMLDocumentSource(r.Context(), documentForSource); err != nil {
+		if writeSMLSourceVerificationError(w, err) {
+			return
+		}
+		writeError(w, http.StatusBadGateway, "sml_source_verification_failed", "ตรวจสอบข้อมูลเอกสารจาก SML ไม่สำเร็จ กรุณาลองใหม่")
+		return
+	}
 	document, err := s.store.SendSigningDocument(r.Context(), documentID, actor.ID, clientIP(r), r.UserAgent())
 	if s.writeSigningDocumentTransitionError(w, err, "send_signing_document_failed", "Cannot send signing document right now.") {
 		return
@@ -1005,8 +1016,8 @@ func (s *Server) cancelSigningDocument(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if documentForPolicy.DocumentSource == "internal" && req.Reason == "" {
-		writeError(w, http.StatusBadRequest, "cancel_reason_required", "กรุณาระบุเหตุผลการยกเลิกเอกสารภายใน")
+	if documentForPolicy.Status != "draft" && req.Reason == "" {
+		writeError(w, http.StatusBadRequest, "cancel_reason_required", "กรุณาระบุเหตุผลการยกเลิกเอกสาร")
 		return
 	}
 	scope := "signing_document_cancel:" + documentID
@@ -1024,7 +1035,7 @@ func (s *Server) cancelSigningDocument(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	document, err := s.store.CancelSigningDocument(r.Context(), documentID, actor.ID, req.Reason, clientIP(r), r.UserAgent(), actor.Role == "superadmin")
+	document, err := s.store.CancelSigningDocument(r.Context(), documentID, actor.ID, actor.Role, req.Reason, clientIP(r), r.UserAgent())
 	if s.writeSigningDocumentTransitionError(w, err, "cancel_signing_document_failed", "Cannot cancel signing document right now.") {
 		return
 	}
@@ -1161,6 +1172,10 @@ func (s *Server) writeSigningDocumentTransitionError(w http.ResponseWriter, err 
 	}
 	if errors.Is(err, store.ErrSigningDocumentLayoutRequired) {
 		writeError(w, http.StatusConflict, "internal_document_layout_required", "กรุณาให้ Superadmin กำหนดกรอบลายเซ็นจาก Workflow ก่อนส่งเอกสาร")
+		return true
+	}
+	if errors.Is(err, store.ErrSigningDocumentReasonRequired) || errors.Is(err, store.ErrSigningTaskRejectReasonRequired) {
+		writeError(w, http.StatusBadRequest, "reason_required", "กรุณาระบุเหตุผลก่อนดำเนินการ")
 		return true
 	}
 	s.logger.Error(message, "error", err)
@@ -2031,6 +2046,14 @@ func (s *Server) retrySigningDocumentLock(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "document_not_completed", "Document is not ready for SML lock retry.")
 		return
 	}
+	if err := s.verifySMLDocumentSource(r.Context(), document); err != nil {
+		if transitionSMLSourceAttention(r.Context(), s, document, err) {
+			writeSMLSourceVerificationError(w, err)
+			return
+		}
+		writeError(w, http.StatusBadGateway, "sml_source_verification_failed", "ตรวจสอบข้อมูลเอกสารจาก SML ไม่สำเร็จ กรุณาลองใหม่")
+		return
+	}
 	ok, metadata := s.lockCompletedDocument(r.Context(), document.ID, document.DocNo)
 	if !ok {
 		writeError(w, http.StatusBadGateway, "sml_lock_failed", "SML lock failed. You can retry again.")
@@ -2071,6 +2094,14 @@ func (s *Server) retrySigningDocumentImages(w http.ResponseWriter, r *http.Reque
 	}
 	if !canRetrySigningDocumentImagesStatus(document.Status) {
 		writeError(w, http.StatusBadRequest, "document_not_image_retryable", "Document is not ready for SML image retry.")
+		return
+	}
+	if err := s.verifySMLDocumentSource(r.Context(), document); err != nil {
+		if transitionSMLSourceAttention(r.Context(), s, document, err) {
+			writeSMLSourceVerificationError(w, err)
+			return
+		}
+		writeError(w, http.StatusBadGateway, "sml_source_verification_failed", "ตรวจสอบข้อมูลเอกสารจาก SML ไม่สำเร็จ กรุณาลองใหม่")
 		return
 	}
 	imageOK, imageMetadata := s.uploadCompletedDocumentImages(r.Context(), document.ID)
@@ -3771,6 +3802,21 @@ func (s *Server) finalizeCompletedDocument(ctx context.Context, documentID, ipAd
 		s.logger.Error("load document before finalization failed", "error", err, "documentID", documentID)
 		return result
 	}
+	if requiresSMLFinalization(document) {
+		if err := s.verifySMLDocumentSource(ctx, document); err != nil {
+			var sourceErr *smlSourceStateError
+			if errors.As(err, &sourceErr) {
+				metadata := map[string]any{"attemptNo": document.AttemptNo, "reason": sourceErr.Message}
+				if markErr := s.store.MarkSMLSourceAttention(context.Background(), documentID, sourceErr.State, metadata); markErr != nil {
+					s.logger.Error("mark SML source attention failed", "error", markErr, "documentID", documentID)
+				}
+				result.ImageMetadata = metadata
+				return result
+			}
+			s.logger.Warn("verify SML source before finalization failed", "error", err, "documentID", documentID)
+			return result
+		}
+	}
 	if err := s.refreshStampedPDF(ctx, documentID, true); err != nil {
 		s.logger.Error("final pdf evidence failed", "error", err, "documentID", documentID)
 		_ = s.store.MarkDocumentEvidenceFailed(context.Background(), documentID, map[string]any{
@@ -3808,6 +3854,33 @@ func (s *Server) finalizeCompletedDocument(ctx context.Context, documentID, ipAd
 
 func requiresSMLFinalization(document models.SigningDocument) bool {
 	return !strings.EqualFold(strings.TrimSpace(document.DocumentSource), "internal")
+}
+
+func writeSMLSourceVerificationError(w http.ResponseWriter, err error) bool {
+	var sourceErr *smlSourceStateError
+	if !errors.As(err, &sourceErr) {
+		return false
+	}
+	code := sourceErr.State
+	if code == "" {
+		code = "sml_source_changed"
+	}
+	writeError(w, http.StatusConflict, code, sourceErr.Message)
+	return true
+}
+
+func transitionSMLSourceAttention(ctx context.Context, s *Server, document models.SigningDocument, err error) bool {
+	var sourceErr *smlSourceStateError
+	if !errors.As(err, &sourceErr) {
+		return false
+	}
+	if markErr := s.store.MarkSMLSourceAttention(context.Background(), document.ID, sourceErr.State, map[string]any{
+		"attemptNo": document.AttemptNo,
+		"reason":    sourceErr.Message,
+	}); markErr != nil {
+		s.logger.Error("mark SML source attention failed", "error", markErr, "documentID", document.ID)
+	}
+	return true
 }
 
 func normalizePrintCopyRequest(req models.CreatePrintCopyRequest) models.CreatePrintCopyRequest {

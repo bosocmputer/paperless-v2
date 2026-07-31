@@ -66,6 +66,7 @@ const headerSummary = computed(() => {
     return 'เลือกเอกสารจาก SML แล้วอัปโหลด PDF เพื่อวางกรอบลายเซ็น';
 });
 const lockedBySML = computed(() => Number(form.value.selectedCandidate?.is_lock_record || 0) === 1);
+const isCorrection = computed(() => !!String(route.query.correction_of || '').trim());
 const blockingDuplicateDocument = computed(() => duplicateCheck.value?.blockingDocument || null);
 const duplicateWarningDocuments = computed(() => duplicateCheck.value?.previousDocuments || []);
 const workflowContextLoaded = computed(() => !!form.value.docFormatCode && workflowContextDocFormatCode.value === form.value.docFormatCode);
@@ -943,6 +944,9 @@ function makeSignNoteBoxKey() {
                 <StepPanel :value="1">
                     <Panel header="เลือกเอกสาร" class="min-w-0">
                         <div class="flex min-w-0 flex-col gap-4">
+                            <Message v-if="isCorrection" severity="info" :closable="false">
+                                กำลังสร้างฉบับแก้ไขของเลขเอกสารเดิม กรุณาอัปโหลด PDF ฉบับใหม่ ระบบจะไม่คัดลอกลายเซ็น ไฟล์แนบ หรือสถานะจากฉบับก่อนหน้า
+                            </Message>
                             <div class="grid min-w-0 grid-cols-12 gap-4">
                                 <div class="col-span-12 min-w-0 lg:col-span-4">
                                     <label class="block font-bold mb-3">ชนิดเอกสาร</label>

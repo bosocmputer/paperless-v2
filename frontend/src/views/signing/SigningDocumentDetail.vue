@@ -51,6 +51,7 @@ const layoutValidationIssues = ref([]);
 const layoutDraft = ref({ boxes: [], legalNoticeBox: null, legalNoticeBoxes: [] });
 const cancelDialog = ref(false);
 const cancelReason = ref('');
+const cancelRequestKey = ref('');
 
 const importantEvents = computed(() =>
     (document.value?.events || [])
@@ -72,9 +73,22 @@ const internalLayoutReady = computed(() => !isInternalDocument.value || document
 const needsLegacyInternalLayout = computed(() => isInternalDocument.value && document.value?.status === 'draft' && !internalLayoutReady.value);
 const canManageLegacyInternalLayout = computed(() => needsLegacyInternalLayout.value && authStore.user?.role === 'superadmin');
 const internalLayoutPDFUrl = computed(() => (document.value?.id ? api.signingDocumentPDFUrlForDocument(document.value, 'original') : ''));
-const canCancelInternalDocument = computed(() => {
-    if (!isInternalDocument.value || !['draft', 'in_progress'].includes(document.value?.status)) return false;
-    return authStore.user?.role === 'superadmin' || document.value?.createdBy === authStore.user?.id;
+const canCancelDocument = computed(() => {
+    const status = document.value?.status || '';
+    const actorRole = authStore.user?.role || '';
+    const actorCanManage = actorRole === 'admin' || actorRole === 'superadmin';
+    const actorIsCreator = document.value?.createdBy === authStore.user?.id;
+    if (!actorCanManage && !actorIsCreator) return false;
+    if (isInternalDocument.value) return ['draft', 'in_progress'].includes(status);
+    return ['draft', 'in_progress', 'sml_source_changed', 'sml_source_missing'].includes(status);
+});
+const canCreateSMLCorrection = computed(() => !isInternalDocument.value && ['rejected', 'cancelled'].includes(document.value?.status));
+const cancelRequiresReason = computed(() => document.value?.status !== 'draft');
+const cancellationActionLabel = computed(() => (document.value?.status === 'draft' ? 'ลบแบบร่าง' : 'ยกเลิกเอกสาร'));
+const sourceAttentionMessage = computed(() => {
+    if (document.value?.status === 'sml_source_changed') return 'ข้อมูลเอกสารใน SML ถูกแก้ไขหลังเริ่มงาน กรุณายกเลิกเอกสารฉบับนี้ แล้วนำเข้า PDF ฉบับล่าสุดใหม่';
+    if (document.value?.status === 'sml_source_missing') return 'ไม่พบเอกสารนี้ใน SML แล้ว จึงหยุดก่อนส่งรูปและ Lock กรุณายกเลิกเอกสารฉบับนี้ก่อนนำเข้าใหม่';
+    return '';
 });
 const documentStatusLabel = computed(() => {
     if (isInternalDocument.value && document.value?.status === 'pending_confirm') return 'รอสร้างเอกสารสมบูรณ์';
@@ -83,7 +97,7 @@ const documentStatusLabel = computed(() => {
 });
 const backRouteName = computed(() => {
     if (document.value?.status === 'draft') return 'signing-document-drafts';
-    if (document.value?.status === 'completed') return 'signing-document-history';
+    if (['completed', 'rejected', 'cancelled'].includes(document.value?.status)) return 'signing-document-history';
     return 'signing-documents';
 });
 
@@ -378,16 +392,17 @@ async function adminConfirmDocument() {
 }
 
 function confirmCancelDocument() {
-    if (isInternalDocument.value) {
+    cancelRequestKey.value = makeTransitionKey('cancel');
+    if (cancelRequiresReason.value) {
         cancelReason.value = '';
         cancelDialog.value = true;
         return;
     }
     confirm.require({
-        header: 'ยกเลิกเอกสาร',
-        message: `ต้องการยกเลิก ${document.value?.docNo || 'เอกสารนี้'} ใช่ไหม?`,
+        header: 'ลบแบบร่าง',
+        message: `ต้องการลบแบบร่าง ${document.value?.docNo || 'เอกสารนี้'} ใช่ไหม? เอกสารจะไม่ถูกส่งไปเซ็น และสามารถนำเข้าเลขเดิมใหม่ได้`,
         icon: 'pi pi-exclamation-triangle',
-        acceptLabel: 'ยกเลิกเอกสาร',
+        acceptLabel: 'ลบแบบร่าง',
         rejectLabel: 'กลับ',
         acceptClass: 'p-button-danger',
         accept: () => cancelDocument()
@@ -398,16 +413,45 @@ async function cancelDocument() {
     if (!document.value?.id) return;
     cancellingDocument.value = true;
     try {
-        await api.cancelSigningDocument(document.value.id, { idempotencyKey: makeTransitionKey('cancel'), reason: cancelReason.value });
-        toast.add({ severity: 'success', summary: 'ยกเลิกเอกสารแล้ว', life: 2500 });
+        const idempotencyKey = cancelRequestKey.value || makeTransitionKey('cancel');
+        cancelRequestKey.value = idempotencyKey;
+        await api.cancelSigningDocument(document.value.id, { idempotencyKey, reason: cancelReason.value });
+        toast.add({ severity: 'success', summary: cancellationActionLabel.value + 'แล้ว', life: 2500 });
         cancelDialog.value = false;
-        if (isInternalDocument.value) await loadPage();
-        else router.push({ name: 'signing-document-drafts' });
+        cancelRequestKey.value = '';
+        router.push({ name: document.value?.status === 'draft' ? 'signing-document-drafts' : 'signing-document-history' });
     } catch (err) {
         toast.add({ severity: 'error', summary: 'ยกเลิกเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         cancellingDocument.value = false;
     }
+}
+
+function closeCancelDialog() {
+    cancelDialog.value = false;
+    cancelReason.value = '';
+    cancelRequestKey.value = '';
+}
+
+function createSMLCorrection() {
+    if (!document.value?.id) return;
+    router.push({
+        name: 'signing-document-create',
+        query: {
+            doc_format_code: document.value.docFormatCode,
+            doc_no: document.value.docNo,
+            correction_of: document.value.id
+        }
+    });
+}
+
+function openLineageDocument(documentID) {
+    if (!documentID) return;
+    router.push({
+        name: 'signing-document-detail',
+        params: { id: documentID },
+        query: { from_queue: 'history' }
+    });
 }
 
 function makeTransitionKey(action) {
@@ -638,6 +682,30 @@ function movementEventView(event) {
             severity: 'danger',
             detail: metadata.reason ? `เหตุผล: ${metadata.reason}` : event.message || 'เอกสารถูกปฏิเสธ'
         },
+        document_cancelled: {
+            title: event.message || 'ยกเลิกเอกสาร',
+            icon: 'pi pi-trash',
+            severity: 'warn',
+            detail: metadata.reason ? `เหตุผล: ${metadata.reason}` : 'เอกสารถูกยกเลิกและเก็บประวัติไว้แล้ว'
+        },
+        correction_created: {
+            title: 'สร้างเอกสารฉบับแก้ไข',
+            icon: 'pi pi-copy',
+            severity: 'info',
+            detail: metadata.attemptNo ? `เริ่มฉบับที่ ${metadata.attemptNo}` : event.message || 'เริ่มสร้างเอกสารฉบับใหม่'
+        },
+        sml_source_changed: {
+            title: 'ข้อมูล SML ถูกแก้ไข',
+            icon: 'pi pi-exclamation-triangle',
+            severity: 'warn',
+            detail: event.message || 'หยุดก่อนส่งรูปและ Lock SML'
+        },
+        sml_source_missing: {
+            title: 'ไม่พบเอกสารใน SML',
+            icon: 'pi pi-exclamation-triangle',
+            severity: 'danger',
+            detail: event.message || 'หยุดก่อนส่งรูปและ Lock SML'
+        },
         document_ready_to_confirm: {
             title: 'เซ็นครบ รอยืนยัน',
             icon: 'pi pi-verified',
@@ -724,6 +792,9 @@ function movementEventView(event) {
                 <strong>{{ documentHeaderLine }}</strong>
             </div>
             <Tag v-if="document" :value="documentStatusLabel" :severity="signingStatusSeverity(document.status)" />
+            <Tag v-if="document?.attemptNo > 1" :value="`ฉบับที่ ${document.attemptNo}`" severity="secondary" />
+            <Button v-if="document?.previousDocumentId" label="ฉบับก่อนหน้า" icon="pi pi-arrow-left" severity="secondary" text size="small" @click="openLineageDocument(document.previousDocumentId)" />
+            <Button v-if="document?.nextDocumentId" label="ฉบับถัดไป" icon="pi pi-arrow-right" iconPos="right" severity="secondary" text size="small" @click="openLineageDocument(document.nextDocumentId)" />
             <Tag v-if="isInternalDocument" value="เอกสารภายใน" severity="info" />
             <Tag v-if="isInternalDocument && document?.status === 'draft'" :value="internalLayoutReady ? 'กรอบจาก Workflow' : 'ต้องให้ Superadmin กำหนดกรอบ'" :severity="internalLayoutReady ? 'success' : 'warn'" />
             <Button v-if="document && !isInternalDocument" label="ตรวจสอบ Flow" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
@@ -731,8 +802,9 @@ function movementEventView(event) {
             <Button v-if="canManageLegacyInternalLayout" label="จัดวางกรอบ" icon="pi pi-objects-column" severity="secondary" outlined @click="openInternalLayout" />
             <Button v-if="document?.status === 'draft' && isInternalDocument" label="พิมพ์ PDF" icon="pi pi-print" severity="secondary" outlined :disabled="needsLegacyInternalLayout" v-tooltip.bottom="needsLegacyInternalLayout ? 'กรุณาให้ Superadmin กำหนดกรอบก่อนพิมพ์' : 'พิมพ์ PDF revision ล่าสุด (ไม่บังคับก่อนส่ง)'" :loading="printingInternal" @click="printInternalDraft" />
             <Button v-if="document?.status === 'cancelled' && isInternalDocument" label="สร้างฉบับใหม่" icon="pi pi-copy" severity="secondary" outlined @click="copyInternalDocument" />
+            <Button v-if="canCreateSMLCorrection" label="สร้างฉบับแก้ไข" icon="pi pi-copy" severity="secondary" outlined @click="createSMLCorrection" />
             <Button v-if="document?.status === 'draft'" label="ส่งไปเซ็น" icon="pi pi-send" severity="success" :loading="sending" :disabled="needsLegacyInternalLayout" v-tooltip.bottom="needsLegacyInternalLayout ? 'กรุณาให้ Superadmin กำหนดกรอบก่อนส่ง' : 'ส่งไปเซ็น'" @click="confirmSendDocument" />
-            <Button v-if="(document?.status === 'draft' && !isInternalDocument) || canCancelInternalDocument" label="ยกเลิก" icon="pi pi-trash" severity="danger" outlined :loading="cancellingDocument" @click="confirmCancelDocument" />
+            <Button v-if="canCancelDocument" :label="cancellationActionLabel" icon="pi pi-trash" severity="danger" outlined :loading="cancellingDocument" @click="confirmCancelDocument" />
             <Button v-if="document?.status === 'completed_evidence_failed'" label="สร้าง PDF อีกครั้ง" icon="pi pi-file-check" severity="warn" outlined :loading="retryingFinalPDF" @click="retryFinalPDF" />
             <Button v-if="document?.status === 'completed_image_failed' && !isInternalDocument" label="ส่งรูป SML อีกครั้ง" icon="pi pi-images" severity="danger" outlined :loading="retryingImages" @click="retryImages" />
             <Button v-if="document?.status === 'completed_lock_failed' && !isInternalDocument" label="Lock SML อีกครั้ง" icon="pi pi-refresh" severity="danger" outlined :loading="retryingLock" @click="retryLock" />
@@ -740,6 +812,8 @@ function movementEventView(event) {
             <Button v-if="document?.status === 'completed'" label="พิมพ์เอกสาร" icon="pi pi-print" severity="primary" :loading="printing" @click="printOfficialCopy" />
             <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
         </div>
+
+        <Message v-if="sourceAttentionMessage" severity="warn" :closable="false" class="source-attention-banner">{{ sourceAttentionMessage }}</Message>
 
         <div class="detail-grid">
             <section class="pdf-panel">
@@ -891,14 +965,14 @@ function movementEventView(event) {
         </template>
     </Dialog>
 
-    <Dialog v-model:visible="cancelDialog" modal header="ยกเลิกเอกสารภายใน" :style="{ width: 'min(34rem, 94vw)' }" :draggable="false">
+    <Dialog v-model:visible="cancelDialog" modal header="ยกเลิกเอกสาร" :style="{ width: 'min(34rem, 94vw)' }" :draggable="false">
         <div class="cancel-document-form">
             <Message severity="warn" :closable="false" class="m-0">หลังยกเลิก เอกสารจะไม่ส่งต่อให้ผู้เซ็น และลิงก์ภายนอกที่มีอยู่จะใช้ไม่ได้</Message>
             <label>เหตุผลการยกเลิก <span class="required-mark">*</span></label>
             <Textarea v-model="cancelReason" rows="4" maxlength="1000" autoResize placeholder="ระบุเหตุผลเพื่อเก็บในประวัติเอกสาร" />
         </div>
         <template #footer>
-            <Button label="กลับ" severity="secondary" text :disabled="cancellingDocument" @click="cancelDialog = false" />
+            <Button label="กลับ" severity="secondary" text :disabled="cancellingDocument" @click="closeCancelDialog" />
             <Button label="ยกเลิกเอกสาร" icon="pi pi-trash" severity="danger" :disabled="!cancelReason.trim()" :loading="cancellingDocument" @click="cancelDocument" />
         </template>
     </Dialog>
@@ -944,6 +1018,9 @@ function movementEventView(event) {
     position: sticky;
     top: 0;
     z-index: 2;
+}
+.source-attention-banner {
+    margin: 0;
 }
 .bar-title {
     min-width: 0;
