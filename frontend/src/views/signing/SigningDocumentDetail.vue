@@ -606,10 +606,20 @@ function canGenerateExternalToken(signer) {
     return document.value?.status === 'in_progress' && signer?.status === 'pending';
 }
 
-function printerLabel(value) {
-    if (!value) return '-';
-    if (value === 'not_available_web_browser') return 'ไม่สามารถอ่านชื่อเครื่องพิมพ์จาก Web';
-    return value;
+function printActorLabel(item) {
+    const name = String(item?.printedByName || '').trim();
+    const username = String(item?.printedByUsername || '').trim();
+    if (name && username && name.toLowerCase() !== username.toLowerCase()) return `${name} (@${username})`;
+    if (name || username) return name || `@${username}`;
+    return 'ผู้ใช้ที่ไม่พบในระบบ';
+}
+
+function printChannelLabel(channel) {
+    return channel === 'app' ? 'พิมพ์จากแอป' : 'พิมพ์จากเว็บ';
+}
+
+function hasKnownPrinterName(value) {
+    return Boolean(value && !['not_available_web_browser', 'not_provided'].includes(value));
 }
 
 function formatTimelineDate(value) {
@@ -899,8 +909,11 @@ function movementEventView(event) {
                                 <div v-else class="print-list">
                                     <div v-for="item in printEvents" :key="item.id" class="print-row">
                                         <span>
-                                            <strong>{{ formatThaiDateTime(item.printedAt) }}</strong>
-                                            <small>{{ item.channel === 'web' ? 'Web' : 'App' }} · {{ printerLabel(item.printerName) }}</small>
+                                            <strong>พิมพ์โดย {{ printActorLabel(item) }}</strong>
+                                            <small>
+                                                {{ formatThaiDateTime(item.printedAt) }} · {{ printChannelLabel(item.channel) }}
+                                                <template v-if="hasKnownPrinterName(item.printerName)"> · {{ item.printerName }}</template>
+                                            </small>
                                         </span>
                                         <Tag :value="item.file?.sha256 ? item.file.sha256.slice(0, 10) : '-'" severity="secondary" />
                                     </div>

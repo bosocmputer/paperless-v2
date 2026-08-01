@@ -2308,10 +2308,11 @@ WHERE signer_id = $1
 func (s *Store) ListSigningDocumentPrintEvents(ctx context.Context, documentID string) ([]models.SigningDocumentPrintEvent, error) {
 	rows, err := s.pool.Query(ctx, `
 SELECT p.id::text, p.document_id::text, p.file_id::text, p.channel, p.printer_name, p.device_id_hash,
-       p.client_timezone, p.final_file_sha256, COALESCE(p.printed_by::text,''), p.ip_address, p.user_agent, p.printed_at,
+       p.client_timezone, p.final_file_sha256, COALESCE(p.printed_by::text,''), COALESCE(NULLIF(u.display_name,''),''), COALESCE(NULLIF(u.username,''),''), p.ip_address, p.user_agent, p.printed_at,
        f.id::text, f.original_name, f.stored_name, f.storage_path, f.content_type, f.size_bytes, f.page_count, f.sha256, COALESCE(f.created_by::text,''), f.created_at
 FROM signing_document_print_events p
 JOIN uploaded_files f ON f.id = p.file_id
+LEFT JOIN users u ON u.id = p.printed_by
 WHERE p.document_id = $1
 ORDER BY p.printed_at DESC
 `, documentID)
@@ -2333,10 +2334,11 @@ ORDER BY p.printed_at DESC
 func (s *Store) FindSigningDocumentPrintEvent(ctx context.Context, documentID, printEventID string) (models.SigningDocumentPrintEvent, error) {
 	item, err := scanSigningDocumentPrintEvent(s.pool.QueryRow(ctx, `
 SELECT p.id::text, p.document_id::text, p.file_id::text, p.channel, p.printer_name, p.device_id_hash,
-       p.client_timezone, p.final_file_sha256, COALESCE(p.printed_by::text,''), p.ip_address, p.user_agent, p.printed_at,
+       p.client_timezone, p.final_file_sha256, COALESCE(p.printed_by::text,''), COALESCE(NULLIF(u.display_name,''),''), COALESCE(NULLIF(u.username,''),''), p.ip_address, p.user_agent, p.printed_at,
        f.id::text, f.original_name, f.stored_name, f.storage_path, f.content_type, f.size_bytes, f.page_count, f.sha256, COALESCE(f.created_by::text,''), f.created_at
 FROM signing_document_print_events p
 JOIN uploaded_files f ON f.id = p.file_id
+LEFT JOIN users u ON u.id = p.printed_by
 WHERE p.document_id = $1 AND p.id = $2
 `, documentID, printEventID))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -2974,7 +2976,7 @@ func scanSigningDocumentAttachment(row rowScanner) (models.SigningDocumentAttach
 func scanSigningDocumentPrintEvent(row rowScanner) (models.SigningDocumentPrintEvent, error) {
 	var item models.SigningDocumentPrintEvent
 	err := row.Scan(&item.ID, &item.DocumentID, &item.FileID, &item.Channel, &item.PrinterName, &item.DeviceIDHash,
-		&item.ClientTimezone, &item.FinalFileSHA256, &item.PrintedBy, &item.IPAddress, &item.UserAgent, &item.PrintedAt,
+		&item.ClientTimezone, &item.FinalFileSHA256, &item.PrintedBy, &item.PrintedByName, &item.PrintedByUsername, &item.IPAddress, &item.UserAgent, &item.PrintedAt,
 		&item.File.ID, &item.File.OriginalName, &item.File.StoredName, &item.File.StoragePath, &item.File.ContentType,
 		&item.File.SizeBytes, &item.File.PageCount, &item.File.SHA256, &item.File.CreatedBy, &item.File.CreatedAt)
 	return item, err

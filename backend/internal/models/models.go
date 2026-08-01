@@ -947,19 +947,21 @@ type SigningDocumentAttachment struct {
 }
 
 type SigningDocumentPrintEvent struct {
-	ID              string       `json:"id"`
-	DocumentID      string       `json:"documentId"`
-	FileID          string       `json:"fileId"`
-	Channel         string       `json:"channel"`
-	PrinterName     string       `json:"printerName"`
-	DeviceIDHash    string       `json:"deviceIdHash"`
-	ClientTimezone  string       `json:"clientTimezone"`
-	FinalFileSHA256 string       `json:"finalFileSha256"`
-	PrintedBy       string       `json:"printedBy"`
-	IPAddress       string       `json:"ipAddress"`
-	UserAgent       string       `json:"userAgent"`
-	PrintedAt       time.Time    `json:"printedAt"`
-	File            UploadedFile `json:"file"`
+	ID                string       `json:"id"`
+	DocumentID        string       `json:"documentId"`
+	FileID            string       `json:"fileId"`
+	Channel           string       `json:"channel"`
+	PrinterName       string       `json:"printerName"`
+	DeviceIDHash      string       `json:"deviceIdHash"`
+	ClientTimezone    string       `json:"clientTimezone"`
+	FinalFileSHA256   string       `json:"finalFileSha256"`
+	PrintedBy         string       `json:"printedBy"`
+	PrintedByName     string       `json:"printedByName"`
+	PrintedByUsername string       `json:"printedByUsername"`
+	IPAddress         string       `json:"ipAddress"`
+	UserAgent         string       `json:"userAgent"`
+	PrintedAt         time.Time    `json:"printedAt"`
+	File              UploadedFile `json:"file"`
 }
 
 type CreateSigningDocumentRequest struct {
