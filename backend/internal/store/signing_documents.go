@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -134,7 +135,7 @@ func (s *Store) CreateSigningDocument(ctx context.Context, input CreateSigningDo
 	if documentSource == "sml" {
 		docNo := strings.TrimSpace(input.Candidate.DocNo)
 		formatCode := strings.TrimSpace(input.Format.Code)
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, tenant+"\x00"+strings.ToLower(formatCode)+"\x00"+strings.ToLower(docNo)); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, smlDocumentAttemptLockKey(tenant, formatCode, docNo)); err != nil {
 			return models.SigningDocument{}, err
 		}
 		var hasBlockingAttempt bool
@@ -324,6 +325,17 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
 		return models.SigningDocument{}, err
 	}
 	return s.FindSigningDocumentByID(ctx, documentID)
+}
+
+// smlDocumentAttemptLockKey derives a stable advisory-lock identity without
+// passing document data or NUL delimiters to PostgreSQL text parameters.
+func smlDocumentAttemptLockKey(tenant, formatCode, docNo string) string {
+	tenant = strings.ToLower(strings.TrimSpace(tenant))
+	formatCode = strings.ToLower(strings.TrimSpace(formatCode))
+	docNo = strings.ToLower(strings.TrimSpace(docNo))
+	payload := fmt.Sprintf("%d:%s%d:%s%d:%s", len(tenant), tenant, len(formatCode), formatCode, len(docNo), docNo)
+	digest := sha256.Sum256([]byte(payload))
+	return fmt.Sprintf("%x", digest[:])
 }
 
 // SaveInternalDraftLayout replaces the unsigned draft layout after the creator has

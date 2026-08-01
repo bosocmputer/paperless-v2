@@ -8,6 +8,22 @@ import (
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 )
 
+func TestSMLDocumentAttemptLockKeyIsStableAndPostgresSafe(t *testing.T) {
+	key := smlDocumentAttemptLockKey(" Insee ", " PO ", "POIN66-5924")
+	if key == "" {
+		t.Fatal("expected advisory lock key")
+	}
+	if strings.ContainsRune(key, '\x00') {
+		t.Fatalf("lock key must not include a PostgreSQL-incompatible NUL byte: %q", key)
+	}
+	if key != smlDocumentAttemptLockKey("insee", "po", "poin66-5924") {
+		t.Fatal("lock key should normalize identity casing and surrounding whitespace")
+	}
+	if key == smlDocumentAttemptLockKey("insee", "po", "poin66-5925") {
+		t.Fatal("different SML document identities must not share an advisory lock key")
+	}
+}
+
 func TestBuildSigningDocumentDuplicateCheckResultBlocksProtectedStatuses(t *testing.T) {
 	for _, status := range []string{"draft", "in_progress", "pending_confirm", "auto_confirming", "completed", "completed_evidence_failed", "completed_image_failed", "completed_lock_failed", "sml_source_changed", "sml_source_missing"} {
 		t.Run(status, func(t *testing.T) {
