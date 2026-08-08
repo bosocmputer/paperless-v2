@@ -120,6 +120,10 @@ function readinessDetail(readiness) {
     if (state === 'unverified') return 'ฐานข้อมูลนี้ยังไม่เคยตรวจ กด “ตรวจสอบฐานข้อมูลทั้งหมด” เพื่อตรวจครั้งเดียว';
     if (state === 'legacy_unknown') return 'พบชื่อฐานข้อมูลแล้ว แต่ยังไม่ได้ตรวจการเชื่อมต่อและ schema';
     if (!readiness) return '';
+    if (readiness.status === 'schema_mismatch') {
+        if (readiness.columnsRepairable) return 'ฐานข้อมูลนี้ขาดคอลัมน์บางส่วนเมื่อเทียบกับมาตรฐาน กด "ปรับปรุงฐานข้อมูล" ด้านล่างเพื่อเพิ่มคอลัมน์ที่ขาดได้ทันที';
+        return 'โครงสร้างฐานข้อมูลนี้แตกต่างจากมาตรฐานมากกว่าที่ระบบจะปรับปรุงให้อัตโนมัติได้ (มีคอลัมน์ที่ไม่ตรงกับมาตรฐาน ไม่ใช่แค่ขาดหาย) กรุณาแจ้งทีม Support SML ให้ตรวจสอบโครงสร้างฐานข้อมูล';
+    }
     if (Array.isArray(readiness.issues) && readiness.issues.length > 0) return `ฐานข้อมูลนี้ยังไม่พร้อมใช้งานใน PaperLess · พบ ${readiness.issues.length} ปัญหา`;
     if (readiness.status === 'image_db_missing') return `ไม่พบฐานข้อมูล ${readiness.imageDatabase || `${readiness.tenant || 'ฐานนี้'}_images`} กรุณาแจ้งผู้ดูแลระบบ SML`;
     if (readiness.status === 'doc_images_table_missing') return `ฐานข้อมูล ${readiness.imageDatabase || 'รูปเอกสาร'} ยังไม่มีตาราง public.sml_doc_images กรุณาแจ้งผู้ดูแลระบบ SML`;
