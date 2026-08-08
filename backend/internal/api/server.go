@@ -58,6 +58,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.HandleFunc("POST /api/auth/sml/verify-database", s.verifySMLTenantReadinessForLogin)
 	mux.HandleFunc("POST /api/auth/sml/provision-image-db", s.provisionSMLTenantImageDatabaseForLogin)
+	mux.HandleFunc("POST /api/auth/sml/repair-schema-columns", s.repairSMLTenantSchemaColumnsForLogin)
 	mux.Handle("GET /api/auth/me", s.requireAuth(http.HandlerFunc(s.me)))
 	mux.Handle("POST /api/auth/logout", s.requireAuth(http.HandlerFunc(s.logout)))
 	mux.Handle("POST /api/admin/sml/tenant-readiness/recheck", s.requireSuperAdmin(http.HandlerFunc(s.recheckCurrentSMLTenantReadiness)))

@@ -1038,6 +1038,14 @@ type LoginRequest struct {
 	AuthSource   string `json:"authSource"`
 }
 
+type SchemaRepairRequest struct {
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	DatabaseName string `json:"databaseName"`
+	AuthSource   string `json:"authSource"`
+	Apply        bool   `json:"apply"`
+}
+
 type LoginResponse struct {
 	Token            string              `json:"token,omitempty"`
 	TokenType        string              `json:"tokenType,omitempty"`
@@ -1116,6 +1124,20 @@ type SMLTenantReadyIssue struct {
 type SMLTenantProvisionResponse struct {
 	Provisioned bool               `json:"provisioned"`
 	Readiness   SMLTenantReadiness `json:"readiness"`
+}
+
+type SMLTenantColumnRepairPlan struct {
+	Database       string   `json:"database"`
+	Template       string   `json:"template"`
+	MissingColumns []string `json:"missingColumns"`
+	Statements     []string `json:"statements"`
+}
+
+type SMLTenantSchemaRepairResponse struct {
+	Repaired  bool                        `json:"repaired"`
+	DryRun    bool                        `json:"dryRun,omitempty"`
+	Plans     []SMLTenantColumnRepairPlan `json:"plans,omitempty"`
+	Readiness SMLTenantReadiness          `json:"readiness"`
 }
 
 type SMLTenantVerifyResponse struct {

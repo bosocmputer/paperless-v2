@@ -241,6 +241,102 @@ func (s *Server) provisionSMLTenantImageDatabaseForLogin(w http.ResponseWriter, 
 	writeJSON(w, http.StatusOK, provision)
 }
 
+// repairSMLTenantSchemaColumnsForLogin lets a user who has already proven
+// their SML credentials/database permission preview (apply=false, the
+// default) or apply (apply=true) an additive schema repair that adds
+// columns missing from public.sml_doc_images, when that is the *only*
+// difference from the trusted template. Any other kind of schema mismatch
+// is rejected and must be fixed by an SML ERP admin.
+func (s *Server) repairSMLTenantSchemaColumnsForLogin(w http.ResponseWriter, r *http.Request) {
+	var req models.SchemaRepairRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	req.DatabaseName = strings.TrimSpace(req.DatabaseName)
+	if req.Username == "" || req.Password == "" || req.DatabaseName == "" {
+		writeError(w, http.StatusBadRequest, "missing_credentials", "Username, password, and database are required.")
+		return
+	}
+
+	smlResult, err := s.verifySMLLogin(r.Context(), req.Username, req.Password, req.DatabaseName)
+	if errors.Is(err, errSMLAuthInvalidCredentials) {
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "Username or password is incorrect.")
+		return
+	}
+	if errors.Is(err, errSMLAuthDatabaseDenied) {
+		writeError(w, http.StatusForbidden, "database_not_allowed", "Database is not allowed for this user.")
+		return
+	}
+	if errors.Is(err, errSMLConfigMissing) {
+		writeError(w, http.StatusServiceUnavailable, "sml_not_configured", "SML PaperLess API is not configured.")
+		return
+	}
+	if err != nil {
+		s.logger.Warn("SML login check before schema repair failed", "error", err, "username", req.Username)
+		writeError(w, http.StatusBadGateway, "sml_login_failed", "Cannot verify SML login right now.")
+		return
+	}
+	if smlResult.SelectedDatabase == nil {
+		writeError(w, http.StatusForbidden, "database_not_allowed", "Database is not allowed for this user.")
+		return
+	}
+
+	tenant := smlResult.SelectedDatabase.Tenant
+	readiness, err := s.fetchSMLTenantReadiness(r.Context(), tenant)
+	if err != nil {
+		s.logger.Warn("SML tenant readiness check before schema repair failed", "error", err, "tenant", tenant)
+		writeError(w, http.StatusBadGateway, "tenant_readiness_failed", "Cannot verify selected database readiness right now.")
+		return
+	}
+	if readiness.OK {
+		writeJSON(w, http.StatusOK, models.SMLTenantSchemaRepairResponse{
+			Repaired:  false,
+			Readiness: readiness,
+		})
+		return
+	}
+	if !tenantReadinessCanRepairSchemaColumns(readiness) {
+		writeError(w, http.StatusFailedDependency, "tenant_not_repairable", tenantReadinessLoginMessage(readiness))
+		return
+	}
+
+	repair, err := s.repairSMLTenantSchemaColumns(r.Context(), tenant, req.Apply)
+	if err != nil {
+		s.logger.Warn("SML tenant schema repair failed", "error", err, "tenant", tenant, "apply", req.Apply)
+		writeError(w, http.StatusBadGateway, "tenant_schema_repair_failed", "Cannot prepare SML schema repair right now.")
+		return
+	}
+	if req.Apply {
+		if !repair.Readiness.OK {
+			if s.cfg.SMLReadinessRegistry && s.readinessStore != nil {
+				_, _ = s.readinessStore.SaveSMLTenantReadiness(r.Context(), smlResult.Provider, smlResult.SelectedDatabase.DataGroup, tenant, repair.Readiness, tenantReadinessVerificationVersion)
+			}
+			writeError(w, http.StatusFailedDependency, "tenant_still_not_ready", tenantReadinessLoginMessage(repair.Readiness))
+			return
+		}
+		if s.cfg.SMLReadinessRegistry && s.readinessStore != nil {
+			if _, saveErr := s.readinessStore.SaveSMLTenantReadiness(r.Context(), smlResult.Provider, smlResult.SelectedDatabase.DataGroup, tenant, repair.Readiness, tenantReadinessVerificationVersion); saveErr != nil {
+				s.logger.Error("save repaired tenant readiness failed", "error", saveErr, "tenant", tenant)
+				writeError(w, http.StatusServiceUnavailable, "tenant_readiness_registry_failed", "Schema was repaired, but PaperLess could not save the readiness result.")
+				return
+			}
+		}
+		s.logger.Info("SML tenant schema columns repaired", "tenant", tenant, "username", req.Username)
+	}
+	writeJSON(w, http.StatusOK, repair)
+}
+
+// tenantReadinessCanRepairSchemaColumns mirrors the same status the
+// sml-api-bybos gate reports: only a plain "schema_mismatch" status (no
+// finer-grained operational failure) is eligible for the self-service
+// column repair, since sml-api-bybos itself further restricts this to the
+// "missing columns only" case and rejects anything else server-side.
+func tenantReadinessCanRepairSchemaColumns(readiness models.SMLTenantReadiness) bool {
+	return readiness.Status == "schema_mismatch" && strings.TrimSpace(readiness.Tenant) != ""
+}
+
 func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, req models.LoginRequest, result smlAuthResult) {
 	if req.DatabaseName == "" {
 		if err := s.mergeSMLDatabaseReadiness(r.Context(), &result); err != nil {
@@ -508,11 +604,11 @@ func (s *Server) handleLocalFallbackLogin(w http.ResponseWriter, r *http.Request
 		s.logger.Warn("write local fallback login audit failed", "error", err, "userID", user.ID)
 	}
 	writeJSON(w, http.StatusOK, models.LoginResponse{
-		Token:      token,
-		TokenType:  "Bearer",
-		ExpiresAt:  &expiresAt,
-		User:       &user,
-		Session:    &session,
+		Token:          token,
+		TokenType:      "Bearer",
+		ExpiresAt:      &expiresAt,
+		User:           &user,
+		Session:        &session,
 		AuthSource:     "local_fallback",
 		Features:       s.clientFeatureFlags(),
 		TrialExpiresAt: s.cfg.TrialExpiresAt,

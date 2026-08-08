@@ -14,6 +14,10 @@ const password = ref('');
 const loading = ref(false);
 const provisioning = ref(false);
 const verifying = ref(false);
+const repairPreviewing = ref(false);
+const repairApplying = ref(false);
+const repairDialogVisible = ref(false);
+const repairPlans = ref([]);
 const error = ref('');
 const step = ref('credentials');
 const databases = ref([]);
@@ -39,6 +43,7 @@ const selectedDatabaseReady = computed(() => authSource.value.startsWith('local'
 const canProvisionSelectedDatabase = computed(
     () => authSource.value !== 'local' && step.value === 'database' && Boolean(selectedDatabase.value) && ['image_db_missing', 'doc_images_table_missing'].includes(selectedReadiness.value?.status)
 );
+const canRepairSelectedDatabase = computed(() => authSource.value !== 'local' && step.value === 'database' && Boolean(selectedDatabase.value) && selectedReadiness.value?.status === 'schema_mismatch');
 const canVerifyDatabases = computed(() => authSource.value !== 'local' && step.value === 'database' && databaseOptions.value.length > 0);
 const verificationProgress = computed(() => {
     if (verificationTotal.value > 0) return Math.round((verificationCompleted.value / verificationTotal.value) * 100);
@@ -330,6 +335,72 @@ async function provisionSelectedDatabase() {
         if (requestSequence === readinessRequestSequence) provisioning.value = false;
     }
 }
+
+function repairColumnLabel(columnName) {
+    const labels = { image_url: 'ที่อยู่รูปภาพ (image_url)' };
+    return labels[columnName] || columnName;
+}
+
+async function previewRepairSelectedDatabase() {
+    error.value = '';
+    if (!canRepairSelectedDatabase.value) return;
+    repairPreviewing.value = true;
+    try {
+        const result = await api.repairSMLTenantSchemaColumns(username.value.trim(), password.value, selectedDatabase.value, authSource.value || 'sml', false);
+        repairPlans.value = result.plans || [];
+        if (repairPlans.value.length === 0) {
+            toast.add({
+                severity: 'info',
+                summary: 'ไม่มีคอลัมน์ที่ต้องเพิ่ม',
+                detail: 'ระบบไม่พบคอลัมน์ที่ขาดหายซึ่งสามารถซ่อมแซมอัตโนมัติได้',
+                life: 4000
+            });
+            return;
+        }
+        repairDialogVisible.value = true;
+    } catch (err) {
+        error.value = err.message;
+        toast.add({
+            severity: 'error',
+            summary: 'ตรวจสอบแผนปรับปรุงฐานข้อมูลไม่สำเร็จ',
+            detail: err.message,
+            life: 4500
+        });
+    } finally {
+        repairPreviewing.value = false;
+    }
+}
+
+async function applyRepairSelectedDatabase() {
+    const databaseName = selectedDatabase.value;
+    const requestSequence = ++readinessRequestSequence;
+    repairApplying.value = true;
+    try {
+        const result = await api.repairSMLTenantSchemaColumns(username.value.trim(), password.value, databaseName, authSource.value || 'sml', true);
+        if (requestSequence !== readinessRequestSequence || databaseName !== selectedDatabase.value) return;
+        if (result.readiness) updateDatabaseReadiness(databaseName, result.readiness);
+        repairDialogVisible.value = false;
+        repairPlans.value = [];
+        toast.add({
+            severity: 'success',
+            summary: 'ปรับปรุงฐานข้อมูลสำเร็จ',
+            detail: 'เพิ่มคอลัมน์ที่ขาดหายเรียบร้อยแล้ว',
+            life: 3500
+        });
+    } catch (err) {
+        if (requestSequence !== readinessRequestSequence || databaseName !== selectedDatabase.value) return;
+        repairDialogVisible.value = false;
+        error.value = err.message;
+        toast.add({
+            severity: 'error',
+            summary: 'ปรับปรุงฐานข้อมูลไม่สำเร็จ',
+            detail: err.message,
+            life: 4500
+        });
+    } finally {
+        if (requestSequence === readinessRequestSequence) repairApplying.value = false;
+    }
+}
 </script>
 
 <template>
@@ -454,6 +525,19 @@ async function provisionSelectedDatabase() {
                                 @click="provisionSelectedDatabase"
                             />
                         </div>
+                        <div v-if="step === 'database' && canRepairSelectedDatabase" class="mb-3">
+                            <Button
+                                type="button"
+                                label="ปรับปรุงฐานข้อมูล"
+                                icon="pi pi-wrench"
+                                severity="warn"
+                                outlined
+                                class="w-full"
+                                :loading="repairPreviewing"
+                                :disabled="loading || verifying"
+                                @click="previewRepairSelectedDatabase"
+                            />
+                        </div>
                         <div class="flex flex-col sm:flex-row gap-3">
                             <Button v-if="step === 'database'" type="button" label="ย้อนกลับ" icon="pi pi-arrow-left" severity="secondary" outlined class="w-full sm:w-auto" :disabled="loading || verifying || provisioning" @click="resetDatabaseStep" />
                             <Button type="submit" :label="step === 'database' ? 'เข้าสู่ PaperLess' : 'ตรวจสอบบัญชี'" :icon="step === 'database' ? 'pi pi-sign-in' : 'pi pi-arrow-right'" class="w-full" :loading="loading" :disabled="!canSubmit" />
@@ -464,6 +548,27 @@ async function provisionSelectedDatabase() {
             </div>
         </div>
     </div>
+
+    <Dialog v-model:visible="repairDialogVisible" modal header="ยืนยันการปรับปรุงฐานข้อมูล" :style="{ width: '32rem' }" :closable="!repairApplying">
+        <div class="flex flex-col gap-4">
+            <p class="m-0">
+                ระบบตรวจพบว่าตาราง <code>sml_doc_images</code> ในฐานข้อมูลที่เลือกขาดคอลัมน์บางส่วนเมื่อเทียบกับมาตรฐาน การกด "ยืนยันปรับปรุง" จะ<strong>เพิ่มคอลัมน์ที่ขาดหายเข้าไปเท่านั้น</strong>
+                (ไม่ลบ ไม่แก้ไข ไม่กระทบข้อมูลเดิมที่มีอยู่)
+            </p>
+            <div v-for="plan in repairPlans" :key="plan.database" class="rounded-md border border-surface-200 dark:border-surface-700 p-3">
+                <div class="font-semibold mb-2">ฐานข้อมูล {{ plan.database }}</div>
+                <div class="text-sm text-muted-color mb-2">จะเพิ่มคอลัมน์:</div>
+                <ul class="m-0 pl-5">
+                    <li v-for="column in plan.missingColumns" :key="column">{{ repairColumnLabel(column) }}</li>
+                </ul>
+            </div>
+            <Message severity="warn" :closable="false">การเปลี่ยนแปลงนี้เกิดขึ้นในฐานข้อมูล SML ERP ของคุณโดยตรง แม้เป็นการเพิ่มคอลัมน์แบบไม่กระทบข้อมูลเดิม แต่ควรยืนยันเฉพาะเมื่อทราบและยอมรับการเปลี่ยนแปลงนี้</Message>
+        </div>
+        <template #footer>
+            <Button label="ยกเลิก" severity="secondary" outlined :disabled="repairApplying" @click="repairDialogVisible = false" />
+            <Button label="ยืนยันปรับปรุง" severity="warn" icon="pi pi-check" :loading="repairApplying" @click="applyRepairSelectedDatabase" />
+        </template>
+    </Dialog>
 </template>
 
 <style scoped>

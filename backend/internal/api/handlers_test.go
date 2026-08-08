@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 )
 
 func TestRejectExpiredTrialAllowsNilExpiry(t *testing.T) {
@@ -34,5 +36,41 @@ func TestRejectExpiredTrialBlocksPastExpiry(t *testing.T) {
 	}
 	if !bytes.Contains(recorder.Body.Bytes(), []byte("trial_expired")) {
 		t.Fatalf("unexpected response: %s", recorder.Body.String())
+	}
+}
+
+func TestTenantReadinessCanRepairSchemaColumns(t *testing.T) {
+	tests := []struct {
+		name      string
+		readiness models.SMLTenantReadiness
+		want      bool
+	}{
+		{
+			name:      "schema mismatch with tenant is repairable",
+			readiness: models.SMLTenantReadiness{Status: "schema_mismatch", Tenant: "dcon"},
+			want:      true,
+		},
+		{
+			name:      "image db missing is not a column repair",
+			readiness: models.SMLTenantReadiness{Status: "image_db_missing", Tenant: "dcon"},
+			want:      false,
+		},
+		{
+			name:      "schema mismatch without tenant is rejected",
+			readiness: models.SMLTenantReadiness{Status: "schema_mismatch", Tenant: ""},
+			want:      false,
+		},
+		{
+			name:      "ready tenant has nothing to repair",
+			readiness: models.SMLTenantReadiness{Status: "ready", Tenant: "dcon", OK: true},
+			want:      false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tenantReadinessCanRepairSchemaColumns(tc.readiness); got != tc.want {
+				t.Fatalf("tenantReadinessCanRepairSchemaColumns = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

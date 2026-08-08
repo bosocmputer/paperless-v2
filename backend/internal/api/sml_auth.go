@@ -64,6 +64,18 @@ type smlTenantProvisionResponse struct {
 	Message string       `json:"message"`
 }
 
+type smlTenantSchemaRepairResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		Repaired  bool                               `json:"repaired"`
+		DryRun    bool                               `json:"dryRun"`
+		Plans     []models.SMLTenantColumnRepairPlan `json:"plans"`
+		Readiness models.SMLTenantReadiness          `json:"readiness"`
+	} `json:"data"`
+	Error   *smlAPIError `json:"error"`
+	Message string       `json:"message"`
+}
+
 type smlAuthResult struct {
 	Provider         string
 	DataGroup        string
@@ -232,6 +244,53 @@ func (s *Server) provisionSMLTenantImageDatabase(ctx context.Context, tenant str
 	return models.SMLTenantProvisionResponse{
 		Provisioned: payload.Data.Provisioned,
 		Readiness:   payload.Data.Readiness,
+	}, nil
+}
+
+func (s *Server) repairSMLTenantSchemaColumns(ctx context.Context, tenant string, apply bool) (models.SMLTenantSchemaRepairResponse, error) {
+	if strings.TrimSpace(s.cfg.SMLPaperlessBaseURL) == "" || strings.TrimSpace(s.cfg.SMLPaperlessAPIKey) == "" {
+		return models.SMLTenantSchemaRepairResponse{}, errSMLConfigMissing
+	}
+	endpoint, err := url.Parse(s.cfg.SMLPaperlessBaseURL + "/api/v1/tenants/schema-columns")
+	if err != nil {
+		return models.SMLTenantSchemaRepairResponse{}, fmt.Errorf("invalid SML base URL")
+	}
+	body, err := json.Marshal(map[string]any{
+		"tenant": store.NormalizeSMLTenant(tenant),
+		"apply":  apply,
+	})
+	if err != nil {
+		return models.SMLTenantSchemaRepairResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return models.SMLTenantSchemaRepairResponse{}, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", s.cfg.SMLPaperlessAPIKey)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return models.SMLTenantSchemaRepairResponse{}, err
+	}
+	defer resp.Body.Close()
+
+	var payload smlTenantSchemaRepairResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&payload); err != nil {
+		return models.SMLTenantSchemaRepairResponse{}, fmt.Errorf("cannot parse SML tenant schema repair response")
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return models.SMLTenantSchemaRepairResponse{}, newSMLRequestError(payload.Error, payload.Message, resp.Status)
+	}
+	if !payload.Success {
+		return models.SMLTenantSchemaRepairResponse{}, newSMLRequestError(payload.Error, payload.Message, "SML tenant schema repair failed")
+	}
+	return models.SMLTenantSchemaRepairResponse{
+		Repaired:  payload.Data.Repaired,
+		DryRun:    payload.Data.DryRun,
+		Plans:     payload.Data.Plans,
+		Readiness: payload.Data.Readiness,
 	}, nil
 }
 

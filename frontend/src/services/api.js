@@ -131,6 +131,12 @@ export const api = {
             body: JSON.stringify({ username, password, databaseName, authSource })
         });
     },
+    repairSMLTenantSchemaColumns(username, password, databaseName = '', authSource = '', apply = false) {
+        return request('/api/auth/sml/repair-schema-columns', {
+            method: 'POST',
+            body: JSON.stringify({ username, password, databaseName, authSource, apply })
+        });
+    },
     me() {
         return request('/api/auth/me');
     },
