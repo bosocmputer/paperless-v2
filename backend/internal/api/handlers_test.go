@@ -46,18 +46,23 @@ func TestTenantReadinessCanRepairSchemaColumns(t *testing.T) {
 		want      bool
 	}{
 		{
-			name:      "schema mismatch with tenant is repairable",
-			readiness: models.SMLTenantReadiness{Status: "schema_mismatch", Tenant: "dcon"},
+			name:      "schema mismatch marked columns-repairable is repairable",
+			readiness: models.SMLTenantReadiness{Status: "schema_mismatch", Tenant: "dcon", ColumnsRepairable: true},
 			want:      true,
 		},
 		{
+			name:      "schema mismatch without the repairable flag is rejected",
+			readiness: models.SMLTenantReadiness{Status: "schema_mismatch", Tenant: "homeplus5", ColumnsRepairable: false},
+			want:      false,
+		},
+		{
 			name:      "image db missing is not a column repair",
-			readiness: models.SMLTenantReadiness{Status: "image_db_missing", Tenant: "dcon"},
+			readiness: models.SMLTenantReadiness{Status: "image_db_missing", Tenant: "dcon", ColumnsRepairable: true},
 			want:      false,
 		},
 		{
 			name:      "schema mismatch without tenant is rejected",
-			readiness: models.SMLTenantReadiness{Status: "schema_mismatch", Tenant: ""},
+			readiness: models.SMLTenantReadiness{Status: "schema_mismatch", Tenant: "", ColumnsRepairable: true},
 			want:      false,
 		},
 		{

@@ -298,14 +298,18 @@ func (s *Server) repairSMLTenantSchemaColumnsForLogin(w http.ResponseWriter, r *
 		return
 	}
 	if !tenantReadinessCanRepairSchemaColumns(readiness) {
-		writeError(w, http.StatusFailedDependency, "tenant_not_repairable", tenantReadinessLoginMessage(readiness))
+		writeTenantReadinessError(w, http.StatusFailedDependency, "tenant_not_repairable", tenantSchemaNotRepairableMessage(readiness), readiness)
 		return
 	}
 
 	repair, err := s.repairSMLTenantSchemaColumns(r.Context(), tenant, req.Apply)
 	if err != nil {
 		s.logger.Warn("SML tenant schema repair failed", "error", err, "tenant", tenant, "apply", req.Apply)
-		writeError(w, http.StatusBadGateway, "tenant_schema_repair_failed", "Cannot prepare SML schema repair right now.")
+		if reqErr, ok := err.(*smlRequestError); ok && reqErr.Code == "tenant_not_repairable" {
+			writeTenantReadinessError(w, http.StatusFailedDependency, "tenant_not_repairable", tenantSchemaNotRepairableMessage(readiness), readiness)
+			return
+		}
+		writeError(w, http.StatusBadGateway, "tenant_schema_repair_failed", "ระบบเชื่อมต่อไปตรวจสอบ/ปรับปรุงฐานข้อมูล SML ไม่สำเร็จในขณะนี้ กรุณาลองใหม่อีกครั้ง")
 		return
 	}
 	if req.Apply {
@@ -334,7 +338,19 @@ func (s *Server) repairSMLTenantSchemaColumnsForLogin(w http.ResponseWriter, r *
 // column repair, since sml-api-bybos itself further restricts this to the
 // "missing columns only" case and rejects anything else server-side.
 func tenantReadinessCanRepairSchemaColumns(readiness models.SMLTenantReadiness) bool {
-	return readiness.Status == "schema_mismatch" && strings.TrimSpace(readiness.Tenant) != ""
+	return readiness.Status == "schema_mismatch" && readiness.ColumnsRepairable && strings.TrimSpace(readiness.Tenant) != ""
+}
+
+// tenantSchemaNotRepairableMessage explains, in Thai, that this schema
+// difference goes beyond what the self-service "missing column" repair can
+// fix, and that the customer should ask their SML ERP admin to check the
+// database structure — instead of leaking a raw technical error.
+func tenantSchemaNotRepairableMessage(readiness models.SMLTenantReadiness) string {
+	database := strings.TrimSpace(readiness.Tenant)
+	if database == "" {
+		database = "ที่เลือก"
+	}
+	return "โครงสร้างฐานข้อมูล " + database + " แตกต่างจากมาตรฐานมากกว่าที่ระบบจะปรับปรุงให้อัตโนมัติได้ กรุณาแจ้งทีม Support SML ให้ตรวจสอบโครงสร้างฐานข้อมูล (public.sml_doc_images) ให้ตรงกับมาตรฐาน แล้วกดตรวจสอบฐานข้อมูลอีกครั้ง"
 }
 
 func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, req models.LoginRequest, result smlAuthResult) {

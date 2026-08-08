@@ -1091,6 +1091,7 @@ type SMLTenantReadiness struct {
 	IsChecking          bool                  `json:"isChecking,omitempty"`
 	Source              string                `json:"source,omitempty"`
 	VerificationVersion int                   `json:"verificationVersion,omitempty"`
+	ColumnsRepairable   bool                  `json:"columnsRepairable,omitempty"`
 }
 
 type SMLTenantReadinessRegistryKey struct {

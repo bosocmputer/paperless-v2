@@ -43,7 +43,9 @@ const selectedDatabaseReady = computed(() => authSource.value.startsWith('local'
 const canProvisionSelectedDatabase = computed(
     () => authSource.value !== 'local' && step.value === 'database' && Boolean(selectedDatabase.value) && ['image_db_missing', 'doc_images_table_missing'].includes(selectedReadiness.value?.status)
 );
-const canRepairSelectedDatabase = computed(() => authSource.value !== 'local' && step.value === 'database' && Boolean(selectedDatabase.value) && selectedReadiness.value?.status === 'schema_mismatch');
+const canRepairSelectedDatabase = computed(
+    () => authSource.value !== 'local' && step.value === 'database' && Boolean(selectedDatabase.value) && selectedReadiness.value?.status === 'schema_mismatch' && selectedReadiness.value?.columnsRepairable === true
+);
 const canVerifyDatabases = computed(() => authSource.value !== 'local' && step.value === 'database' && databaseOptions.value.length > 0);
 const verificationProgress = computed(() => {
     if (verificationTotal.value > 0) return Math.round((verificationCompleted.value / verificationTotal.value) * 100);
@@ -359,6 +361,9 @@ async function previewRepairSelectedDatabase() {
         }
         repairDialogVisible.value = true;
     } catch (err) {
+        if (err.payload?.readiness) {
+            updateDatabaseReadiness(selectedDatabase.value, err.payload.readiness);
+        }
         error.value = err.message;
         toast.add({
             severity: 'error',
@@ -390,6 +395,9 @@ async function applyRepairSelectedDatabase() {
     } catch (err) {
         if (requestSequence !== readinessRequestSequence || databaseName !== selectedDatabase.value) return;
         repairDialogVisible.value = false;
+        if (err.payload?.readiness) {
+            updateDatabaseReadiness(databaseName, err.payload.readiness);
+        }
         error.value = err.message;
         toast.add({
             severity: 'error',
