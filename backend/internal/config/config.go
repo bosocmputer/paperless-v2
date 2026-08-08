@@ -37,6 +37,7 @@ type Config struct {
 	MaxTemplatePages     int
 	PublicBaseURL        string
 	TelegramBotToken     string
+	TrialExpiresAt       *time.Time
 	SeedSuperAdmin       models.SeedUser
 }
 
@@ -104,6 +105,15 @@ func Load() (Config, error) {
 		return Config{}, errors.New("MAX_TEMPLATE_PAGES must be a positive integer")
 	}
 	cfg.MaxTemplatePages = maxTemplatePages
+
+	if raw := getenv("TRIAL_EXPIRES_AT", ""); raw != "" {
+		trialExpiresAt, err := time.Parse("2006-01-02", raw)
+		if err != nil {
+			return Config{}, errors.New("TRIAL_EXPIRES_AT must be a date in YYYY-MM-DD format")
+		}
+		trialExpiresAt = trialExpiresAt.Add(24*time.Hour - time.Nanosecond)
+		cfg.TrialExpiresAt = &trialExpiresAt
+	}
 
 	if strings.TrimSpace(cfg.JWTSecret) == "" {
 		return Config{}, errors.New("JWT_SECRET is required")

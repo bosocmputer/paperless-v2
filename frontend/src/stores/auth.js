@@ -6,6 +6,7 @@ export const authStore = reactive({
     token: localStorage.getItem('paperless_token'),
     session: JSON.parse(localStorage.getItem('paperless_session') || 'null'),
     features: JSON.parse(localStorage.getItem('paperless_features') || '{}'),
+    trialExpiresAt: localStorage.getItem('paperless_trial_expires_at') || null,
     sessionChecked: false,
 
     isAuthenticated() {
@@ -19,11 +20,13 @@ export const authStore = reactive({
         this.user = result.user;
         this.session = result.session || null;
         this.features = result.features || {};
+        this.trialExpiresAt = result.trialExpiresAt || null;
         this.sessionChecked = true;
         localStorage.setItem('paperless_token', result.token);
         localStorage.setItem('paperless_user', JSON.stringify(result.user));
         localStorage.setItem('paperless_session', JSON.stringify(this.session));
         localStorage.setItem('paperless_features', JSON.stringify(this.features));
+        setTrialExpiresAtStorage(this.trialExpiresAt);
         return result;
     },
 
@@ -32,10 +35,12 @@ export const authStore = reactive({
         this.user = result.user;
         this.session = result.session || null;
         this.features = result.features || {};
+        this.trialExpiresAt = result.trialExpiresAt || null;
         this.sessionChecked = true;
         localStorage.setItem('paperless_user', JSON.stringify(result.user));
         localStorage.setItem('paperless_session', JSON.stringify(this.session));
         localStorage.setItem('paperless_features', JSON.stringify(this.features));
+        setTrialExpiresAtStorage(this.trialExpiresAt);
         return result.user;
     },
 
@@ -54,13 +59,23 @@ export const authStore = reactive({
         this.token = null;
         this.session = null;
         this.features = {};
+        this.trialExpiresAt = null;
         this.sessionChecked = false;
         localStorage.removeItem('paperless_token');
         localStorage.removeItem('paperless_user');
         localStorage.removeItem('paperless_session');
         localStorage.removeItem('paperless_features');
+        localStorage.removeItem('paperless_trial_expires_at');
     }
 });
+
+function setTrialExpiresAtStorage(trialExpiresAt) {
+    if (trialExpiresAt) {
+        localStorage.setItem('paperless_trial_expires_at', trialExpiresAt);
+    } else {
+        localStorage.removeItem('paperless_trial_expires_at');
+    }
+}
 
 window.addEventListener('paperless:session-expired', () => {
     authStore.clear();

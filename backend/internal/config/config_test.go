@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadRejectsUnsafeProductionDefaults(t *testing.T) {
@@ -79,5 +80,47 @@ func TestLoadCanDisableSMLTenantReadinessRegistry(t *testing.T) {
 	}
 	if cfg.SMLReadinessRegistry {
 		t.Fatal("SML tenant readiness registry should respect the disabled feature flag")
+	}
+}
+
+func TestLoadTrialExpiresAtUnsetByDefault(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", "postgres://paperless:paperless@localhost:5432/paperless?sslmode=disable")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TrialExpiresAt != nil {
+		t.Fatal("TrialExpiresAt should be nil when TRIAL_EXPIRES_AT is not set")
+	}
+}
+
+func TestLoadTrialExpiresAtParsesDateAtEndOfDay(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", "postgres://paperless:paperless@localhost:5432/paperless?sslmode=disable")
+	t.Setenv("TRIAL_EXPIRES_AT", "2026-10-08")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.TrialExpiresAt == nil {
+		t.Fatal("expected TrialExpiresAt to be set")
+	}
+	want := time.Date(2026, 10, 8, 23, 59, 59, 999999999, time.UTC)
+	if !cfg.TrialExpiresAt.Equal(want) {
+		t.Fatalf("expected TrialExpiresAt %v, got %v", want, *cfg.TrialExpiresAt)
+	}
+}
+
+func TestLoadRejectsInvalidTrialExpiresAt(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", "postgres://paperless:paperless@localhost:5432/paperless?sslmode=disable")
+	t.Setenv("TRIAL_EXPIRES_AT", "not-a-date")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected invalid TRIAL_EXPIRES_AT to fail")
 	}
 }

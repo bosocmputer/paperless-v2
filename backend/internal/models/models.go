@@ -1049,6 +1049,7 @@ type LoginResponse struct {
 	AuthSource       string              `json:"authSource,omitempty"`
 	TenantReadiness  *SMLTenantReadiness `json:"tenantReadiness,omitempty"`
 	Features         map[string]bool     `json:"features,omitempty"`
+	TrialExpiresAt   *time.Time          `json:"trialExpiresAt,omitempty"`
 }
 
 type AuthSession struct {

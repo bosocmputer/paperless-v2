@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/auth"
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
@@ -29,6 +30,10 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if rejectExpiredTrial(w, s.cfg.TrialExpiresAt) {
+		return
+	}
+
 	var req models.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
@@ -319,6 +324,7 @@ func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, r
 		AuthSource:      "sml",
 		TenantReadiness: &readiness,
 		Features:        s.clientFeatureFlags(),
+		TrialExpiresAt:  s.cfg.TrialExpiresAt,
 	})
 }
 
@@ -507,8 +513,9 @@ func (s *Server) handleLocalFallbackLogin(w http.ResponseWriter, r *http.Request
 		ExpiresAt:  &expiresAt,
 		User:       &user,
 		Session:    &session,
-		AuthSource: "local_fallback",
-		Features:   s.clientFeatureFlags(),
+		AuthSource:     "local_fallback",
+		Features:       s.clientFeatureFlags(),
+		TrialExpiresAt: s.cfg.TrialExpiresAt,
 	})
 	return true
 }
@@ -516,11 +523,24 @@ func (s *Server) handleLocalFallbackLogin(w http.ResponseWriter, r *http.Request
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r)
 	session, _ := currentSession(r)
-	writeJSON(w, http.StatusOK, map[string]any{"user": user, "session": session, "features": s.clientFeatureFlags()})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user":           user,
+		"session":        session,
+		"features":       s.clientFeatureFlags(),
+		"trialExpiresAt": s.cfg.TrialExpiresAt,
+	})
 }
 
 func (s *Server) clientFeatureFlags() map[string]bool {
 	return map[string]bool{"internalDocuments": s.cfg.InternalDocuments}
+}
+
+func rejectExpiredTrial(w http.ResponseWriter, trialExpiresAt *time.Time) bool {
+	if trialExpiresAt == nil || !time.Now().After(*trialExpiresAt) {
+		return false
+	}
+	writeError(w, http.StatusForbidden, "trial_expired", "ระยะเวลาทดลองใช้งานสิ้นสุดแล้ว กรุณาติดต่อทีมงานเพื่อต่ออายุการใช้งาน")
+	return true
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {

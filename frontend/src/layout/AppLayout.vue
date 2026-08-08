@@ -3,6 +3,7 @@ import { useLayout } from '@/layout/composables/layout';
 import { computed } from 'vue';
 import AppSidebar from './AppSidebar.vue';
 import AppTopbar from './AppTopbar.vue';
+import AppTrialBanner from './AppTrialBanner.vue';
 
 const { layoutConfig, layoutState, hideMobileMenu } = useLayout();
 
@@ -21,6 +22,7 @@ const containerClass = computed(() => {
     <div class="layout-wrapper" :class="containerClass">
         <AppTopbar />
         <AppSidebar />
+        <AppTrialBanner />
         <div class="layout-main-container">
             <div class="layout-main">
                 <router-view />
