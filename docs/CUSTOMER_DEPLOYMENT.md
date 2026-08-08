@@ -37,7 +37,7 @@ All three re-synced shops (Pui, Wirat, Insee) keep their existing per-shop `.env
 | Shop | `INTERNAL_DOCUMENTS_ENABLED` | `SML_SIGNATURE_SYNC_ENABLED` | `TRIAL_EXPIRES_AT` |
 | --- | --- | --- | --- |
 | Pui | `true` | `true` | not set |
-| Wirat Home Mart | `true` | (not re-verified this session, was `true` per `.env.prod` read earlier) | not set |
+| Wirat Home Mart | `true` | `true` | not set |
 | Insee Construction | `true` | `true` | not set |
 | Damrong Homeplus | `true` | `true` | `2026-10-08` |
 
