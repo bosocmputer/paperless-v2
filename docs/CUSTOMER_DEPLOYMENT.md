@@ -32,6 +32,15 @@ Note when picking tags for a Web-only or API-only frontend/backend commit: GitHu
 
 All three re-synced shops (Pui, Wirat, Insee) keep their existing per-shop `.env.prod` / inline `environment:` config unchanged — this rollout only bumped image tags for `sml-api`, `api`, and `web`; no flags, `ALLOWED_TENANTS`, tenant defaults, or secrets were modified. `db` was never recreated on any shop.
 
+### Feature flag status across all four shops (verified 2026-08-08)
+
+| Shop | `INTERNAL_DOCUMENTS_ENABLED` | `SML_SIGNATURE_SYNC_ENABLED` | `TRIAL_EXPIRES_AT` |
+| --- | --- | --- | --- |
+| Pui | `true` | `true` | not set |
+| Wirat Home Mart | `true` | (not re-verified this session, was `true` per `.env.prod` read earlier) | not set |
+| Insee Construction | `true` | `true` | not set |
+| Damrong Homeplus | `true` | `true` | `2026-10-08` |
+
 ## Trial Expiry Feature
 
 `TRIAL_EXPIRES_AT` (optional, `YYYY-MM-DD`) blocks login after the given date (23:59:59 local) with `403 trial_expired` on both the SML and local-fallback login paths. Unset by default — installations without this var are completely unaffected. The value is echoed back in the login/`/me` response as `trialExpiresAt`; the frontend shows a non-dismissible warning banner (`AppTrialBanner.vue`, mounted in `AppLayout.vue`) once 3 days or fewer remain. Already-issued JWTs (max 12h TTL) keep working past expiry until they naturally expire — this only blocks new logins.
