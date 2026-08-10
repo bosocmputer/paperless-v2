@@ -106,6 +106,19 @@ const stepFormSignerSlotOptions = computed(() => {
 const stepFormVisibleUserKeys = computed(() => USER_FIELD_KEYS.slice(0, stepFormVisibleSlots.value));
 const canAddSignerSlot = computed(() => stepFormVisibleSlots.value < MAX_SIGNERS);
 
+function availableUserOptionsForSlot(userKey) {
+    const currentValue = String(stepForm.value[userKey] || '').trim();
+    const selectedElsewhere = new Set(
+        USER_FIELD_KEYS.filter((key) => key !== userKey)
+            .map((key) => signerUsername(stepForm.value[key]))
+            .filter(Boolean)
+    );
+    return activeUserOptions.value.filter((option) => {
+        if (option.value === currentValue) return true;
+        return !selectedElsewhere.has(signerUsername(option.value));
+    });
+}
+
 function addSignerSlot() {
     if (!canAddSignerSlot.value) return;
     stepFormVisibleSlots.value += 1;
@@ -718,7 +731,7 @@ function normalizeCode(value) {
                             @click="removeSignerSlot(userKey)"
                         />
                     </div>
-                    <Select :id="userKey" v-model="stepForm[userKey]" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(stepForm.conditionType) === 3" />
+                    <Select :id="userKey" v-model="stepForm[userKey]" :options="availableUserOptionsForSlot(userKey)" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(stepForm.conditionType) === 3" />
                 </div>
                 <div v-if="canAddSignerSlot && Number(stepForm.conditionType) !== 3" class="col-span-12 md:col-span-4 flex items-end">
                     <Button label="เพิ่มผู้เซ็น" icon="pi pi-plus" severity="secondary" outlined fluid @click="addSignerSlot" />
