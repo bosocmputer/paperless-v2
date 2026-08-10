@@ -1130,6 +1130,8 @@ func documentConfigsFromSteps(steps []models.SigningDocumentStep) []models.Docum
 			ID: step.ID, PositionCode: step.PositionCode, PositionName: step.PositionName,
 			SequenceNo: step.SequenceNo, ConditionType: step.ConditionType,
 			User01: step.User01, User02: step.User02, User03: step.User03,
+			User04: step.User04, User05: step.User05, User06: step.User06,
+			User07: step.User07, User08: step.User08, User09: step.User09, User10: step.User10,
 		})
 	}
 	return configs

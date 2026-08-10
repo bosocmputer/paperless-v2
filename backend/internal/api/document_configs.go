@@ -520,7 +520,7 @@ func documentConfigWorkflowSummary(format models.SMLDocFormat, steps []models.Do
 			updatedAt = &value
 		}
 		conditionCounts[fmt.Sprintf("%d", step.ConditionType)]++
-		for _, user := range documentConfigStepUsers(step.User01, step.User02, step.User03) {
+		for _, user := range documentConfigStepUsers(step.User01, step.User02, step.User03, step.User04, step.User05, step.User06, step.User07, step.User08, step.User09, step.User10) {
 			users[strings.ToLower(user)] = true
 		}
 	}
@@ -574,14 +574,44 @@ func (s *Server) documentConfigPresetWarnings(ctx context.Context, screenCode, d
 	return warnings, nil
 }
 
+// duplicateSignerUsername reports whether the same user (compared by
+// username, case-insensitive) appears more than once in a signer list.
+func duplicateSignerUsername(users []string) bool {
+	seen := make(map[string]bool, len(users))
+	for _, user := range users {
+		username, _ := splitSignerUser(user)
+		username = strings.ToLower(strings.TrimSpace(username))
+		if username == "" {
+			continue
+		}
+		if seen[username] {
+			return true
+		}
+		seen[username] = true
+	}
+	return false
+}
+
 func normalizeDocumentConfigStep(req models.DocumentConfigStepRequest) models.DocumentConfigStepRequest {
 	req.ScreenCode = normalizeScreenCode(req.ScreenCode)
 	req.DocFormatCode = strings.TrimSpace(req.DocFormatCode)
 	req.PositionCode = strings.TrimSpace(req.PositionCode)
 	req.PositionName = strings.TrimSpace(req.PositionName)
-	req.User01 = strings.TrimSpace(req.User01)
-	req.User02 = strings.TrimSpace(req.User02)
-	req.User03 = strings.TrimSpace(req.User03)
+
+	// Compact the signer list so it never has a gap in the middle (e.g. a
+	// blank User02 with a non-blank User03) — always the case after a
+	// signer-slot deletion in the UI, and defensively re-applied here even
+	// though the frontend already compacts on its own.
+	users := documentConfigStepUsers(req.User01, req.User02, req.User03, req.User04, req.User05, req.User06, req.User07, req.User08, req.User09, req.User10)
+	slots := [10]*string{&req.User01, &req.User02, &req.User03, &req.User04, &req.User05, &req.User06, &req.User07, &req.User08, &req.User09, &req.User10}
+	for i, slot := range slots {
+		if i < len(users) {
+			*slot = users[i]
+		} else {
+			*slot = ""
+		}
+	}
+
 	req.AttachmentRequirements, _ = normalizeAttachmentRequirementsForStep(req)
 	return req
 }
@@ -602,8 +632,12 @@ func validateDocumentConfigStep(req models.DocumentConfigStepRequest) string {
 	if req.ConditionType != 1 && req.ConditionType != 2 && req.ConditionType != 3 {
 		return "Condition must be 1, 2, or 3."
 	}
-	if (req.ConditionType == 1 || req.ConditionType == 2) && len(documentConfigStepUsers(req.User01, req.User02, req.User03)) == 0 {
+	users := documentConfigStepUsers(req.User01, req.User02, req.User03, req.User04, req.User05, req.User06, req.User07, req.User08, req.User09, req.User10)
+	if (req.ConditionType == 1 || req.ConditionType == 2) && len(users) == 0 {
 		return "Condition 1 or 2 requires at least one user."
+	}
+	if duplicateSignerUsername(users) {
+		return "ไม่สามารถเลือกผู้เซ็นคนเดียวกันซ้ำในขั้นตอนเดียวกันได้"
 	}
 	if _, messages := normalizeAttachmentRequirementsForStep(req); len(messages) > 0 {
 		return strings.Join(messages, " ")
@@ -645,7 +679,7 @@ func normalizeDocumentConfigWorkflowSteps(format models.SMLDocFormat, rawSteps [
 		if step.ConditionType != 1 && step.ConditionType != 2 && step.ConditionType != 3 {
 			messages = append(messages, fmt.Sprintf("%s: Condition must be 1, 2, or 3.", label))
 		}
-		if (step.ConditionType == 1 || step.ConditionType == 2) && len(documentConfigStepUsers(step.User01, step.User02, step.User03)) == 0 {
+		if (step.ConditionType == 1 || step.ConditionType == 2) && len(documentConfigStepUsers(step.User01, step.User02, step.User03, step.User04, step.User05, step.User06, step.User07, step.User08, step.User09, step.User10)) == 0 {
 			messages = append(messages, fmt.Sprintf("%s: Condition 1 or 2 requires at least one active user slot.", label))
 		}
 		normalizedRequirements, requirementMessages := normalizeAttachmentRequirementsForStep(step)
@@ -675,7 +709,7 @@ func normalizeAttachmentRequirementsForStep(step models.DocumentConfigStepReques
 		messages = append(messages, fmt.Sprintf("Required attachments support at most %d items per step.", maxRequirementsPerStep))
 		raw = raw[:maxRequirementsPerStep]
 	}
-	userSlotCount := len(documentConfigStepUsers(step.User01, step.User02, step.User03))
+	userSlotCount := len(documentConfigStepUsers(step.User01, step.User02, step.User03, step.User04, step.User05, step.User06, step.User07, step.User08, step.User09, step.User10))
 	if step.ConditionType == 3 {
 		userSlotCount = 1
 	}
@@ -789,7 +823,7 @@ func (s *Server) validateDocumentConfigWorkflowUsers(ctx context.Context, steps 
 		if step.ConditionType != 1 && step.ConditionType != 2 {
 			continue
 		}
-		for _, value := range documentConfigStepUsers(step.User01, step.User02, step.User03) {
+		for _, value := range documentConfigStepUsers(step.User01, step.User02, step.User03, step.User04, step.User05, step.User06, step.User07, step.User08, step.User09, step.User10) {
 			username := strings.ToLower(strings.TrimSpace(strings.Split(value, ":")[0]))
 			if username == "" {
 				continue
@@ -832,7 +866,14 @@ func documentConfigTemplateBreakingChange(current models.DocumentConfigStep, nex
 	}
 	return strings.TrimSpace(current.User01) != strings.TrimSpace(next.User01) ||
 		strings.TrimSpace(current.User02) != strings.TrimSpace(next.User02) ||
-		strings.TrimSpace(current.User03) != strings.TrimSpace(next.User03)
+		strings.TrimSpace(current.User03) != strings.TrimSpace(next.User03) ||
+		strings.TrimSpace(current.User04) != strings.TrimSpace(next.User04) ||
+		strings.TrimSpace(current.User05) != strings.TrimSpace(next.User05) ||
+		strings.TrimSpace(current.User06) != strings.TrimSpace(next.User06) ||
+		strings.TrimSpace(current.User07) != strings.TrimSpace(next.User07) ||
+		strings.TrimSpace(current.User08) != strings.TrimSpace(next.User08) ||
+		strings.TrimSpace(current.User09) != strings.TrimSpace(next.User09) ||
+		strings.TrimSpace(current.User10) != strings.TrimSpace(next.User10)
 }
 
 func (s *Server) ensureDocumentConfigStepHasNoTemplateBoxes(w http.ResponseWriter, r *http.Request, step models.DocumentConfigStep, action string) bool {

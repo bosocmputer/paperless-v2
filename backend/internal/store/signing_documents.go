@@ -262,11 +262,12 @@ VALUES ($1, 1, $2, 'original', NULLIF($4,'')::uuid),
 		var stepID string
 		if err := tx.QueryRow(ctx, `
 INSERT INTO signing_document_steps (
-    document_id, position_code, position_name, sequence_no, condition_type, user01, user02, user03, status
+    document_id, position_code, position_name, sequence_no, condition_type,
+    user01, user02, user03, user04, user05, user06, user07, user08, user09, user10, status
 )
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 RETURNING id::text
-`, documentID, step.PositionCode, step.PositionName, step.SequenceNo, step.ConditionType, step.User01, step.User02, step.User03, stepStatus).Scan(&stepID); err != nil {
+`, documentID, step.PositionCode, step.PositionName, step.SequenceNo, step.ConditionType, step.User01, step.User02, step.User03, step.User04, step.User05, step.User06, step.User07, step.User08, step.User09, step.User10, stepStatus).Scan(&stepID); err != nil {
 			return models.SigningDocument{}, err
 		}
 
@@ -2121,7 +2122,8 @@ WHERE et.token_hash = $1
 
 func (s *Store) ListSigningDocumentSteps(ctx context.Context, documentID string) ([]models.SigningDocumentStep, error) {
 	rows, err := s.pool.Query(ctx, `
-SELECT id::text, document_id::text, position_code, position_name, sequence_no, condition_type, user01, user02, user03, status, completed_at
+SELECT id::text, document_id::text, position_code, position_name, sequence_no, condition_type,
+       user01, user02, user03, user04, user05, user06, user07, user08, user09, user10, status, completed_at
 FROM signing_document_steps
 WHERE document_id = $1
 ORDER BY sequence_no, position_code
@@ -2764,7 +2766,7 @@ func findBoxForUser(boxes []models.SignatureTemplateBoxRequest, user string) mod
 
 func configStepUsers(step models.DocumentConfigStep) []string {
 	values := []string{}
-	for _, value := range []string{step.User01, step.User02, step.User03} {
+	for _, value := range []string{step.User01, step.User02, step.User03, step.User04, step.User05, step.User06, step.User07, step.User08, step.User09, step.User10} {
 		value = strings.TrimSpace(value)
 		if value != "" {
 			values = append(values, value)
@@ -2905,7 +2907,8 @@ func scanSigningDocumentStep(row rowScanner) (models.SigningDocumentStep, error)
 	var step models.SigningDocumentStep
 	var completedAt sql.NullTime
 	err := row.Scan(&step.ID, &step.DocumentID, &step.PositionCode, &step.PositionName, &step.SequenceNo, &step.ConditionType,
-		&step.User01, &step.User02, &step.User03, &step.Status, &completedAt)
+		&step.User01, &step.User02, &step.User03, &step.User04, &step.User05, &step.User06, &step.User07, &step.User08, &step.User09, &step.User10,
+		&step.Status, &completedAt)
 	if completedAt.Valid {
 		step.CompletedAt = &completedAt.Time
 	}

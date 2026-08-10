@@ -283,6 +283,13 @@ type DocumentConfigStep struct {
 	User01                 string                  `json:"user01"`
 	User02                 string                  `json:"user02"`
 	User03                 string                  `json:"user03"`
+	User04                 string                  `json:"user04"`
+	User05                 string                  `json:"user05"`
+	User06                 string                  `json:"user06"`
+	User07                 string                  `json:"user07"`
+	User08                 string                  `json:"user08"`
+	User09                 string                  `json:"user09"`
+	User10                 string                  `json:"user10"`
 	SequenceNo             float64                 `json:"sequenceNo"`
 	ConditionType          int                     `json:"conditionType"`
 	AttachmentRequirements []AttachmentRequirement `json:"attachmentRequirements,omitempty"`
@@ -298,6 +305,13 @@ type DocumentConfigStepRequest struct {
 	User01                 string                  `json:"user01"`
 	User02                 string                  `json:"user02"`
 	User03                 string                  `json:"user03"`
+	User04                 string                  `json:"user04"`
+	User05                 string                  `json:"user05"`
+	User06                 string                  `json:"user06"`
+	User07                 string                  `json:"user07"`
+	User08                 string                  `json:"user08"`
+	User09                 string                  `json:"user09"`
+	User10                 string                  `json:"user10"`
 	SequenceNo             float64                 `json:"sequenceNo"`
 	ConditionType          int                     `json:"conditionType"`
 	AttachmentRequirements []AttachmentRequirement `json:"attachmentRequirements,omitempty"`
@@ -783,6 +797,13 @@ type SigningDocumentStep struct {
 	User01        string     `json:"user01"`
 	User02        string     `json:"user02"`
 	User03        string     `json:"user03"`
+	User04        string     `json:"user04"`
+	User05        string     `json:"user05"`
+	User06        string     `json:"user06"`
+	User07        string     `json:"user07"`
+	User08        string     `json:"user08"`
+	User09        string     `json:"user09"`
+	User10        string     `json:"user10"`
 	Status        string     `json:"status"`
 	CompletedAt   *time.Time `json:"completedAt,omitempty"`
 }

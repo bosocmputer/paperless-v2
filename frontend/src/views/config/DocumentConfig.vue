@@ -332,7 +332,7 @@ function sameCode(left, right) {
                     </template>
                 </Column>
                 <Column header="ผู้เซ็น">
-                    <template #body="{ data }">{{ [data.user01, data.user02, data.user03].filter(Boolean).join(', ') || '-' }}</template>
+                    <template #body="{ data }">{{ [data.user01, data.user02, data.user03, data.user04, data.user05, data.user06, data.user07, data.user08, data.user09, data.user10].filter(Boolean).join(', ') || '-' }}</template>
                 </Column>
             </DataTable>
         </div>

@@ -205,7 +205,10 @@ function requiredBoxesForStep(step) {
 }
 
 function stepUsers(step) {
-    return [step.user01, step.user02, step.user03].map((item) => String(item || '').trim()).filter(Boolean);
+    return ['user01', 'user02', 'user03', 'user04', 'user05', 'user06', 'user07', 'user08', 'user09', 'user10']
+        .map((key) => step[key])
+        .map((item) => String(item || '').trim())
+        .filter(Boolean);
 }
 
 function positionPreview(row) {

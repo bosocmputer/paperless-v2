@@ -16,6 +16,18 @@ const conditionOptions = [
     { label: '3 - บุคคลภายนอก', value: 3, short: 'บุคคลภายนอก', severity: 'secondary' }
 ];
 
+const MAX_SIGNERS = 10;
+const MIN_VISIBLE_SIGNER_SLOTS = 3;
+const USER_FIELD_KEYS = Array.from({ length: MAX_SIGNERS }, (_, index) => `user${String(index + 1).padStart(2, '0')}`);
+
+function emptyUserFields() {
+    return USER_FIELD_KEYS.reduce((acc, key) => ({ ...acc, [key]: '' }), {});
+}
+
+function userFieldsFrom(source = {}) {
+    return USER_FIELD_KEYS.reduce((acc, key) => ({ ...acc, [key]: source[key] || '' }), {});
+}
+
 const workflow = ref(null);
 const steps = ref([]);
 const users = ref([]);
@@ -29,6 +41,7 @@ const stepDialogVisible = ref(false);
 const editingStepKey = ref('');
 const submitted = ref(false);
 const stepForm = ref(emptyStepForm());
+const stepFormVisibleSlots = ref(MIN_VISIBLE_SIGNER_SLOTS);
 const sessionId = `workflow-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const openedAt = Date.now();
 
@@ -90,6 +103,27 @@ const stepFormSignerSlotOptions = computed(() => {
     if (values.length === 0) return [{ label: 'ผู้เซ็น 1', value: 1 }];
     return values.map((value, index) => ({ label: `ผู้เซ็น ${index + 1} · ${value}`, value: index + 1 }));
 });
+const stepFormVisibleUserKeys = computed(() => USER_FIELD_KEYS.slice(0, stepFormVisibleSlots.value));
+const canAddSignerSlot = computed(() => stepFormVisibleSlots.value < MAX_SIGNERS);
+
+function addSignerSlot() {
+    if (!canAddSignerSlot.value) return;
+    stepFormVisibleSlots.value += 1;
+}
+
+function removeSignerSlot(key) {
+    if (stepFormVisibleSlots.value <= MIN_VISIBLE_SIGNER_SLOTS) return;
+    // Shift every field after the removed slot up by one, keeping the list
+    // compact so there is never a blank gap in the middle, then clear the
+    // now-unused trailing slot and shrink the visible-slot count.
+    const removedIndex = USER_FIELD_KEYS.indexOf(key);
+    if (removedIndex < 0) return;
+    for (let i = removedIndex; i < USER_FIELD_KEYS.length - 1; i++) {
+        stepForm.value[USER_FIELD_KEYS[i]] = stepForm.value[USER_FIELD_KEYS[i + 1]];
+    }
+    stepForm.value[USER_FIELD_KEYS[USER_FIELD_KEYS.length - 1]] = '';
+    stepFormVisibleSlots.value -= 1;
+}
 
 onMounted(async () => {
     window.addEventListener('beforeunload', beforeUnload);
@@ -151,6 +185,7 @@ function openCreateStep() {
         positionCode: nextPositionCode(),
         conditionType: 1
     };
+    stepFormVisibleSlots.value = MIN_VISIBLE_SIGNER_SLOTS;
     stepDialogVisible.value = true;
 }
 
@@ -160,13 +195,19 @@ function openEditStep(step) {
     stepForm.value = {
         positionCode: step.positionCode || '',
         positionName: step.positionName || '',
-        user01: step.user01 || '',
-        user02: step.user02 || '',
-        user03: step.user03 || '',
+        ...userFieldsFrom(step),
         conditionType: Number(step.conditionType || 1),
         attachmentRequirements: cloneAttachmentRequirements(step.attachmentRequirements)
     };
+    // Show at least the filled-in slots (so a step with 10 signers opens showing all 10), never fewer than the default minimum.
+    stepFormVisibleSlots.value = Math.max(MIN_VISIBLE_SIGNER_SLOTS, signerValues(stepForm.value).length);
     stepDialogVisible.value = true;
+}
+
+function compactUserFields(form) {
+    if (Number(form.conditionType) === 3) return emptyUserFields();
+    const compacted = signerValues(form);
+    return USER_FIELD_KEYS.reduce((acc, key, index) => ({ ...acc, [key]: compacted[index] || '' }), {});
 }
 
 function saveStepDialog() {
@@ -176,9 +217,7 @@ function saveStepDialog() {
     const payload = {
         positionCode: String(stepForm.value.positionCode || '').trim(),
         positionName: String(stepForm.value.positionName || '').trim(),
-        user01: Number(stepForm.value.conditionType) === 3 ? '' : String(stepForm.value.user01 || '').trim(),
-        user02: Number(stepForm.value.conditionType) === 3 ? '' : String(stepForm.value.user02 || '').trim(),
-        user03: Number(stepForm.value.conditionType) === 3 ? '' : String(stepForm.value.user03 || '').trim(),
+        ...compactUserFields(stepForm.value),
         conditionType: Number(stepForm.value.conditionType || 1),
         attachmentRequirements: normalizeAttachmentRequirements(stepForm.value)
     };
@@ -278,9 +317,7 @@ async function saveWorkflow() {
             steps: steps.value.map((step, index) => ({
                 positionCode: String(step.positionCode || '').trim(),
                 positionName: String(step.positionName || '').trim(),
-                user01: String(step.user01 || '').trim(),
-                user02: String(step.user02 || '').trim(),
-                user03: String(step.user03 || '').trim(),
+                ...compactUserFields(step),
                 sequenceNo: index + 1,
                 conditionType: Number(step.conditionType || 0),
                 attachmentRequirements: normalizeAttachmentRequirements(step)
@@ -312,9 +349,7 @@ function toEditorStep(step) {
         id: step.id || '',
         positionCode: step.positionCode || '',
         positionName: step.positionName || '',
-        user01: step.user01 || '',
-        user02: step.user02 || '',
-        user03: step.user03 || '',
+        ...userFieldsFrom(step),
         sequenceNo: Number(step.sequenceNo || 0),
         conditionType: Number(step.conditionType || 1),
         attachmentRequirements: cloneAttachmentRequirements(step.attachmentRequirements)
@@ -325,9 +360,7 @@ function emptyStepForm() {
     return {
         positionCode: '',
         positionName: '',
-        user01: '',
-        user02: '',
-        user03: '',
+        ...emptyUserFields(),
         conditionType: 1,
         attachmentRequirements: []
     };
@@ -414,7 +447,7 @@ function rowStatus(step) {
 }
 
 function signerValues(step) {
-    return [step.user01, step.user02, step.user03].map((value) => String(value || '').trim()).filter(Boolean);
+    return USER_FIELD_KEYS.map((key) => step[key]).map((value) => String(value || '').trim()).filter(Boolean);
 }
 
 function signerUsername(value) {
@@ -671,17 +704,24 @@ function normalizeCode(value) {
             </div>
 
             <div class="grid grid-cols-12 gap-4">
-                <div class="col-span-12 md:col-span-4">
-                    <label for="user01" class="block font-bold mb-3">ผู้เซ็น 1</label>
-                    <Select id="user01" v-model="stepForm.user01" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(stepForm.conditionType) === 3" />
+                <div v-for="(userKey, index) in stepFormVisibleUserKeys" :key="userKey" class="col-span-12 md:col-span-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <label :for="userKey" class="font-bold">ผู้เซ็น {{ index + 1 }}</label>
+                        <Button
+                            v-if="stepFormVisibleSlots > MIN_VISIBLE_SIGNER_SLOTS && Number(stepForm.conditionType) !== 3"
+                            icon="pi pi-times"
+                            text
+                            rounded
+                            size="small"
+                            severity="secondary"
+                            :aria-label="`ลบผู้เซ็น ${index + 1}`"
+                            @click="removeSignerSlot(userKey)"
+                        />
+                    </div>
+                    <Select :id="userKey" v-model="stepForm[userKey]" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(stepForm.conditionType) === 3" />
                 </div>
-                <div class="col-span-12 md:col-span-4">
-                    <label for="user02" class="block font-bold mb-3">ผู้เซ็น 2</label>
-                    <Select id="user02" v-model="stepForm.user02" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(stepForm.conditionType) === 3" />
-                </div>
-                <div class="col-span-12 md:col-span-4">
-                    <label for="user03" class="block font-bold mb-3">ผู้เซ็น 3</label>
-                    <Select id="user03" v-model="stepForm.user03" :options="activeUserOptions" optionLabel="label" optionValue="value" showClear filter fluid :disabled="Number(stepForm.conditionType) === 3" />
+                <div v-if="canAddSignerSlot && Number(stepForm.conditionType) !== 3" class="col-span-12 md:col-span-4 flex items-end">
+                    <Button label="เพิ่มผู้เซ็น" icon="pi pi-plus" severity="secondary" outlined fluid @click="addSignerSlot" />
                 </div>
             </div>
 

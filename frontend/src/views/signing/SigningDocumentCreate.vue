@@ -643,7 +643,12 @@ function validateLayout() {
         if (step.conditionType === 1 && stepBoxes.length < 1) issues.push(`${step.positionName} ต้องมีอย่างน้อย 1 กรอบ`);
         if (step.conditionType === 3 && stepBoxes.length < 1) issues.push(`${step.positionName} ต้องมีอย่างน้อย 1 กรอบบุคคลภายนอก`);
         if (step.conditionType === 2) {
-            const required = new Set([step.user01, step.user02, step.user03].map((user) => signerUsername(user)).filter(Boolean));
+            const required = new Set(
+                ['user01', 'user02', 'user03', 'user04', 'user05', 'user06', 'user07', 'user08', 'user09', 'user10']
+                    .map((key) => step[key])
+                    .map((user) => signerUsername(user))
+                    .filter(Boolean)
+            );
             const seen = new Set();
             stepBoxes.forEach((box) => {
                 const user = signerUsername(box.signerUser);

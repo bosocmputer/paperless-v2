@@ -905,7 +905,7 @@ func legalNoticeBoxRequestFromTemplate(box *models.LegalNoticeBox) *models.Legal
 
 func stepUsers(step models.DocumentConfigStep) []string {
 	users := []string{}
-	for _, user := range []string{step.User01, step.User02, step.User03} {
+	for _, user := range []string{step.User01, step.User02, step.User03, step.User04, step.User05, step.User06, step.User07, step.User08, step.User09, step.User10} {
 		user = strings.TrimSpace(user)
 		if user != "" {
 			users = append(users, user)
