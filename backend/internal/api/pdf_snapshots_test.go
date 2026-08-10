@@ -1,39 +1,20 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
 
-func TestSMLSnapshotPageCountCapsAtEight(t *testing.T) {
-	count, truncated, err := smlSnapshotPageCount(12)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if count != 8 {
-		t.Fatalf("count = %d, want 8", count)
-	}
-	if !truncated {
-		t.Fatal("expected truncated=true")
-	}
-}
-
-func TestSMLSnapshotPageCountUsesOriginalPagesOnly(t *testing.T) {
-	count, truncated, err := smlSnapshotPageCount(3)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if count != 3 {
-		t.Fatalf("count = %d, want original page count 3", count)
-	}
-	if truncated {
-		t.Fatal("did not expect truncation")
-	}
-}
-
-func TestSMLSnapshotPageCountRequiresPageCount(t *testing.T) {
-	if _, _, err := smlSnapshotPageCount(0); err == nil {
+func TestRenderSMLDocumentSnapshotsRequiresPageCount(t *testing.T) {
+	if _, err := renderSMLDocumentSnapshots(context.Background(), "/tmp/does-not-matter.pdf", 0); err == nil {
 		t.Fatal("expected missing page count error")
+	}
+}
+
+func TestRenderSMLDocumentSnapshotsRequiresPath(t *testing.T) {
+	if _, err := renderSMLDocumentSnapshots(context.Background(), "", 3); err == nil {
+		t.Fatal("expected missing pdf path error")
 	}
 }
 

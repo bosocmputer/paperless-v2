@@ -3745,8 +3745,8 @@ func (s *Server) uploadCompletedDocumentImages(ctx context.Context, documentID s
 		renderTimeout = 30 * time.Second
 	}
 	renderCtx, cancel := context.WithTimeout(context.Background(), renderTimeout)
+	defer cancel()
 	render, err := renderSMLDocumentSnapshots(renderCtx, document.FinalFile.StoragePath, document.OriginalFile.PageCount)
-	cancel()
 	metadata := map[string]any{
 		"docNo":      document.DocNo,
 		"totalPages": document.OriginalFile.PageCount,
@@ -3763,6 +3763,27 @@ func (s *Server) uploadCompletedDocumentImages(ctx context.Context, documentID s
 	metadata["dpi"] = render.Profile.DPI
 	metadata["quality"] = render.Profile.Quality
 	metadata["renderElapsedMs"] = render.Elapsed.Milliseconds()
+
+	attachments := append([]models.SigningDocumentAttachment(nil), document.Attachments...)
+	sort.Slice(attachments, func(i, j int) bool {
+		return attachments[i].CreatedAt.Before(attachments[j].CreatedAt)
+	})
+	attachmentResult := renderSMLAttachmentSnapshots(renderCtx, documentID, attachments, render.PageCount+1)
+	render.Images = append(render.Images, attachmentResult.Images...)
+	metadata["attachmentCount"] = len(attachments)
+	metadata["attachmentPagesIncluded"] = attachmentResult.PagesIncluded
+	metadata["attachmentRenderElapsedMs"] = attachmentResult.Elapsed.Milliseconds()
+	if len(attachmentResult.Skipped) > 0 {
+		skipped := make([]map[string]any, 0, len(attachmentResult.Skipped))
+		for _, sk := range attachmentResult.Skipped {
+			skipped = append(skipped, map[string]any{
+				"attachmentId": sk.AttachmentID,
+				"filename":     sk.Filename,
+				"reason":       sk.Reason,
+			})
+		}
+		metadata["attachmentsSkipped"] = skipped
+	}
 
 	uploadTimeout := s.cfg.SMLPaperlessTimeout
 	if uploadTimeout < 30*time.Second {
