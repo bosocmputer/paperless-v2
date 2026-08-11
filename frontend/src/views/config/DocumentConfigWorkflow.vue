@@ -402,9 +402,7 @@ function validateStepForm(form, editingKey) {
         key: editingKey || 'draft',
         positionCode: form.positionCode,
         positionName: form.positionName,
-        user01: form.user01,
-        user02: form.user02,
-        user03: form.user03,
+        ...userFieldsFrom(form),
         conditionType: form.conditionType,
         attachmentRequirements: form.attachmentRequirements
     };
