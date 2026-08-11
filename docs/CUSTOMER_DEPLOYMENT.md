@@ -18,6 +18,20 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-11 (all four shops, web-only): stay-stuck-on-page UX fix after sml_source_changed sign attempt
+
+Follow-up from the `guid_code` fix confirmation: customer tested a different in-flight document (`/admin/signing/tasks/27fd4b01-b7f8-4ec0-97e3-0423983eb19c`) that hit a genuine `sml_source_changed` block on confirm-sign. The API correctly rejected it, but the signer was left stuck on the signing page after the error toast with no way forward — the whole document is blocked at that point (see `blockSigningOnSMLSourceDrift`), so staying on the page serves no purpose.
+
+Fixed in `paperless-web:f42ca71` (was `31fd483`):
+- `SigningTask.vue` (internal/admin signing, `/admin/signing/tasks/:taskId`): on `sml_source_changed`/`sml_source_missing`, navigate back to the task list automatically (same `goBackToTasks()` already used on successful sign/reject), instead of leaving the signer stranded on a task that can't become signable again without an admin cancelling/re-importing it. The error toast still shows first.
+- `PublicSigning.vue` (external/token-based signing, no task list to return to): added `sml_source_changed`/`sml_source_missing` to the existing terminal-state handler (`handlePublicSigningError`) already used for other "this link can no longer be used" cases (`already_rejected`, session expiry, etc.) — shows the same in-place terminal screen instead of leaving the form active.
+
+- Deployed to **all four shops** (web-only, `--no-deps web`, `api`/`db`/`sml-api` untouched everywhere), HTTP 200 confirmed on each:
+  - Pui: `/data/paperless/releases/20260811143439-navigate-away-source-changed-f42ca71/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260811143518-navigate-away-source-changed-f42ca71/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260811143601-navigate-away-source-changed-f42ca71/postdeploy-checks.txt`
+  - Damrong Homeplus: `/data/paperless/releases/20260811143628-navigate-away-source-changed-f42ca71/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-11 (all four shops, sml-api-bybos only): second SML source-hash false-positive fixed — `guid_code` transient edit marker
 
 Customer testing on Pui uncovered a second, independent false-positive source in the SML source-revision hash (the first was numeric trailing-zero drift, fixed in `sml-api-bybos:9875c51`, 2026-08-11 earlier). Document `PU-01-2608001` was blocked in `sml_source_changed` while the customer had it open for editing in the SML ERP UI but had **not yet clicked Save or Cancel**.
