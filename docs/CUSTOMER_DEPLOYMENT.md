@@ -26,8 +26,11 @@ Fixed in `paperless-web:6ac9502` (was `762a4b4`):
 - Removed the custom `#header` slot and matching `:global()` CSS from both dialogs. The Reference Check dialog is rendered from two places (`SigningWorkspace.vue` and `SigningDocuments.vue`) but was styled from a third file (`DocumentReferenceCheck.vue`, via global selectors targeting DOM it doesn't render) — confirmed via pre-flight grep that these were the only two consumers, then updated all three files together in one commit to avoid leaving either consumer with broken unstyled header markup.
 - Reordered the sign-task panel: signature → legal-text checkbox → confirm/reject buttons now form one visually grouped "required path" at the top, framed with the same primary-color-tinted border/background already used elsewhere in the app (`.position-summary`'s color-mix formula, not a new style). Optional tools (related-document lookup, attachments, PDF annotation notes) moved below with lighter visual weight. Pure DOM reorder + CSS — no `v-if`/logic/event-handler changes.
 
-- Deployed to **Pui only** (web-only, `--no-deps web`, `api`/`db`/`sml-api` untouched). Release evidence `/data/paperless/releases/20260811122602-dialog-panel-cleanup-6ac9502/postdeploy-checks.txt`. HTTP 200 confirmed post-deploy.
-- Not yet rolled out to Wirat, Insee, Damrong — pending customer confirmation on Pui.
+- Deployed to all four shops after customer confirmation on Pui: `paperless-web:6ac9502`, web-only (`--no-deps web`, `api`/`db`/`sml-api` untouched everywhere), HTTP 200 confirmed on every shop post-deploy.
+  - Pui: release evidence `/data/paperless/releases/20260811122602-dialog-panel-cleanup-6ac9502/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260811122939-dialog-panel-cleanup-6ac9502/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260811123047-dialog-panel-cleanup-6ac9502/postdeploy-checks.txt`
+  - Damrong Homeplus: `/data/paperless/releases/20260811123114-dialog-panel-cleanup-6ac9502/postdeploy-checks.txt`
 
 ## Current Customer Status - 2026-08-11 (Pui, web-only): history UI now surfaces SML source-drift status
 
