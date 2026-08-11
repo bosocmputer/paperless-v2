@@ -31,6 +31,7 @@ Fixed in `paperless-web:f42ca71` (was `31fd483`):
   - Wirat Home Mart: `/data/paperless/releases/20260811143518-navigate-away-source-changed-f42ca71/postdeploy-checks.txt`
   - Insee Construction: `/data/paperless/releases/20260811143601-navigate-away-source-changed-f42ca71/postdeploy-checks.txt`
   - Damrong Homeplus: `/data/paperless/releases/20260811143628-navigate-away-source-changed-f42ca71/postdeploy-checks.txt`
+- Customer notified with a general explainer covering the full "document edited in SML while awaiting signature" flow across all four shops (not shop-specific) — how the per-signer-step check works, what the signer/admin sees, the cancel-and-reimport recovery path (including the create-new-page quick-cancel button), and the clarification that merely opening a document for editing in SML (without saving) does not trigger a block, now that `guid_code` is excluded from the hash. Awaiting customer feedback before treating this batch of fixes (numeric-formatting hash fix, `guid_code` hash fix, history status banner, dialog/panel cleanup, quick-cancel action, navigate-away UX) as fully confirmed across all four shops.
 
 ## Current Customer Status - 2026-08-11 (all four shops, sml-api-bybos only): second SML source-hash false-positive fixed — `guid_code` transient edit marker
 
