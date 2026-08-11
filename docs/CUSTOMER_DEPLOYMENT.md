@@ -18,6 +18,16 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-11 (Wirat, Insee, Damrong): synced to Pui's `847fd23` — PDF clearance notice removed + Workflow signer-slot validation fix
+
+Pui confirmed both fixes below working; rolled the same image tag out to the remaining three shops (`api` and `web` recreated on each, `sml-api`/`db` untouched).
+
+- Image: `ghcr.io/bosocmputer/paperless-api:847fd23`, `ghcr.io/bosocmputer/paperless-web:847fd23`
+- Deployed to: Wirat, Insee, Damrong (all four shops now on `847fd23` for `api`/`web`)
+- Verification per shop: `docker compose ps` shows `api`/`web` healthy on `847fd23`; public URL smoke `curl` returned HTTP 200 (Wirat `43.240.113.44:8691`, Insee `45.122.49.253:8095`, Damrong `45.122.49.252:8095`)
+- Release evidence: `/data/paperless/releases/<timestamp>-pdf-notice-and-signer-slot-fix-847fd23/postdeploy-checks.txt` on each shop
+- Rollback per shop: restore that shop's `compose.yml.bak-<timestamp>` (pins `api:2a5cdca`, `web:f42ca71`) and re-run `docker compose up -d --no-deps api web`.
+
 ## Current Customer Status - 2026-08-11 (Pui, web-only): Workflow config — attachment requirements now validate against all 10 signer slots
 
 Follow-up to the api-only release below (same image tag `847fd23`, other half of that bundled commit pair). `validateStepForm()` in `frontend/src/views/config/DocumentConfigWorkflow.vue` only copied `user01`-`user03` into its validation draft, a leftover from before `MAX_SIGNERS` was raised to 10 (commit `f15b534`, 2026-08-10). With 4+ signers configured on a step, `signerValues()` on the truncated draft undercounted available slots, so clicking "ใช้กับทุกผู้เซ็น" (apply attachment requirement to all signers) on a step with more than 3 signers produced a false validation error: "ช่องเอกสารแนบบังคับไม่ตรงกับผู้เซ็น" on positions 4 and up. Fixed by spreading all 10 `userNN` fields into the draft via the existing `userFieldsFrom()` helper instead of hardcoding 3.
