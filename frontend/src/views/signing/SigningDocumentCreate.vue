@@ -31,6 +31,9 @@ const workflowContextDocFormatCode = ref('');
 const checkingDuplicate = ref(false);
 const duplicateCheck = ref(null);
 const duplicateCheckError = ref('');
+const cancelBlockingDialog = ref(false);
+const cancelBlockingReason = ref('');
+const cancellingBlockingDocument = ref(false);
 const designerValidationIssues = ref([]);
 const activeStep = ref(0);
 const fileInput = ref(null);
@@ -69,6 +72,21 @@ const lockedBySML = computed(() => Number(form.value.selectedCandidate?.is_lock_
 const isCorrection = computed(() => !!String(route.query.correction_of || '').trim());
 const blockingDuplicateDocument = computed(() => duplicateCheck.value?.blockingDocument || null);
 const duplicateWarningDocuments = computed(() => duplicateCheck.value?.previousDocuments || []);
+// SML source-drift attention states are the one case where cancelling the
+// blocking document is the expected/only recovery path (see
+// SigningDocumentDetail.vue's sourceAttentionMessage) — offer a quick
+// cancel action right here instead of forcing a detour through the detail
+// page just to type the same reason the user already read on this screen.
+const blockingDocumentNeedsSourceCancel = computed(() => {
+    const status = blockingDuplicateDocument.value?.status || '';
+    return status === 'sml_source_changed' || status === 'sml_source_missing';
+});
+const blockingDocumentAttentionMessage = computed(() => {
+    const status = blockingDuplicateDocument.value?.status || '';
+    if (status === 'sml_source_changed') return 'ข้อมูลเอกสารใน SML ถูกแก้ไขหลังเริ่มงาน กรุณายกเลิกเอกสารฉบับนี้ แล้วนำเข้า PDF ฉบับล่าสุดใหม่';
+    if (status === 'sml_source_missing') return 'ไม่พบเอกสารนี้ใน SML แล้ว จึงหยุดก่อนส่งรูปและ Lock กรุณายกเลิกเอกสารฉบับนี้ก่อนนำเข้าใหม่';
+    return '';
+});
 const workflowContextLoaded = computed(() => !!form.value.docFormatCode && workflowContextDocFormatCode.value === form.value.docFormatCode);
 const workflowMissing = computed(() => workflowContextLoaded.value && !workflowLoadError.value && (form.value.configs || []).length === 0);
 const isSuperAdmin = computed(() => authStore.user?.role === 'superadmin');
@@ -715,6 +733,36 @@ function openDuplicateDocument(doc) {
     router.push({ name: 'signing-document-detail', params: { id: doc.id } });
 }
 
+function openCancelBlockingDialog() {
+    if (!blockingDuplicateDocument.value?.id) return;
+    cancelBlockingReason.value = blockingDocumentAttentionMessage.value;
+    cancelBlockingDialog.value = true;
+}
+
+function closeCancelBlockingDialog() {
+    if (cancellingBlockingDocument.value) return;
+    cancelBlockingDialog.value = false;
+    cancelBlockingReason.value = '';
+}
+
+async function cancelBlockingDocument() {
+    const doc = blockingDuplicateDocument.value;
+    if (!doc?.id) return;
+    cancellingBlockingDocument.value = true;
+    try {
+        const idempotencyKey = `cancel-${doc.id}-${crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`}`;
+        await api.cancelSigningDocument(doc.id, { idempotencyKey, reason: cancelBlockingReason.value });
+        toast.add({ severity: 'success', summary: 'ยกเลิกเอกสารเดิมแล้ว', detail: 'สามารถอัปโหลด PDF ฉบับใหม่ได้เลย', life: 3500 });
+        cancelBlockingDialog.value = false;
+        cancelBlockingReason.value = '';
+        await checkSelectedDocumentDuplicate();
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'ยกเลิกเอกสารเดิมไม่สำเร็จ', detail: err.message, life: 4000 });
+    } finally {
+        cancellingBlockingDocument.value = false;
+    }
+}
+
 function resetUploadedLayout() {
     form.value.fileId = '';
     form.value.fileUrl = '';
@@ -1023,7 +1071,10 @@ function makeSignNoteBoxKey() {
                                             <Tag :value="signingStatusLabel(blockingDuplicateDocument.status)" :severity="signingStatusSeverity(blockingDuplicateDocument.status)" />
                                         </div>
                                     </div>
-                                    <Button label="เปิดเอกสารเดิม" icon="pi pi-external-link" severity="danger" outlined @click="openDuplicateDocument(blockingDuplicateDocument)" />
+                                    <div class="flex flex-wrap gap-2">
+                                        <Button v-if="blockingDocumentNeedsSourceCancel" label="ยกเลิกเอกสารเดิม" icon="pi pi-trash" severity="danger" @click="openCancelBlockingDialog" />
+                                        <Button label="เปิดเอกสารเดิม" icon="pi pi-external-link" severity="danger" outlined @click="openDuplicateDocument(blockingDuplicateDocument)" />
+                                    </div>
                                 </div>
                             </Message>
                             <Message v-else-if="duplicateWarningDocuments.length" severity="warn">
@@ -1179,10 +1230,35 @@ function makeSignNoteBoxKey() {
                 </div>
             </template>
         </Toolbar>
+
+        <Dialog v-model:visible="cancelBlockingDialog" modal header="ยกเลิกเอกสารเดิม" :style="{ width: 'min(34rem, 94vw)' }" :draggable="false" @hide="closeCancelBlockingDialog">
+            <div class="cancel-document-form">
+                <Message severity="warn" :closable="false" class="m-0">หลังยกเลิก เอกสารเดิม {{ blockingDuplicateDocument?.docNo }} จะไม่ส่งต่อให้ผู้เซ็น และลิงก์ภายนอกที่มีอยู่จะใช้ไม่ได้ จากนั้นจึงอัปโหลด PDF ฉบับใหม่ในหน้านี้ได้</Message>
+                <label>เหตุผลการยกเลิก <span class="required-mark">*</span></label>
+                <Textarea v-model="cancelBlockingReason" rows="4" maxlength="1000" autoResize placeholder="ระบุเหตุผลเพื่อเก็บในประวัติเอกสาร" />
+            </div>
+            <template #footer>
+                <Button label="กลับ" severity="secondary" text :disabled="cancellingBlockingDocument" @click="closeCancelBlockingDialog" />
+                <Button label="ยกเลิกเอกสาร" icon="pi pi-trash" severity="danger" :disabled="!cancelBlockingReason.trim()" :loading="cancellingBlockingDocument" @click="cancelBlockingDocument" />
+            </template>
+        </Dialog>
     </div>
 </template>
 
 <style scoped>
+.cancel-document-form {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.cancel-document-form label {
+    font-weight: 600;
+}
+
+.required-mark {
+    color: var(--red-500, #ef4444);
+}
+
 .signing-create-card {
     min-height: calc(100dvh - 6.25rem);
 }

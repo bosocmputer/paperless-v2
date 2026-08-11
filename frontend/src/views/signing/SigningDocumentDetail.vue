@@ -394,7 +394,11 @@ async function adminConfirmDocument() {
 function confirmCancelDocument() {
     cancelRequestKey.value = makeTransitionKey('cancel');
     if (cancelRequiresReason.value) {
-        cancelReason.value = '';
+        // Pre-fill a default reason for the SML source-drift attention
+        // states so the user isn't forced to re-type what the page already
+        // told them — they still review/edit and press confirm themselves,
+        // this only removes typing friction, not the confirmation step.
+        cancelReason.value = sourceAttentionMessage.value || '';
         cancelDialog.value = true;
         return;
     }
