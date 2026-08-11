@@ -1,6 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
-import { formatDocumentDate, formatThaiDateTime, signingStatusLabel } from '@/utils/signingFormatters';
+import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
 import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
 import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -104,6 +104,14 @@ function documentLine(row) {
     return [row.docNo, row.docFormatCode].filter(Boolean).join(' · ') || '-';
 }
 
+// sml_source_changed/sml_source_missing block the whole document after a
+// signer already signed their step — the row's own taskStatus stays
+// whatever it was ('signed' etc.), so without this the reason the
+// document stalled is invisible in the list, buried under a muted caption.
+function documentNeedsAttention(row) {
+    return row.documentStatus === 'sml_source_changed' || row.documentStatus === 'sml_source_missing';
+}
+
 function attachmentCount(row) {
     return Number(row?.attachmentCount || 0);
 }
@@ -180,7 +188,14 @@ function rejectReason(row) {
                 <template #body="{ data }">
                     <div class="grid gap-1">
                         <Tag :value="statusView(data).label" :severity="statusView(data).severity" class="w-fit" />
-                        <small class="text-muted-color">เอกสาร: {{ signingStatusLabel(data.documentStatus) }}</small>
+                        <Tag
+                            v-if="documentNeedsAttention(data)"
+                            :value="`เอกสาร: ${signingStatusLabel(data.documentStatus)}`"
+                            :severity="signingStatusSeverity(data.documentStatus)"
+                            class="w-fit"
+                            icon="pi pi-exclamation-triangle"
+                        />
+                        <small v-else class="text-muted-color">เอกสาร: {{ signingStatusLabel(data.documentStatus) }}</small>
                     </div>
                 </template>
             </Column>

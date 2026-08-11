@@ -1,5 +1,5 @@
 <script setup>
-import { formatThaiDateTime } from '@/utils/signingFormatters';
+import { formatThaiDateTime, signingStatusLabel } from '@/utils/signingFormatters';
 import ContinuousPdfViewer from '@/views/signing/components/ContinuousPdfViewer.vue';
 import DocumentAttachmentsPanel from '@/views/signing/components/DocumentAttachmentsPanel.vue';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
@@ -118,6 +118,25 @@ const allowRelatedDocuments = computed(() => !props.externalSignOnly && !props.h
 const allowReferenceCheck = computed(() => !props.externalSignOnly && !props.historyFocus && !!props.referenceCheckLoader);
 const showReadOnlyPanel = computed(() => !props.externalSignOnly && !props.historyFocus);
 const statusView = computed(() => statusMeta(taskStatus.value));
+// Document-level SML source-drift attention states (sml_source_changed /
+// sml_source_missing) are set on signing_documents.status, independent of
+// this signer's own task status (which may show as 'skipped' or similar,
+// giving no indication of WHY the document stopped). Surface this
+// prominently — the whole point of catching drift early (per-signer-step,
+// not just at finalize) is defeated if the person looking at the document
+// afterward can't tell that's what happened.
+const documentAttentionView = computed(() => {
+    const status = props.document?.status || '';
+    if (status !== 'sml_source_changed' && status !== 'sml_source_missing') return null;
+    return {
+        label: signingStatusLabel(status),
+        severity: status === 'sml_source_missing' ? 'danger' : 'warn',
+        message:
+            status === 'sml_source_missing'
+                ? 'ไม่พบเอกสารนี้ใน SML แล้ว กรุณาให้ผู้ดูแลระบบยกเลิกเอกสารนี้และนำเข้า PDF ฉบับล่าสุดใหม่'
+                : 'ข้อมูลเอกสารนี้ใน SML ถูกแก้ไขหลังเริ่มเซ็น ระบบจึงหยุดก่อนส่งเข้า SML กรุณาให้ผู้ดูแลระบบยกเลิกเอกสารนี้และนำเข้า PDF ฉบับล่าสุดใหม่'
+    };
+});
 const referenceStatusView = computed(() => referenceStatusMeta(props.referenceStatus));
 const referenceDialogTitle = computed(() => {
     const doc = props.document || {};
@@ -142,6 +161,7 @@ const selectedSignNoteTextAlign = computed(() => normalizeNoteTextAlign(selected
 const selectedSignNoteVerticalAlign = computed(() => normalizeNoteVerticalAlign(selectedSignNoteBox.value?.verticalAlign));
 const historySummary = computed(() => {
     const label = props.task?.positionName ? `ตำแหน่ง ${props.task.positionName}` : 'รายการเซ็นของคุณ';
+    if (documentAttentionView.value) return `${label} · ${documentAttentionView.value.message}`;
     if (taskStatus.value === 'rejected') return `${label} · คุณปฏิเสธเอกสารนี้แล้ว`;
     if (taskStatus.value === 'signed') return `${label} · คุณเซ็นเอกสารนี้แล้ว`;
     return `${label} · ${statusView.value.message}`;
@@ -719,7 +739,8 @@ function newRequestKey() {
                 <span>{{ [adminWorkspace ? document?.docFormatCode : '', task?.positionName || '-', document?.partyName || document?.partyCode || '-'].filter(Boolean).join(' · ') }}</span>
             </div>
             <div class="header-status">
-                <Tag :value="statusView.label" :severity="statusView.severity" />
+                <Tag v-if="documentAttentionView" :value="documentAttentionView.label" :severity="documentAttentionView.severity" />
+                <Tag v-else :value="statusView.label" :severity="statusView.severity" />
                 <Button v-if="adminWorkspace && onReload" icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="onReload" />
             </div>
         </div>
@@ -729,7 +750,11 @@ function newRequestKey() {
             <span>กำลังโหลดเอกสาร</span>
         </div>
 
-        <Message v-if="historyFocus && !loading" :severity="statusView.severity" class="history-summary">
+        <Message v-if="documentAttentionView && !loading && !historyFocus" :severity="documentAttentionView.severity" class="history-summary">
+            {{ documentAttentionView.message }}
+        </Message>
+
+        <Message v-if="historyFocus && !loading" :severity="documentAttentionView ? documentAttentionView.severity : statusView.severity" class="history-summary">
             {{ historySummary }}
         </Message>
 

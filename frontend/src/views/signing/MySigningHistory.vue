@@ -1,6 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
-import { formatThaiDate, formatThaiDateTime } from '@/utils/signingFormatters';
+import { formatThaiDate, formatThaiDateTime, signingStatusLabel } from '@/utils/signingFormatters';
 import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
 import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -128,6 +128,13 @@ function actionDate(row) {
     return row.taskStatus === 'rejected' ? row.rejectedAt : row.signedAt;
 }
 
+// sml_source_changed/sml_source_missing block the whole document after this
+// signer already signed their own step — taskStatus alone gives no hint of
+// this, so surface it explicitly instead of leaving the card looking done.
+function documentNeedsAttention(row) {
+    return row.documentStatus === 'sml_source_changed' || row.documentStatus === 'sml_source_missing';
+}
+
 function formatDate(value) {
     return formatThaiDate(value);
 }
@@ -201,7 +208,10 @@ function attachmentCount(row) {
                         </div>
                     </dl>
 
-                    <Message v-if="row.taskStatus === 'rejected' && row.rejectReason" severity="warn" class="history-message">เหตุผล: {{ row.rejectReason }}</Message>
+                    <Message v-if="documentNeedsAttention(row)" severity="warn" class="history-message">
+                        <i class="pi pi-exclamation-triangle"></i> เอกสาร: {{ signingStatusLabel(row.documentStatus) }}
+                    </Message>
+                    <Message v-else-if="row.taskStatus === 'rejected' && row.rejectReason" severity="warn" class="history-message">เหตุผล: {{ row.rejectReason }}</Message>
                     <Message v-else-if="!row.hasFinalPdf && row.hasCurrentPdf" severity="secondary" class="history-message">เอกสารยังรอขั้นตอนผู้ดูแล จะแสดง PDF ล่าสุดที่ระบบมี</Message>
 
                     <div class="card-actions">
