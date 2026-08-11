@@ -1063,7 +1063,7 @@ function makeSignNoteBoxKey() {
                             </Message>
                             <Message v-if="checkingDuplicate" severity="info">กำลังตรวจสอบว่าเอกสารนี้เคยสร้างใน PaperLess แล้วหรือไม่...</Message>
                             <Message v-else-if="blockingDuplicateDocument" severity="error">
-                                <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                <div class="flex flex-col gap-3">
                                     <div>
                                         <div class="font-bold">{{ duplicateCheck?.message || 'เอกสารนี้มีอยู่ใน PaperLess แล้ว' }}</div>
                                         <div class="mt-1 flex flex-wrap items-center gap-2">
