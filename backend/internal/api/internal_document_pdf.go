@@ -173,12 +173,6 @@ func drawInternalSummary(pdf *gofpdf.Fpdf, document models.InternalDocument) {
 	// Keep one uninterrupted approval area. Signature positions are configured
 	// once by superadmin in the active Workflow template, not by each creator.
 	pdf.Rect(left, y, width, internalApprovalHeightMM, "D")
-	y += internalApprovalHeightMM
-	pdf.SetTextColor(205, 35, 45)
-	pdf.SetFont(internalFontThai, "", 8.5)
-	pdf.SetXY(left, y+1)
-	pdf.CellFormat(width, 6, "*ให้ผู้เบิกเงินเคลียร์สำรองจ่ายภายใน 15 วัน นับจากวันรับเงิน", "", 0, "R", false, 0, "")
-	pdf.SetTextColor(0, 0, 0)
 }
 
 func thaiBahtText(value string) string {
