@@ -18,6 +18,15 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-11 (Pui, web-only): history UI now surfaces SML source-drift status
+
+Customer testing on Pui (`PU-01-2608001`) confirmed the per-signer-step drift check (deployed above) correctly blocks a document mid-flow when SML source data is edited after signing starts — the document disappeared from `/admin/signing/tasks` as expected. Follow-up feedback: the block reason wasn't visible on the history pages, only in the raw sign-attempt error response — a signer/admin looking at `/admin/signing/history` afterward had no way to tell the document had stopped short of reaching SML.
+
+Fixed in `paperless-web:762a4b4` (was `2a5cdca`): `signing_document_status` (`sml_source_changed`/`sml_source_missing`) is now surfaced as a prominent warning Tag/Message wherever signing history is shown — the shared `SigningWorkspace.vue` component (header tag + banner, used by both the detail page and the public/task-signing view), the admin history table (`AdminMySigningHistory.vue`), and the personal history cards (`MySigningHistory.vue`). Previously this only appeared as small muted caption text in the admin table and not at all on the personal history page.
+
+- Deployed to **Pui only** (web-only change, `--no-deps web`, `api`/`db`/`sml-api` untouched) for the customer to re-verify directly against `PU-01-2608001` before rolling out to the other three shops. Release evidence `/data/paperless/releases/20260811115437-history-drift-banner-762a4b4/postdeploy-checks.txt`. HTTP 200 confirmed post-deploy.
+- Not yet rolled out to Wirat, Insee, Damrong — pending confirmation from this Pui test.
+
 ## Current Customer Status - 2026-08-11 (all four shops: SML source-hash false-positive fix, per-step drift check, Thai time display)
 
 Root cause of a real production incident (PO `POIN66-5958` on Insee, blocked from SML image sync with status `sml_source_changed` despite zero real edits, confirmed via direct SML audit-trail inspection) traced to `sml-api-bybos`'s source-revision hash including unscaled `numeric` columns whose trailing-zero formatting can drift without any real value change. Fixed and rolled out to all four shops:
