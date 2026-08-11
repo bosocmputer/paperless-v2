@@ -38,6 +38,7 @@ Rollout order per shop: `sml-api` → `api`+`web` (same image tag `2a5cdca` for 
 - Post-deploy smoke: HTTP 200 on each shop's public URL, all 4 containers (`sml-api`/`api`/`db`/`web`) healthy on every shop after recreation. `db` never recreated anywhere. Release evidence per shop under `/data/paperless/releases/<timestamp>-sml-source-fix-2a5cdca/postdeploy-checks.txt` (and a separate `<timestamp>-sml-hash-fix-9875c51` release folder on Pui for its standalone `sml-api` step).
 - **Document `POIN66-5958` itself was intentionally left untouched** throughout, per explicit instruction — it remains in `sml_source_changed`, unresolved, pending a manual cancel/reimport by the customer or an operator.
 - Not yet verified: full manual test pass (per-step drift detection catching a mismatch before finalize, Thai-time display across affected pages, fail-open behavior under a real SML outage) — customer/tester to verify directly.
+- Customer notified (general update summary covering all four shops, not `POIN66-5958`-specific) and asked to test directly; awaiting feedback before this rollout is considered fully confirmed.
 
 ## Current Customer Status - 2026-08-10 (all four shops: signer dropdown filter, web-only)
 
