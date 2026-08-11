@@ -28,6 +28,7 @@ Fixed in `paperless-web:eaedc20` (was `6ac9502`), keeping a deliberate confirm s
 
 - Deployed to **Pui only**. Release evidence `/data/paperless/releases/20260811130843-quick-cancel-blocking-doc-eaedc20/postdeploy-checks.txt`. HTTP 200 confirmed post-deploy, `api`/`db`/`sml-api` untouched.
 - Follow-up: the two action buttons only right-aligned on desktop widths (parent's `justify-between` on `md:flex-row`); on the stacked mobile layout they fell back to left-aligned under the message text. Added `justify-end` to the button group so it stays right-aligned at any width. Deployed to **Pui only** as `paperless-web:1694c64`, release evidence `/data/paperless/releases/20260811131510-right-align-buttons-1694c64/postdeploy-checks.txt`, HTTP 200 confirmed.
+- Second follow-up (screenshot review): on wide screens the message text/tag and the two buttons still shared one crowded row (`md:flex-row justify-between` put them side by side with minimal separation). Removed the `md:flex-row`/`justify-between` so the block always stacks vertically — text on top, button row below, right-aligned — at every screen width, not just mobile. Deployed to **Pui only** as `paperless-web:8ed67d9`, release evidence `/data/paperless/releases/20260811132227-stack-duplicate-block-buttons-8ed67d9/postdeploy-checks.txt`, HTTP 200 confirmed.
 - Not yet rolled out to Wirat, Insee, Damrong — pending customer confirmation on Pui.
 
 ## Current Customer Status - 2026-08-11 (Pui, web-only): dialog header cleanup, sign-task panel reorganized
