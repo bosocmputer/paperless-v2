@@ -18,13 +18,25 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-11 (Pui, web-only): Workflow config — attachment requirements now validate against all 10 signer slots
+
+Follow-up to the api-only release below (same image tag `847fd23`, other half of that bundled commit pair). `validateStepForm()` in `frontend/src/views/config/DocumentConfigWorkflow.vue` only copied `user01`-`user03` into its validation draft, a leftover from before `MAX_SIGNERS` was raised to 10 (commit `f15b534`, 2026-08-10). With 4+ signers configured on a step, `signerValues()` on the truncated draft undercounted available slots, so clicking "ใช้กับทุกผู้เซ็น" (apply attachment requirement to all signers) on a step with more than 3 signers produced a false validation error: "ช่องเอกสารแนบบังคับไม่ตรงกับผู้เซ็น" on positions 4 and up. Fixed by spreading all 10 `userNN` fields into the draft via the existing `userFieldsFrom()` helper instead of hardcoding 3.
+
+- Commit: `847fd23`
+- Image: `ghcr.io/bosocmputer/paperless-web:847fd23`
+- Deployed to: Pui only (`paperless-prod-web` container). `api` was already on this tag from the previous entry; `sml-api`, `db` untouched.
+- Verification: `npm run build` clean before deploy; post-deploy `docker compose ps` shows `paperless-prod-web` on tag `847fd23`; public URL smoke `curl` returned HTTP 200. Customer to manually retest the reported repro (Workflow config → 10 signers → mandatory attachment → apply to all signers) before wider rollout.
+- Release evidence: `/data/paperless/releases/<timestamp>-workflow-signer-slot-validation-fix-847fd23/postdeploy-checks.txt`
+- Rollback: restore `compose.yml.bak-<timestamp>` (pins `paperless-web:f42ca71`) and re-run `docker compose up -d --no-deps web`.
+- Not yet deployed to Wirat, Insee, Damrong — awaiting Pui customer confirmation first, per usual convention.
+
 ## Current Customer Status - 2026-08-11 (Pui, api-only): removed 15-day reimbursement clearance notice from internal PDF summary
 
 Customer requested removal of the fixed policy line "*ให้ผู้เบิกเงินเคลียร์สำรองจ่ายภายใน 15 วัน นับจากวันรับเงิน" printed under the approval box on every internal document PDF (`drawInternalSummary` in `backend/internal/api/internal_document_pdf.go`). Line and its now-unused text-color/position setup removed; approval box now ends the summary section directly. No other PDF content changed.
 
-- Commit: `4679555` (bundled into image tag `847fd23` alongside an unrelated Workflow-config frontend fix, commit `847fd23` — that frontend change was pushed together but **not** deployed as part of this release; only the `api` service was recreated)
+- Commit: `4679555` (bundled into image tag `847fd23` alongside the Workflow-config frontend fix above, commit `847fd23` — both are now deployed to Pui as of this entry and the one above)
 - Image: `ghcr.io/bosocmputer/paperless-api:847fd23`
-- Deployed to: Pui only (`paperless-prod-api` container). `web`, `sml-api`, `db` untouched.
+- Deployed to: Pui only (`paperless-prod-api` container). `web`, `sml-api`, `db` untouched at time of this specific deploy.
 - Verification: `go build ./...` clean, `go test ./internal/api/...` all PDF/internal tests passing before deploy; post-deploy `docker compose ps` shows `paperless-prod-api` healthy on tag `847fd23`; public URL smoke `curl` returned HTTP 200.
 - Release evidence: `/data/paperless/releases/<timestamp>-remove-15day-clearance-notice-847fd23/postdeploy-checks.txt`
 - Rollback: restore `compose.yml.bak-<timestamp>` (pins `paperless-api:2a5cdca`) and re-run `docker compose up -d --no-deps api`.
