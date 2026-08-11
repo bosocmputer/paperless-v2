@@ -1,5 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
+import { formatThaiDateTime } from '@/utils/signingFormatters';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
@@ -242,11 +243,7 @@ async function deactivateUser(user) {
 }
 
 function formatDate(value) {
-    if (!value) return '-';
-    return new Intl.DateTimeFormat('th-TH', {
-        dateStyle: 'medium',
-        timeStyle: 'short'
-    }).format(new Date(value));
+    return formatThaiDateTime(value);
 }
 
 function roleSeverity(role) {

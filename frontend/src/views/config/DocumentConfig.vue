@@ -1,5 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
+import { formatThaiDateTimeNumeric } from '@/utils/signingFormatters';
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
@@ -187,14 +188,7 @@ function conditionSummaryText(workflow) {
 }
 
 function formatDateTime(value) {
-    if (!value) return '-';
-    return new Intl.DateTimeFormat('th-TH', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    }).format(new Date(value));
+    return formatThaiDateTimeNumeric(value);
 }
 
 function normalizeSearch(value) {

@@ -1,4 +1,5 @@
 <script setup>
+import { formatThaiDateTime } from '@/utils/signingFormatters';
 import ContinuousPdfViewer from '@/views/signing/components/ContinuousPdfViewer.vue';
 import DocumentAttachmentsPanel from '@/views/signing/components/DocumentAttachmentsPanel.vue';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
@@ -338,12 +339,7 @@ function resetSavedSignatureChoice(message = '') {
 }
 
 function formatSavedSignatureDate(value) {
-    if (!value) return '-';
-    try {
-        return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
-    } catch {
-        return '-';
-    }
+    return formatThaiDateTime(value);
 }
 
 function setupSignatureCanvas(force = false) {

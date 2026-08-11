@@ -1,5 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
+import { formatThaiDateTime } from '@/utils/signingFormatters';
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -177,9 +178,7 @@ function isInternalRow(row) {
 }
 
 function lastUpdated(row) {
-    const value = row.template?.updatedAt;
-    if (!value) return '-';
-    return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+    return formatThaiDateTime(row.template?.updatedAt);
 }
 
 function conditionSummary(row) {

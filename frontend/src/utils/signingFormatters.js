@@ -44,6 +44,15 @@ export function signingStatusSeverity(status) {
     return statusSeverity[status] || 'secondary';
 }
 
+// Both formatters below pin timeZone to Asia/Bangkok rather than letting
+// Intl.DateTimeFormat fall back to the browser's local timezone. PaperLess
+// stores timestamps as UTC internally, and SML's own timestamps are naive
+// Asia/Bangkok values (see SML's *_datetime columns, confirmed timezone
+// WITHOUT time zone) — pinning the display timezone here keeps what a user
+// sees consistent with SML regardless of where their browser is set,
+// instead of silently drifting for anyone outside Bangkok's UTC+7.
+const THAI_TIME_ZONE = 'Asia/Bangkok';
+
 export function formatDocumentDate(value) {
     if (!value) return '-';
     const text = String(value);
@@ -54,7 +63,8 @@ export function formatDocumentDate(value) {
     return new Intl.DateTimeFormat('th-TH-u-ca-gregory', {
         day: '2-digit',
         month: '2-digit',
-        year: 'numeric'
+        year: 'numeric',
+        timeZone: THAI_TIME_ZONE
     }).format(date);
 }
 
@@ -62,7 +72,36 @@ export function formatThaiDateTime(value) {
     if (!value) return '-';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '-';
-    return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+    return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short', timeZone: THAI_TIME_ZONE }).format(date);
+}
+
+// Date-only, no time component, using Intl's 'medium' Thai date style
+// (e.g. "31 ก.ค. 2569") — distinct from formatDocumentDate's DD/MM/YYYY
+// numeric style. Callers that specifically need this style should import
+// it from here rather than hand-rolling their own Intl.DateTimeFormat call.
+export function formatThaiDate(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeZone: THAI_TIME_ZONE }).format(date);
+}
+
+// Numeric DD/MM/YYYY HH:mm, e.g. "31/07/2569 14:30" — distinct from
+// formatThaiDateTime's word-based 'medium' style (e.g. "31 ก.ค. 2569
+// 14:30"). Callers that specifically need the all-numeric layout should
+// import this rather than hand-rolling their own Intl.DateTimeFormat call.
+export function formatThaiDateTimeNumeric(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return new Intl.DateTimeFormat('th-TH', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: THAI_TIME_ZONE
+    }).format(date);
 }
 
 export function signingActionLabel(action) {

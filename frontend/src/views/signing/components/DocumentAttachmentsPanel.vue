@@ -1,4 +1,5 @@
 <script setup>
+import { formatThaiDateTimeNumeric } from '@/utils/signingFormatters';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useToast } from 'primevue/usetoast';
@@ -100,16 +101,12 @@ function formatBytes(value) {
 }
 
 function formatDate(value) {
-    if (!value) return '';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
-    return new Intl.DateTimeFormat('th-TH', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-    }).format(date);
+    // Callers rely on '' (falsy) for missing/invalid dates to decide
+    // whether to include this in a joined display string — formatThaiDateTimeNumeric
+    // returns '-' for that case instead, so it is normalized back to '' here
+    // rather than swapped in directly at every call site.
+    const formatted = formatThaiDateTimeNumeric(value);
+    return formatted === '-' ? '' : formatted;
 }
 
 function requirementAttachments(requirement) {

@@ -1,6 +1,7 @@
 <script setup>
 import { api } from '@/services/api';
 import { LEGAL_NOTICE_DISPLAY_TEXT, LEGAL_NOTICE_TEXT, legalNoticePreviewFontSize } from '@/utils/legalNoticePreview';
+import { formatThaiDateTime } from '@/utils/signingFormatters';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
@@ -1054,8 +1055,7 @@ function clamp(value, min, max) {
 }
 
 function formatDate(value) {
-    if (!value) return '-';
-    return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+    return formatThaiDateTime(value);
 }
 
 function boxSnapshot(box) {

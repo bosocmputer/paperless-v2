@@ -1,5 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
+import { formatThaiDate, formatThaiDateTime } from '@/utils/signingFormatters';
 import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
 import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
@@ -128,13 +129,11 @@ function actionDate(row) {
 }
 
 function formatDate(value) {
-    if (!value) return '-';
-    return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium' }).format(new Date(value));
+    return formatThaiDate(value);
 }
 
 function formatDateTime(value) {
-    if (!value) return '-';
-    return new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+    return formatThaiDateTime(value);
 }
 
 function attachmentCount(row) {
