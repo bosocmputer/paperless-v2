@@ -1896,14 +1896,104 @@ WHERE id=$1
 	return err
 }
 
+// RebaselineCandidate is a still-in-flight SML-backed document whose stored
+// sml_source_revision predates a change to the revision hash formula itself
+// (as opposed to a real SML edit) and needs to be re-baselined against the
+// new formula before it next reaches finalizeCompletedDocument.
+type RebaselineCandidate struct {
+	ID            string
+	DocFormatCode string
+	DocNo         string
+	SMLTenant     string
+	// Revision is the sml_source_revision value as read at listing time. It
+	// must be passed back into RebaselineSMLSourceRevision unchanged so the
+	// update can optimistically-lock on it.
+	Revision string
+}
+
+// nonTerminalSMLStatuses are the signing_documents.status values a
+// still-in-flight, not-yet-finalized SML document can be in. This
+// deliberately excludes every terminal/attention state (completed,
+// completed_image_failed, sml_source_changed, sml_source_missing,
+// cancelled, rejected, ...) — a document already sitting in
+// sml_source_changed (e.g. POIN66-5958) must not be silently touched by a
+// backfill; it stays exactly as an operator left it.
+var nonTerminalSMLStatuses = []string{"draft", "in_progress", "pending_confirm", "auto_confirming"}
+
+// ListRebaselineCandidates returns SML-backed documents that are still
+// in-flight (non-terminal status) and already have a recorded
+// sml_source_revision (i.e. they were sent before a source-hash formula
+// change shipped). internal-document-source rows are excluded since they
+// never call verifySMLDocumentSource.
+func (s *Store) ListRebaselineCandidates(ctx context.Context) ([]RebaselineCandidate, error) {
+	rows, err := s.pool.Query(ctx, `
+SELECT id::text, doc_format_code, doc_no, sml_tenant, sml_source_revision
+FROM signing_documents
+WHERE document_source = 'sml'
+  AND sml_source_revision <> ''
+  AND status = ANY($1)
+`, nonTerminalSMLStatuses)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []RebaselineCandidate
+	for rows.Next() {
+		var c RebaselineCandidate
+		if err := rows.Scan(&c.ID, &c.DocFormatCode, &c.DocNo, &c.SMLTenant, &c.Revision); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// RebaselineSMLSourceRevision overwrites a document's sml_source_revision
+// with a freshly fetched value from SML, unconditionally (it does not
+// compare old vs new — that is verifySMLDocumentSource's job, and calling
+// this instead of that function is the whole point: the OLD stored value is
+// known to be computed under a formula that no longer matches, so it must
+// be replaced, not judged).
+//
+// The UPDATE is optimistically locked on the exact revision value the
+// caller read via ListRebaselineCandidates (expectedOldRevision). If a
+// concurrent send/finalize already advanced sml_source_revision in the
+// meantime, RowsAffected is 0 and this is treated as a routine skip, not an
+// error: the document's revision is already fresh from a normal flow, so
+// there is nothing left for the backfill to do here. This is a best-effort
+// re-baseline, not a transactional-critical operation — a skipped document
+// is simply picked up by the ordinary send/finalize path or a later
+// backfill pass.
+func (s *Store) RebaselineSMLSourceRevision(ctx context.Context, documentID, expectedOldRevision, newRevision string) (bool, error) {
+	newRevision = strings.TrimSpace(newRevision)
+	if newRevision == "" {
+		return false, nil
+	}
+	result, err := s.pool.Exec(ctx, `
+UPDATE signing_documents
+SET sml_source_revision=$3, sml_source_checked_at=now(), updated_at=now()
+WHERE id=$1 AND sml_source_revision=$2
+`, documentID, expectedOldRevision, newRevision)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() > 0, nil
+}
+
 func (s *Store) MarkSMLSourceAttention(ctx context.Context, documentID, state string, metadata map[string]any) error {
 	if state != "sml_source_changed" && state != "sml_source_missing" {
 		return ErrSigningDocumentInvalidStatus
 	}
+	// 'in_progress' is included so the per-signer-step check
+	// (blockSigningOnSMLSourceDrift) can transition a document that is
+	// still mid-signing — before this addition, only the post-finalize
+	// states were listed here, since MarkSMLSourceAttention previously
+	// only ever ran after all signers had already finished.
 	result, err := s.pool.Exec(ctx, `
 UPDATE signing_documents
 SET status=$2, updated_at=now()
-WHERE id=$1 AND status IN ('pending_confirm','auto_confirming','completed_evidence_failed','completed_image_failed','completed_lock_failed')
+WHERE id=$1 AND status IN ('in_progress','pending_confirm','auto_confirming','completed_evidence_failed','completed_image_failed','completed_lock_failed')
 `, documentID, state)
 	if err != nil {
 		return err

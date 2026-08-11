@@ -3094,6 +3094,9 @@ func (s *Server) signMySigningTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
+	if s.blockSigningOnSMLSourceDrift(w, r, document) {
+		return
+	}
 	signNoteBoxes, signNote, err := normalizeSignTaskRuntimeNotes(req, document)
 	if err != nil {
 		var validationErr runtimeSignNoteValidationError
@@ -3401,6 +3404,9 @@ func (s *Server) signPublicSigningTask(w http.ResponseWriter, r *http.Request) {
 	document, err := s.store.FindSigningDocumentByID(r.Context(), signer.DocumentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
+		return
+	}
+	if s.blockSigningOnSMLSourceDrift(w, r, document) {
 		return
 	}
 	signNoteBoxes, signNote, err := normalizeSignTaskRuntimeNotes(req, document)
@@ -3830,6 +3836,9 @@ func (s *Server) finalizeCompletedDocument(ctx context.Context, documentID, ipAd
 			var sourceErr *smlSourceStateError
 			if errors.As(err, &sourceErr) {
 				metadata := map[string]any{"attemptNo": document.AttemptNo, "reason": sourceErr.Message}
+				if len(sourceErr.Diff) > 0 {
+					metadata["diff"] = sourceErr.Diff
+				}
 				if markErr := s.store.MarkSMLSourceAttention(context.Background(), documentID, sourceErr.State, metadata); markErr != nil {
 					s.logger.Error("mark SML source attention failed", "error", markErr, "documentID", documentID)
 				}
@@ -3873,6 +3882,46 @@ func (s *Server) finalizeCompletedDocument(ctx context.Context, documentID, ipAd
 		"lockOk":    result.LockOK,
 	})
 	return result
+}
+
+// blockSigningOnSMLSourceDrift re-verifies the SML source immediately
+// before an individual signer's signature is accepted, so a source-changed
+// document is caught at the NEXT signer step instead of only after every
+// signer has already invested time signing (see verifySMLDocumentSource's
+// original two checkpoints: send and finalize). It writes the HTTP response
+// and returns true if the caller must stop; false means it is safe to
+// continue with the sign. Uses verifySMLDocumentSourceFailOpen so a
+// transient SML outage cannot block signing — only a *confirmed*
+// source-changed/source-missing result does.
+func (s *Server) blockSigningOnSMLSourceDrift(w http.ResponseWriter, r *http.Request, document models.SigningDocument) bool {
+	err := s.verifySMLDocumentSourceFailOpen(r.Context(), document)
+	if err == nil {
+		return false
+	}
+	var sourceErr *smlSourceStateError
+	if !errors.As(err, &sourceErr) {
+		// verifySMLDocumentSourceFailOpen only returns a non-nil error for
+		// confirmed source-state mismatches; anything else was already
+		// swallowed internally. Treat an unexpected error type the same
+		// conservative way finalize does: stop rather than guess.
+		writeError(w, http.StatusBadGateway, "sml_source_verification_failed", "ตรวจสอบข้อมูลเอกสารจาก SML ไม่สำเร็จ กรุณาลองใหม่")
+		return true
+	}
+	// Stop the WHOLE document, not just this signer's step — mirrors the
+	// existing finalize-time behavior via the same MarkSMLSourceAttention
+	// state machine used by retrySigningDocumentLock/retrySigningDocumentImages,
+	// so a mismatch discovered here does not leave some signers already
+	// signed against data SML has since changed while later signers are
+	// simply blocked one at a time.
+	metadata := map[string]any{"reason": sourceErr.Message, "detectedAt": "per_step_sign"}
+	if len(sourceErr.Diff) > 0 {
+		metadata["diff"] = sourceErr.Diff
+	}
+	if markErr := s.store.MarkSMLSourceAttention(context.Background(), document.ID, sourceErr.State, metadata); markErr != nil {
+		s.logger.Error("mark SML source attention failed", "error", markErr, "documentID", document.ID)
+	}
+	writeSMLSourceVerificationError(w, err)
+	return true
 }
 
 func requiresSMLFinalization(document models.SigningDocument) bool {
