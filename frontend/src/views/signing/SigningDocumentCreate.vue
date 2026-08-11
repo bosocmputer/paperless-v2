@@ -1071,7 +1071,7 @@ function makeSignNoteBoxKey() {
                                             <Tag :value="signingStatusLabel(blockingDuplicateDocument.status)" :severity="signingStatusSeverity(blockingDuplicateDocument.status)" />
                                         </div>
                                     </div>
-                                    <div class="flex flex-wrap gap-2">
+                                    <div class="flex flex-wrap justify-end gap-2">
                                         <Button v-if="blockingDocumentNeedsSourceCancel" label="ยกเลิกเอกสารเดิม" icon="pi pi-trash" severity="danger" @click="openCancelBlockingDialog" />
                                         <Button label="เปิดเอกสารเดิม" icon="pi pi-external-link" severity="danger" outlined @click="openDuplicateDocument(blockingDuplicateDocument)" />
                                     </div>
