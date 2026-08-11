@@ -78,8 +78,22 @@ async function signTask(payload) {
         toast.add({ severity: 'success', summary: 'เซ็นเอกสารแล้ว', life: 2600 });
         goBackToTasks();
     } catch (err) {
-        if (err?.payload?.error !== 'saved_signature_changed' && err?.payload?.error !== 'saved_signature_unavailable') {
+        const code = err?.payload?.error;
+        if (code !== 'saved_signature_changed' && code !== 'saved_signature_unavailable') {
             toast.add({ severity: 'error', summary: 'เซ็นไม่สำเร็จ', detail: err.message, life: 4200 });
+        }
+        // sml_source_changed/sml_source_missing means the WHOLE document is
+        // now blocked (see blockSigningOnSMLSourceDrift on the backend) —
+        // staying on this signing page serves no purpose since nobody can
+        // sign it further; take the signer back to their task list instead
+        // of leaving them stuck on a page for a task that will never
+        // become signable again without an admin cancelling/re-importing it.
+        // Still re-throw so SigningWorkspace's confirmSign() catch runs its
+        // own bookkeeping (sign_error event, localSaving reset) — it does
+        // not treat a thrown error as success, so navigating here first is
+        // safe even though the component may unmount mid-throw.
+        if (code === 'sml_source_changed' || code === 'sml_source_missing') {
+            goBackToTasks();
         }
         throw err;
     } finally {

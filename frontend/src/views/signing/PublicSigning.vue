@@ -242,6 +242,13 @@ function handlePublicSigningError(err) {
         clearSigningData();
         return true;
     }
+    if (code === 'sml_source_changed' || code === 'sml_source_missing') {
+        externalState.value = 'unavailable';
+        terminalMessage.value = err?.message || 'ข้อมูลเอกสารใน SML ถูกแก้ไขหลังเริ่มงาน กรุณาติดต่อผู้ดูแลระบบ';
+        clearExternalSession();
+        clearSigningData();
+        return true;
+    }
     return false;
 }
 
