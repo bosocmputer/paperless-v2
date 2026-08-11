@@ -18,6 +18,17 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-11 (Pui, web-only): dialog header cleanup, sign-task panel reorganized
+
+Follow-up UX feedback from the same Pui test session: (1) the "Flow เอกสาร SML" and "ตรวจสอบเอกสารอ้างอิง" dialogs used a bespoke branded header (icon box, gradient background, colored left border) that didn't match the plain-header pattern used by every other dialog in the app; (2) the sign-task page (`/admin/signing/tasks/:taskId`) right-side panel stacked signature, attachments, PDF notes, legal checkbox, and confirm/reject buttons with uniform visual weight and no ordering — testing feedback was "scattered, signer doesn't know what to do first."
+
+Fixed in `paperless-web:6ac9502` (was `762a4b4`):
+- Removed the custom `#header` slot and matching `:global()` CSS from both dialogs. The Reference Check dialog is rendered from two places (`SigningWorkspace.vue` and `SigningDocuments.vue`) but was styled from a third file (`DocumentReferenceCheck.vue`, via global selectors targeting DOM it doesn't render) — confirmed via pre-flight grep that these were the only two consumers, then updated all three files together in one commit to avoid leaving either consumer with broken unstyled header markup.
+- Reordered the sign-task panel: signature → legal-text checkbox → confirm/reject buttons now form one visually grouped "required path" at the top, framed with the same primary-color-tinted border/background already used elsewhere in the app (`.position-summary`'s color-mix formula, not a new style). Optional tools (related-document lookup, attachments, PDF annotation notes) moved below with lighter visual weight. Pure DOM reorder + CSS — no `v-if`/logic/event-handler changes.
+
+- Deployed to **Pui only** (web-only, `--no-deps web`, `api`/`db`/`sml-api` untouched). Release evidence `/data/paperless/releases/20260811122602-dialog-panel-cleanup-6ac9502/postdeploy-checks.txt`. HTTP 200 confirmed post-deploy.
+- Not yet rolled out to Wirat, Insee, Damrong — pending customer confirmation on Pui.
+
 ## Current Customer Status - 2026-08-11 (Pui, web-only): history UI now surfaces SML source-drift status
 
 Customer testing on Pui (`PU-01-2608001`) confirmed the per-signer-step drift check (deployed above) correctly blocks a document mid-flow when SML source data is edited after signing starts — the document disappeared from `/admin/signing/tasks` as expected. Follow-up feedback: the block reason wasn't visible on the history pages, only in the raw sign-attempt error response — a signer/admin looking at `/admin/signing/history` afterward had no way to tell the document had stopped short of reaching SML.
