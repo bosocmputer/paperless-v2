@@ -779,34 +779,6 @@ function newRequestKey() {
             </section>
 
             <aside v-if="canInteract" class="sign-card">
-                <div v-if="allowRelatedDocuments || allowReferenceCheck" class="related-section">
-                    <div v-if="referenceStatusView" class="reference-status-strip" :class="`status-${referenceStatusView.status}`">
-                        <i :class="referenceStatusView.icon" aria-hidden="true"></i>
-                        <div>
-                            <strong>{{ referenceStatusView.title }}</strong>
-                            <span>{{ referenceStatusView.detail }}</span>
-                        </div>
-                    </div>
-                    <Button
-                        v-if="allowRelatedDocuments"
-                        label="Flow เอกสาร"
-                        icon="pi pi-sitemap"
-                        severity="secondary"
-                        outlined
-                        class="w-full"
-                        @click="openFlowDialog"
-                    />
-                    <Button
-                        v-if="allowReferenceCheck"
-                        label="ตรวจสอบเอกสาร"
-                        icon="pi pi-list"
-                        severity="secondary"
-                        outlined
-                        class="w-full"
-                        @click="openReferenceDialog"
-                    />
-                </div>
-
                 <div class="signature-block">
                     <div class="section-heading">
                         <div class="signature-heading-text">
@@ -849,6 +821,50 @@ function newRequestKey() {
                         </template>
                     </div>
                     <Message v-else-if="savedSignatureAvailable" severity="warn" :closable="false" class="compact-status">กรุณาเลือกวิธีลงลายเซ็นก่อนยืนยัน</Message>
+                </div>
+
+                <div class="legal-check">
+                    <Checkbox v-model="legalAccepted" inputId="legalAccepted" binary :disabled="!canInteract" />
+                    <label for="legalAccepted">ยืนยันข้อความ พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์</label>
+                    <Button label="อ่านข้อความ" icon="pi pi-book" text size="small" @click="legalDialogVisible = true" />
+                </div>
+
+                <div v-if="adminWorkspace" class="admin-actions">
+                    <Message v-if="primaryDisabledReason" severity="warn" class="sticky-reason">{{ primaryDisabledReason }}</Message>
+                    <div class="admin-action-buttons" :class="{ 'single-action': !allowReject }">
+                        <Button v-if="allowReject" label="ปฏิเสธ" icon="pi pi-times" severity="danger" outlined :disabled="!canInteract || isBusy" @click="rejectVisible = true" />
+                        <Button label="ยืนยันเซ็น" icon="pi pi-check" :disabled="!canConfirm" :loading="isBusy" @click="confirmSign" />
+                    </div>
+                </div>
+
+                <div v-if="allowRelatedDocuments || allowReferenceCheck" class="related-section">
+                    <div v-if="referenceStatusView" class="reference-status-strip" :class="`status-${referenceStatusView.status}`">
+                        <i :class="referenceStatusView.icon" aria-hidden="true"></i>
+                        <div>
+                            <strong>{{ referenceStatusView.title }}</strong>
+                            <span>{{ referenceStatusView.detail }}</span>
+                        </div>
+                    </div>
+                    <Button
+                        v-if="allowRelatedDocuments"
+                        label="Flow เอกสาร"
+                        icon="pi pi-sitemap"
+                        severity="secondary"
+                        outlined
+                        size="small"
+                        class="w-full"
+                        @click="openFlowDialog"
+                    />
+                    <Button
+                        v-if="allowReferenceCheck"
+                        label="ตรวจสอบเอกสาร"
+                        icon="pi pi-list"
+                        severity="secondary"
+                        outlined
+                        size="small"
+                        class="w-full"
+                        @click="openReferenceDialog"
+                    />
                 </div>
 
                 <DocumentAttachmentsPanel
@@ -922,20 +938,6 @@ function newRequestKey() {
                                 <Button label="ล่าง" :severity="selectedSignNoteVerticalAlign === 'bottom' ? 'info' : 'secondary'" :outlined="selectedSignNoteVerticalAlign !== 'bottom'" size="small" :disabled="!canInteract" @click="updateSelectedSignNoteStyle({ verticalAlign: 'bottom' })" />
                             </div>
                         </div>
-                    </div>
-                </div>
-
-                <div class="legal-check">
-                    <Checkbox v-model="legalAccepted" inputId="legalAccepted" binary :disabled="!canInteract" />
-                    <label for="legalAccepted">ยืนยันข้อความ พ.ร.บ. ธุรกรรมทางอิเล็กทรอนิกส์</label>
-                    <Button label="อ่านข้อความ" icon="pi pi-book" text size="small" @click="legalDialogVisible = true" />
-                </div>
-
-                <div v-if="adminWorkspace" class="admin-actions">
-                    <Message v-if="primaryDisabledReason" severity="warn" class="sticky-reason">{{ primaryDisabledReason }}</Message>
-                    <div class="admin-action-buttons" :class="{ 'single-action': !allowReject }">
-                        <Button v-if="allowReject" label="ปฏิเสธ" icon="pi pi-times" severity="danger" outlined :disabled="!canInteract || isBusy" @click="rejectVisible = true" />
-                        <Button label="ยืนยันเซ็น" icon="pi pi-check" :disabled="!canConfirm" :loading="isBusy" @click="confirmSign" />
                     </div>
                 </div>
             </aside>
@@ -1051,23 +1053,11 @@ function newRequestKey() {
             v-if="allowReferenceCheck"
             v-model:visible="referenceDialogVisible"
             modal
-            class="reference-check-dialog reference-audit-dialog"
+            class="reference-check-dialog"
             :style="{ width: 'min(1280px, 96vw)', height: 'min(820px, 90vh)' }"
             :breakpoints="{ '640px': '100vw' }"
             :header="referenceDialogTitle"
         >
-            <template #header>
-                <div class="reference-dialog-title">
-                    <span class="reference-dialog-title-icon">
-                        <i class="pi pi-list-check"></i>
-                    </span>
-                    <span class="reference-dialog-title-copy">
-                        <strong>ตรวจสอบเอกสารอ้างอิง</strong>
-                        <small>{{ referenceDialogTitle || 'เช็คลิสต์เอกสารก่อนเซ็น' }}</small>
-                    </span>
-                </div>
-            </template>
-
             <div class="reference-dialog-layout">
                 <DocumentReferenceCheck v-if="referenceDialogVisible" compact dialog-mode display-mode="flow" :document="document" :loader="referenceCheckLoader" :allow-preview="adminWorkspace" />
             </div>
@@ -1283,6 +1273,17 @@ function newRequestKey() {
     justify-content: space-between;
     gap: 0.75rem;
     margin-bottom: 0.5rem;
+}
+
+/* Primary-action framing shared with .legal-check/.admin-actions below —
+   same color-mix formula as .position-summary so the required-steps group
+   (sign, accept legal text, confirm) reads as one visually connected zone
+   distinct from the optional/reference sections below it. */
+.signature-block {
+    border: 1px solid color-mix(in srgb, var(--primary-color) 24%, var(--surface-border));
+    border-radius: 8px;
+    padding: 0.7rem 0.8rem;
+    background: color-mix(in srgb, var(--primary-color) 8%, var(--surface-card));
 }
 
 .signature-heading-text {
@@ -1654,10 +1655,10 @@ function newRequestKey() {
     align-items: center;
     gap: 0.65rem;
     line-height: 1.45;
-    border: 1px solid var(--surface-border);
+    border: 1px solid color-mix(in srgb, var(--primary-color) 24%, var(--surface-border));
     border-radius: 8px;
     padding: 0.7rem 0.8rem;
-    background: var(--surface-card);
+    background: color-mix(in srgb, var(--primary-color) 8%, var(--surface-card));
 }
 
 .legal-check label {
@@ -1700,7 +1701,10 @@ function newRequestKey() {
 .admin-actions {
     display: grid;
     gap: 0.65rem;
-    padding-top: 0.25rem;
+    border: 1px solid color-mix(in srgb, var(--primary-color) 24%, var(--surface-border));
+    border-radius: 8px;
+    padding: 0.7rem 0.8rem;
+    background: color-mix(in srgb, var(--primary-color) 8%, var(--surface-card));
 }
 
 .admin-action-buttons {

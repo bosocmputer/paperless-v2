@@ -231,18 +231,6 @@ function recordFlowEvent(event, extra = {}) {
         :header="flowHeader"
         @hide="closeFlowDialog"
     >
-        <template #header>
-            <div class="flow-dialog-title">
-                <span class="flow-dialog-title-icon">
-                    <i class="pi pi-sitemap"></i>
-                </span>
-                <span class="flow-dialog-title-copy">
-                    <strong>Flow เอกสาร SML</strong>
-                    <small>{{ flowHeader }}</small>
-                </span>
-            </div>
-        </template>
-
         <div class="flow-dialog-layout">
             <div class="flow-dialog-toolbar flex flex-col md:flex-row md:items-center justify-between gap-2">
                 <div class="flex flex-wrap items-center gap-2 md:justify-end">
@@ -296,48 +284,6 @@ function recordFlowEvent(event, extra = {}) {
     background: var(--surface-card);
 }
 
-.flow-dialog-title {
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
-.flow-dialog-title-icon {
-    width: 2.35rem;
-    height: 2.35rem;
-    display: inline-grid;
-    place-items: center;
-    flex: 0 0 auto;
-    border: 1px solid color-mix(in srgb, var(--blue-500, #3b82f6) 48%, var(--surface-border));
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--blue-100, #dbeafe) 82%, var(--surface-card));
-    color: var(--blue-700, #1d4ed8);
-}
-
-.flow-dialog-title-copy {
-    min-width: 0;
-    display: grid;
-    gap: 0.1rem;
-}
-
-.flow-dialog-title-copy strong,
-.flow-dialog-title-copy small {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.flow-dialog-title-copy strong {
-    font-size: 1rem;
-    color: var(--blue-800, #1e40af);
-}
-
-.flow-dialog-title-copy small {
-    font-size: 0.86rem;
-    color: var(--text-color-secondary);
-}
-
 .flow-dialog-toolbar {
     flex: 0 0 auto;
     padding: 0.6rem 0.75rem;
@@ -370,12 +316,6 @@ function recordFlowEvent(event, extra = {}) {
     display: flex;
     flex-direction: column;
     padding-top: 0.75rem;
-}
-
-:global(.document-flow-dialog .p-dialog-header) {
-    border-bottom: 1px solid color-mix(in srgb, var(--blue-200, #bfdbfe) 58%, var(--surface-border));
-    background: linear-gradient(90deg, color-mix(in srgb, var(--blue-50, #eff6ff) 84%, var(--surface-card)) 0%, var(--surface-card) 72%);
-    box-shadow: inset 6px 0 0 var(--blue-500, #3b82f6);
 }
 
 .flow-dialog-viewer :deep(.document-flow-viewer),

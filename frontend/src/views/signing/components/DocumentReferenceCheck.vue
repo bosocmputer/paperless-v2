@@ -471,62 +471,6 @@ function openReferencePDF(item = {}) {
     transform: translateY(-1px);
 }
 
-:global(.reference-check-dialog.reference-audit-dialog .p-dialog-header) {
-    border-bottom: 1px solid color-mix(in srgb, var(--orange-200, #fed7aa) 58%, var(--surface-border));
-    background: linear-gradient(90deg, color-mix(in srgb, var(--orange-50, #fff7ed) 86%, var(--surface-card)) 0%, var(--surface-card) 72%);
-    box-shadow: inset 6px 0 0 var(--orange-500, #f97316);
-}
-
-:global(.reference-check-dialog.reference-audit-dialog .p-dialog-content) {
-    background: color-mix(in srgb, var(--orange-50, #fff7ed) 24%, var(--surface-card));
-}
-
-:global(.reference-check-dialog.reference-audit-dialog .reference-dialog-layout) {
-    background: color-mix(in srgb, var(--orange-50, #fff7ed) 22%, var(--surface-card));
-}
-
-:global(.reference-audit-dialog .reference-dialog-title) {
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
-:global(.reference-audit-dialog .reference-dialog-title-icon) {
-    width: 2.35rem;
-    height: 2.35rem;
-    display: inline-grid;
-    place-items: center;
-    flex: 0 0 auto;
-    border: 1px solid color-mix(in srgb, var(--orange-500, #f97316) 48%, var(--surface-border));
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--orange-100, #ffedd5) 84%, var(--surface-card));
-    color: var(--orange-700, #c2410c);
-}
-
-:global(.reference-audit-dialog .reference-dialog-title-copy) {
-    min-width: 0;
-    display: grid;
-    gap: 0.1rem;
-}
-
-:global(.reference-audit-dialog .reference-dialog-title-copy strong),
-:global(.reference-audit-dialog .reference-dialog-title-copy small) {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-:global(.reference-audit-dialog .reference-dialog-title-copy strong) {
-    font-size: 1rem;
-    color: var(--orange-800, #9a3412);
-}
-
-:global(.reference-audit-dialog .reference-dialog-title-copy small) {
-    font-size: 0.86rem;
-    color: var(--text-color-secondary);
-}
-
 .reference-card.status-completed {
     border-color: color-mix(in srgb, var(--reference-success) 46%, var(--surface-border));
     background: color-mix(in srgb, var(--reference-success) 6%, var(--surface-card));
