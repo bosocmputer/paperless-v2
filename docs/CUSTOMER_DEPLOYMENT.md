@@ -18,6 +18,17 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-11 (Pui, web-only): quick-cancel a source-drift-blocked document from create-new
+
+Customer question after testing the earlier per-step drift check: when re-uploading a document blocked in `sml_source_changed` (e.g. `PU-01-2608001`), the only recovery path was to click through to the document's detail page and manually type a cancellation reason there. Customer asked whether the system could auto-cancel with a reason supplied automatically.
+
+Fixed in `paperless-web:eaedc20` (was `6ac9502`), keeping a deliberate confirm step rather than fully automatic cancellation (preserves an intentional audit trail — the user still reviews and clicks confirm, only the reason-typing friction is removed):
+- `SigningDocumentCreate.vue` (`/signing/documents/new`): the duplicate-block message now shows a "ยกเลิกเอกสารเดิม" button alongside the existing "เปิดเอกสารเดิม" button, but only when the blocking document's status is `sml_source_changed`/`sml_source_missing` (not for ordinary duplicates). Clicking it opens a cancel dialog with the reason pre-filled with the same attention message already shown on screen — still editable, still requires the user to click confirm. After a successful cancel, the duplicate check re-runs automatically so the user can upload the replacement PDF without leaving the page.
+- `SigningDocumentDetail.vue`: the existing cancel dialog also now pre-fills the same default reason for these two attention states, for consistency with the new create-new page action.
+
+- Deployed to **Pui only**. Release evidence `/data/paperless/releases/20260811130843-quick-cancel-blocking-doc-eaedc20/postdeploy-checks.txt`. HTTP 200 confirmed post-deploy, `api`/`db`/`sml-api` untouched.
+- Not yet rolled out to Wirat, Insee, Damrong — pending customer confirmation on Pui.
+
 ## Current Customer Status - 2026-08-11 (Pui, web-only): dialog header cleanup, sign-task panel reorganized
 
 Follow-up UX feedback from the same Pui test session: (1) the "Flow เอกสาร SML" and "ตรวจสอบเอกสารอ้างอิง" dialogs used a bespoke branded header (icon box, gradient background, colored left border) that didn't match the plain-header pattern used by every other dialog in the app; (2) the sign-task page (`/admin/signing/tasks/:taskId`) right-side panel stacked signature, attachments, PDF notes, legal checkbox, and confirm/reject buttons with uniform visual weight and no ordering — testing feedback was "scattered, signer doesn't know what to do first."
