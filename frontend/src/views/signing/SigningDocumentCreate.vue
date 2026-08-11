@@ -1062,8 +1062,8 @@ function makeSignNoteBoxKey() {
                                 เลือกเอกสาร {{ form.selectedCandidate.doc_no }} · {{ form.selectedCandidate.party_name || form.selectedCandidate.party_code || '-' }}
                             </Message>
                             <Message v-if="checkingDuplicate" severity="info">กำลังตรวจสอบว่าเอกสารนี้เคยสร้างใน PaperLess แล้วหรือไม่...</Message>
-                            <Message v-else-if="blockingDuplicateDocument" severity="error">
-                                <div class="flex w-full flex-col gap-3">
+                            <Message v-else-if="blockingDuplicateDocument" severity="error" class="duplicate-block-message">
+                                <div class="duplicate-block-stack flex flex-col gap-3">
                                     <div>
                                         <div class="font-bold">{{ duplicateCheck?.message || 'เอกสารนี้มีอยู่ใน PaperLess แล้ว' }}</div>
                                         <div class="mt-1 flex flex-wrap items-center gap-2">
@@ -1071,7 +1071,7 @@ function makeSignNoteBoxKey() {
                                             <Tag :value="signingStatusLabel(blockingDuplicateDocument.status)" :severity="signingStatusSeverity(blockingDuplicateDocument.status)" />
                                         </div>
                                     </div>
-                                    <div class="flex w-full flex-wrap justify-end gap-2">
+                                    <div class="flex flex-wrap justify-end gap-2">
                                         <Button v-if="blockingDocumentNeedsSourceCancel" label="ยกเลิกเอกสารเดิม" icon="pi pi-trash" severity="danger" @click="openCancelBlockingDialog" />
                                         <Button label="เปิดเอกสารเดิม" icon="pi pi-external-link" severity="danger" outlined @click="openDuplicateDocument(blockingDuplicateDocument)" />
                                     </div>
@@ -1246,6 +1246,26 @@ function makeSignNoteBoxKey() {
 </template>
 
 <style scoped>
+/* PrimeVue's Message renders the default slot inside .p-message-text, which
+   sits as a flex ITEM (not the container) inside .p-message-content's row
+   (display:flex, no flex-direction set on .p-message-text itself). A flex
+   item's basis defaults to its content size — width:100%/flex on OUR div
+   nested one level further in had no effect because .p-message-text, the
+   actual flex item, was still sized to content. Growing .p-message-text
+   itself is what gives the slot real width to work with. */
+.duplicate-block-message :deep(.p-message-content) {
+    align-items: stretch;
+}
+
+.duplicate-block-message :deep(.p-message-text) {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.duplicate-block-stack {
+    width: 100%;
+}
+
 .cancel-document-form {
     display: grid;
     gap: 0.75rem;
