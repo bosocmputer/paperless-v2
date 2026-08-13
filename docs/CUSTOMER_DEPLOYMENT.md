@@ -18,6 +18,22 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-13 (all four shops, paperless-api only): stop auto-reseeding PAYREQ/ADV/PREPAY on every masters-list load
+
+Follow-up to the cascade-delete fix directly below. Customer deleted a `virin`-tenant `PREPAY` master (`DELETE` returned `204`, confirmed removed from the DB), but the very next `GET /api/internal-document-masters` list showed a `PREPAY` row again with a brand-new id. Root cause: both `listDocumentTypes` and `listInternalDocumentMasters` handlers called `store.EnsureDefaultInternalDocumentMasters` on every request, which `INSERT`ed `PAYREQ`/`ADV`/`PREPAY` back (`ON CONFLICT (sml_tenant, code) DO NOTHING`, so only when that code didn't already exist) — any delete of one of these three codes was immediately undone by the next page load/list refresh.
+
+Fixed in `paperless-api:17cd7ce` (was `c82ce6e`): removed both call sites and the now-dead `EnsureDefaultInternalDocumentMasters` store function. This is a **deliberate behavior change**, confirmed with the customer/operator before shipping: nothing is auto-seeded on page load anymore — a tenant that has never opened `/config/internal-document-masters` will no longer see `PAYREQ`/`ADV`/`PREPAY` pre-created; the operator creates masters explicitly via the existing "สร้างใหม่" flow during setup, same as any tenant that had one of the three deleted.
+
+This is purely a `paperless-api` fix — no `sml-api-bybos`/`paperless-web` code changed, so only the `api` container was redeployed on each shop; `web`/`db`/`sml-api` untouched everywhere.
+
+- **Damrong Homeplus**: `api` deployed, healthy. Confirmed post-restart that the `virin` tenant still has exactly 3 masters with the same ids as before this deploy (no unexpected auto-create on container start). Release evidence `/data/paperless/releases/20260813114442-remove-master-autoseed-17cd7ce/postdeploy-checks.txt`. Customer to retest: delete a `PAYREQ`/`ADV`/`PREPAY` master, reload the masters page, confirm it does not reappear.
+- **Pui, Wirat Home Mart, Insee Construction**: `api` deployed preventively — healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260813114934-remove-master-autoseed-17cd7ce/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260813115155-remove-master-autoseed-17cd7ce/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260813115714-remove-master-autoseed-17cd7ce/postdeploy-checks.txt`
+
+**Rollback note**: rolling back to `c82ce6e` restores the auto-reseed behavior but does not restore any rows deleted while `17cd7ce` was live — deletes are not reversible by an image rollback.
+
 ## Current Customer Status - 2026-08-13 (all four shops, paperless-api only): internal document master delete blocked by orphaned config/signature templates
 
 Damrong reported unable to delete an internal document master at `/config/internal-document-masters` with `internal_master_in_use`, despite the `drh` tenant never having created a real internal document. Confirmed against production DB: `drh` had 0 `internal_documents` rows but 1 `signature_templates` row for each of `PAYREQ`/`ADV`/`PREPAY` (from the customer already using "จัดวางกรอบลายเซ็น" to place signer boxes during normal setup, per the Internal Document Rollout runbook above). `DeleteInternalDocumentMaster` blocked deletion whenever a `document_config_steps` or `signature_templates` row existed for the master's code — not only when a real `internal_documents` row existed — so setup-only masters with zero real usage could never be deleted or recoded, only disabled.
