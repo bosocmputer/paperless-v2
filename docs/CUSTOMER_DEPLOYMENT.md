@@ -18,6 +18,22 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-13 (all four shops, sml-api-bybos only): signature permission case-sensitivity fix
+
+Damrong reported all 42 `drh`-tenant users blocked syncing saved signatures with `signature_user_not_allowed` in the "Sync ผู้ใช้และลายเซ็นจาก SML" dialog. Root cause confirmed against live production (not guessed): `isSyncCandidateUser` in `sml-api-bybos` compared `data_group`/`data_code` with exact-match equality, while `sml_database_list` stores tenant `drh` as `data_code='drh'` (lowercase) and `sml_database_list_user_and_group` stores that same tenant's permission rows as `data_code='DRH'` (uppercase) — the two never matched, so every otherwise-valid `active_status=1` user in that tenant was denied. Reproduced directly: the exact failing request against `paperless-damrong-sml-api` returned `403 signature_user_not_allowed` pre-fix; the same SQL run manually with the correct-case `data_code` returned the expected 120 permission rows.
+
+Fixed in `sml-api-bybos:99de187` (was `fd9bafd`): both CTEs (`direct_allowed`, `group_allowed`) in `isSyncCandidateUser` now compare `data_group`/`data_code` via `lower(trim())`, matching the pattern already used everywhere else in `auth.go` (`lookupDatabase`, `listUserDatabases`) — only this one query had the inconsistency. Generic fix, not `drh`-specific; any tenant with mismatched casing between the two tables would hit the same bug.
+
+This is purely an `sml-api-bybos` fix — no `paperless-api`/`paperless-web` code changed, so only the `sml-api` container was redeployed on each shop; `api`/`web`/`db` untouched everywhere.
+
+- **Damrong Homeplus**: `sml-api` deployed, healthy. Verified by re-running the exact previously-failing request (tenant `drh`, userCodes `77711059`/`7770751`/`1411`/`10392`) directly against the container post-deploy — all now return `200 OK` with the real signature image (was `403`). Release evidence `/data/paperless/releases/20260813103738-signature-permission-case-fix-99de187/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction**: `sml-api` deployed preventively (no reported symptom on these three, but the same code path applies to any shop) — healthy on each, public URL smoke HTTP 200. No app-login credential available in this session to re-run a live signature fetch on these three; fix is the same code path verified working on Damrong. Release evidence:
+  - Pui: `/data/paperless/releases/20260813104137-signature-permission-case-fix-99de187/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260813104724-signature-permission-case-fix-99de187/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260813105436-signature-permission-case-fix-99de187/postdeploy-checks.txt`
+
+**Follow-up not yet done**: 42 rows in Damrong's `user_saved_signatures` table still carry the stale `last_error='signature_user_not_allowed'` from before this fix — these are status records only, not currently blocking, and will clear on the next superadmin-triggered "Sync จาก SML" from `/admin/users` for tenant `drh`. Not repaired directly via SQL per this doc's guidance against direct signature-data repair; customer/admin should re-run the sync action to refresh the displayed status.
+
 ## Current Customer Status - 2026-08-11 (Wirat, Insee, Damrong): synced to Pui's `847fd23` — PDF clearance notice removed + Workflow signer-slot validation fix
 
 Pui confirmed both fixes below working; rolled the same image tag out to the remaining three shops (`api` and `web` recreated on each, `sml-api`/`db` untouched).
