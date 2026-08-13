@@ -35,18 +35,6 @@ type ReserveInternalDocumentInput struct {
 	ActorID        string
 }
 
-func (s *Store) EnsureDefaultInternalDocumentMasters(ctx context.Context, actorID string) error {
-	tenant := NormalizeSMLTenant(tenantFilterValue(ctx))
-	_, err := s.pool.Exec(ctx, `
-INSERT INTO internal_document_masters (sml_tenant, code, name, prefix, running_pattern, status, created_by)
-VALUES ($1, 'PAYREQ', 'ใบขออนุมัติจ่าย', 'PAY', '@YYMMDD-###', 'inactive', NULLIF($2,'')::uuid),
-       ($1, 'ADV', 'ใบขอเบิกเงินทดรอง', 'ADV', '@YYMMDD-###', 'inactive', NULLIF($2,'')::uuid),
-       ($1, 'PREPAY', 'ใบขอจ่ายเงินล่วงหน้า', 'PRE', '@YYMMDD-###', 'inactive', NULLIF($2,'')::uuid)
-ON CONFLICT (sml_tenant, code) DO NOTHING
-`, tenant, actorID)
-	return err
-}
-
 func (s *Store) ListInternalDocumentMasters(ctx context.Context) ([]models.InternalDocumentMaster, error) {
 	tenant := tenantFilterValue(ctx)
 	rows, err := s.pool.Query(ctx, internalMasterSelect()+`

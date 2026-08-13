@@ -37,11 +37,6 @@ func (s *Server) listDocumentTypes(w http.ResponseWriter, r *http.Request) {
 	actor, _ := currentUser(r)
 	masters := []models.InternalDocumentMaster{}
 	if s.cfg.InternalDocuments {
-		if err := s.store.EnsureDefaultInternalDocumentMasters(r.Context(), actor.ID); err != nil {
-			s.logger.Error("seed internal document masters failed", "error", err)
-			writeError(w, http.StatusInternalServerError, "document_types_failed", "Cannot load document types right now.")
-			return
-		}
 		var err error
 		masters, err = s.store.ListInternalDocumentMasters(r.Context())
 		if err != nil {
@@ -82,11 +77,6 @@ func (s *Server) listInternalDocumentMasters(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	actor, _ := currentUser(r)
-	if err := s.store.EnsureDefaultInternalDocumentMasters(r.Context(), actor.ID); err != nil {
-		s.logger.Error("seed internal document masters failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_masters_failed", "Cannot load internal document masters right now.")
-		return
-	}
 	items, err := s.store.ListInternalDocumentMasters(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_masters_failed", "Cannot load internal document masters right now.")
