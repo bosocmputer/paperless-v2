@@ -18,6 +18,20 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-13 (all four shops, paperless-api only): internal document master delete blocked by orphaned config/signature templates
+
+Damrong reported unable to delete an internal document master at `/config/internal-document-masters` with `internal_master_in_use`, despite the `drh` tenant never having created a real internal document. Confirmed against production DB: `drh` had 0 `internal_documents` rows but 1 `signature_templates` row for each of `PAYREQ`/`ADV`/`PREPAY` (from the customer already using "จัดวางกรอบลายเซ็น" to place signer boxes during normal setup, per the Internal Document Rollout runbook above). `DeleteInternalDocumentMaster` blocked deletion whenever a `document_config_steps` or `signature_templates` row existed for the master's code — not only when a real `internal_documents` row existed — so setup-only masters with zero real usage could never be deleted or recoded, only disabled.
+
+Fixed in `paperless-api:c82ce6e` (was `847fd23`): `DeleteInternalDocumentMaster` now runs in a transaction. It still blocks with `internal_master_in_use` if any `internal_documents` row references the master; otherwise it deletes the orphaned `document_config_steps`/`signature_templates` rows for that (tenant, code) before deleting the master, instead of refusing outright.
+
+This is purely a `paperless-api` fix — no `sml-api-bybos`/`paperless-web` code changed, so only the `api` container was redeployed on each shop; `web`/`db`/`sml-api` untouched everywhere.
+
+- **Damrong Homeplus**: `api` deployed, healthy. Release evidence `/data/paperless/releases/20260813111350-internal-master-cascade-delete-c82ce6e/postdeploy-checks.txt`. Did not simulate the delete directly against the DB (would bypass the API layer being fixed) — customer to retest deleting the `drh` `PAYREQ`/`ADV`/`PREPAY` masters from the UI to confirm end-to-end.
+- **Pui, Wirat Home Mart, Insee Construction**: `api` deployed preventively (no reported symptom on these three, but the same bug applies to any tenant with a setup-only master) — healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260813112100-internal-master-cascade-delete-c82ce6e/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260813112329-internal-master-cascade-delete-c82ce6e/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260813112637-internal-master-cascade-delete-c82ce6e/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-13 (all four shops, sml-api-bybos only): signature permission case-sensitivity fix
 
 Damrong reported all 42 `drh`-tenant users blocked syncing saved signatures with `signature_user_not_allowed` in the "Sync ผู้ใช้และลายเซ็นจาก SML" dialog. Root cause confirmed against live production (not guessed): `isSyncCandidateUser` in `sml-api-bybos` compared `data_group`/`data_code` with exact-match equality, while `sml_database_list` stores tenant `drh` as `data_code='drh'` (lowercase) and `sml_database_list_user_and_group` stores that same tenant's permission rows as `data_code='DRH'` (uppercase) — the two never matched, so every otherwise-valid `active_status=1` user in that tenant was denied. Reproduced directly: the exact failing request against `paperless-damrong-sml-api` returned `403 signature_user_not_allowed` pre-fix; the same SQL run manually with the correct-case `data_code` returned the expected 120 permission rows.
