@@ -135,23 +135,50 @@ WHERE id = $6 AND ($7 = '' OR sml_tenant = $7) AND revision = $8
 
 func (s *Store) DeleteInternalDocumentMaster(ctx context.Context, id string) error {
 	tenant := tenantFilterValue(ctx)
-	tag, err := s.pool.Exec(ctx, `
-DELETE FROM internal_document_masters m
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var code, smlTenant string
+	err = tx.QueryRow(ctx, `
+SELECT code, sml_tenant FROM internal_document_masters
 WHERE id = $1 AND ($2 = '' OR sml_tenant = $2)
-  AND NOT EXISTS (SELECT 1 FROM internal_documents d WHERE d.master_id = m.id)
-  AND NOT EXISTS (SELECT 1 FROM document_config_steps c WHERE c.sml_tenant = m.sml_tenant AND c.screen_code = 'INTERNAL' AND lower(c.doc_format_code) = lower(m.code))
-  AND NOT EXISTS (SELECT 1 FROM signature_templates t WHERE t.sml_tenant = m.sml_tenant AND t.screen_code = 'INTERNAL' AND lower(t.doc_format_code) = lower(m.code))
-`, id, tenant)
+FOR UPDATE`, id, tenant).Scan(&code, &smlTenant)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrInternalMasterNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	var hasDocuments bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM internal_documents WHERE master_id = $1)`, id).Scan(&hasDocuments); err != nil {
+		return err
+	}
+	if hasDocuments {
+		return ErrInternalMasterInUse
+	}
+
+	if _, err := tx.Exec(ctx, `
+DELETE FROM document_config_steps
+WHERE sml_tenant = $1 AND screen_code = 'INTERNAL' AND lower(doc_format_code) = lower($2)`, smlTenant, code); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM signature_templates
+WHERE sml_tenant = $1 AND screen_code = 'INTERNAL' AND lower(doc_format_code) = lower($2)`, smlTenant, code); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM internal_document_masters WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		if _, findErr := s.FindInternalDocumentMaster(ctx, id); findErr != nil {
-			return findErr
-		}
-		return ErrInternalMasterInUse
+		return ErrInternalMasterNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Store) ReserveInternalDocument(ctx context.Context, input ReserveInternalDocumentInput) (models.InternalDocument, bool, error) {
