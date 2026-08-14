@@ -1721,10 +1721,17 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 // number the next time the UI tries to place a new box there — surfacing as
 // a spurious "signer slot duplicate" error with no way to resolve it from the
 // UI, even though nothing is actually duplicated. Re-deriving each box's slot
-// from the just-saved step closes that gap. Boxes for signers no longer in
-// the step (or whose position/condition changed entirely) are left alone;
-// removing a position from a Workflow does not retroactively touch signature
-// templates, matching the existing step-level delete behavior.
+// from the just-saved step closes that gap.
+//
+// A box whose signer is no longer in the step's user list at all (removed
+// from the Workflow, not just reordered) is deleted outright rather than
+// left on its old slot: keeping it would either orphan a box nothing in the
+// Workflow points to anymore, or block a remaining signer from reusing that
+// slot number, reproducing the same unresolvable collision this function
+// exists to prevent. Boxes for a position no longer in the step at all (or
+// whose condition type changed) are left alone; removing a position from a
+// Workflow does not retroactively touch signature templates, matching the
+// existing step-level delete behavior.
 func reconcileSignatureTemplateBoxSlotsTx(ctx context.Context, tx pgx.Tx, tenant, screenCode, docFormatCode string, steps []models.DocumentConfigStepRequest) error {
 	for _, step := range steps {
 		if step.ConditionType != 2 {
@@ -1774,15 +1781,23 @@ FOR UPDATE OF b
 		}
 		rows.Close()
 
+		remaining := boxes[:0]
+		for _, box := range boxes {
+			if _, ok := indexByUser[box.signerKey]; !ok {
+				if _, err := tx.Exec(ctx, `DELETE FROM signature_template_boxes WHERE id = $1`, box.id); err != nil {
+					return err
+				}
+				continue
+			}
+			remaining = append(remaining, box)
+		}
+		boxes = remaining
+
 		changed := false
 		for i := range boxes {
-			if nextSlot, ok := indexByUser[boxes[i].signerKey]; ok {
-				boxes[i].nextSlot = nextSlot
-				if nextSlot != boxes[i].slot {
-					changed = true
-				}
-			} else {
-				boxes[i].nextSlot = boxes[i].slot
+			boxes[i].nextSlot = indexByUser[boxes[i].signerKey]
+			if boxes[i].nextSlot != boxes[i].slot {
+				changed = true
 			}
 		}
 		if !changed {
@@ -1793,7 +1808,9 @@ FOR UPDATE OF b
 		// slot (signer_slot has a DB check constraint requiring > 0, so this
 		// must stay positive) so no intermediate UPDATE can collide with the
 		// unique (template_id, position_code, signer_slot) index, then set
-		// the real target slots.
+		// the real target slots. Boxes whose signer left the step were
+		// already deleted above, so every remaining box's target slot is
+		// guaranteed free once all changed boxes have cleared their old slot.
 		const placeholderSlotBase = 100000
 		for i, box := range boxes {
 			if box.nextSlot == box.slot {
