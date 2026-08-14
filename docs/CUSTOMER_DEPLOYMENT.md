@@ -18,6 +18,24 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-14 (all four shops, paperless-api only): signature-template box slot reconciliation
+
+Damrong reported: at `/config/documents/2CO/signature-template`, adding the 6th signature box for Position 2 ("อนุมัติตรวจสินค้า", signer `999:ผู้จัดการแผนก`) always failed with `กรอบของ Position 2 มีลำดับ signer ซ้ำ`.
+
+Root cause confirmed against production DB and `audit_logs` (not guessed): a box's `signer_slot` is derived from that signer's index in the Workflow step's `userNN` list at the moment the box is created. The customer had edited Position 2's Workflow earlier the same session (multiple `document_config.workflow_save` events, `stepCount` fluctuating 2→3→2) to add the 6th signer and change the user order — but the 5 pre-existing boxes kept their old `signer_slot` values (`1,2,4,5,6` instead of `1,2,3,4,5`), only correct at the time each box was originally placed. `audit_logs` showed the customer retrying `box_add` → `save_error` → `box_delete` roughly 10 times over about an hour, all blocked by the same unresolvable slot collision (slot 6 already held by a different signer whose real current index was 5).
+
+**Immediate fix (this session, before the code deploy)**: corrected the 5 existing boxes' `signer_slot` directly on Damrong's production DB to `1,2,3,4,5` matching their signers' actual index in the current Workflow — verified in a rolled-back transaction first, then applied and confirmed. This alone unblocked the customer from adding the 6th box.
+
+**Code fix in `paperless-api:4a018fd`** (was `6f59db8`): `ReplaceDocumentConfigWorkflow` now re-derives every condition-2 step's signature-template box `signer_slot` values from the just-saved signer list, in the same transaction as the Workflow save. Uses a two-phase update through a placeholder slot (`100000+index`) to avoid colliding with the unique `(template_id, position_code, signer_slot)` index mid-update — a negative placeholder was tried first but rejected by the `signer_slot > 0` check constraint; caught via a rolled-back transaction test against production before shipping, not in production. This prevents the same class of bug on any Workflow whose signer order changes after boxes already exist, on any shop.
+
+This is a `paperless-api`-only change — `paperless-web`/`sml-api-bybos`/`db` untouched, so only `api` was redeployed on each shop.
+
+- **Damrong Homeplus**: `api` deployed, healthy. Confirmed post-deploy that Position 2's boxes still show the corrected slots 1-5 (the earlier manual data fix was not disturbed by the restart). Release evidence `/data/paperless/releases/20260814114250-signature-slot-reconcile-4a018fd/postdeploy-checks.txt`. Customer to confirm adding the 6th box for `999:ผู้จัดการแผนก` now succeeds.
+- **Pui, Wirat Home Mart, Insee Construction**: `api` deployed preventively (no reported symptom, no data fix needed — issue was specific to Damrong's `2CO` Position 2 boxes) — healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260814114712-signature-slot-reconcile-4a018fd/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260814114858-signature-slot-reconcile-4a018fd/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260814115349-signature-slot-reconcile-4a018fd/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-14 (all four shops, api+web): Workflow delete feature
 
 Customer request: allow deleting a Workflow at `/config/document-configs` when it has never been used to create a document — previously there was no delete action at all for a whole Workflow, only for individual steps within one (and step-delete itself was blocked while any signature-template box referenced that step).
