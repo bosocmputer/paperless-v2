@@ -18,6 +18,29 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-14 (all four shops, paperless-api only): proactive full-codebase audit — 8 fixes
+
+Customer asked for a full audit for other bugs after the two same-day production incidents below (4a018fd, 9d3ac59) on the signature-slot reconciliation logic. Spawned parallel review agents across the backend `internal/store` and `internal/api` layers (correctness, concurrency, simplification, efficiency, altitude, and removed-behavior angles), cross-verified and deduplicated the results down to 8 confirmed findings, fixed all 8, and verified each via `build`/`vet`/`test` plus rolled-back transactions against production data before deploying. **No user-reported symptom triggered any of these** — purely proactive, at the customer's request.
+
+Fixed in `paperless-api:69816ac` (was `9d3ac59`):
+
+1. **`ReplaceSignatureTemplateBoxes`** — added `FOR UPDATE` to the revision check (was missing the same lock pattern already applied to `document_config_steps`). Closes a silent-clobber race: two concurrent template-box saves at the same revision could both pass the optimistic check, and the second commit would discard the first admin's layout with no conflict error.
+2. **`DeleteDocumentConfigWorkflow` / `DeleteInternalDocumentMaster`** — added the `pg_advisory_xact_lock` that `ReplaceDocumentConfigWorkflow` already takes for the same `(tenant+screenCode, docFormatCode)` key. Closes a race where a concurrent save and delete on the same workflow could interleave.
+3. **`reconcileSignatureTemplateBoxSlotsTx`** — now also reconciles `signer_note_template_boxes` (identical `position_code`/`signer_slot`/`signer_user` shape to `signature_template_boxes`, previously untouched by today's earlier fixes). Without this, the exact same bug class would have silently reproduced on note boxes — rendering under the wrong or departed signer instead of throwing an error.
+4. **Same reconciler** — a step whose `ConditionType` changed away from `2` in a save now has its now-meaningless slotted boxes deleted, instead of left stale to collide with a future placement.
+5. **`copyDocumentConfigWorkflow`** — now copies all of `User01`–`User10` instead of only `User01`–`User03`. Matches the frontend fix already shipped in `847fd23` after max signers was raised 3→10 in `f15b534`; this backend copy handler was missed at the time.
+6. **`ReserveInternalDocument`** — now catches a unique-constraint violation on the idempotency key (reachable via a client double-submit racing the unlocked idempotency check) and falls back to the winning request's document instead of surfacing a raw `500` while also burning a running-number slot on the losing attempt.
+7. **`signerRowsForStep`** (condition_type=2 branch) — now matches each configured signer to their box by identity (`SignerUser`, via the existing-but-previously-unused `findBoxForUser` helper) instead of by array position after boxes are sorted by `signer_slot`. Removes a latent dependency on slot order matching `userNN` order that nothing enforced on every write path. Confirmed not reachable via the current UI flow during the audit; fixed as defense-in-depth.
+8. **`ReplaceDocumentConfigWorkflow` and its two callers** (save, copy) — now write a `document_config.signature_box_removed` audit event for every box the reconciler deletes as an orphan. The delete itself is unchanged (still outright, not soft-delete — reversing that would be a larger schema change), but the removal is no longer silent.
+
+This is an `api`-only change — `sml-api-bybos`/`paperless-web`/`db` untouched, so only `api` was redeployed on each shop.
+
+- **Damrong Homeplus**: `api` deployed, healthy. Confirmed post-deploy that `1CO` Position 2's 3 signature boxes are unchanged (slots 1-3, matching current Workflow order). Pre-deploy, dry-ran the condition-type-change scenario (fix #4) against this shop's real `1CO` Position 2 data in a rolled-back transaction — confirmed the new delete-on-condition-change logic works cleanly. No `signer_note_template_boxes` rows exist yet on any shop (feature unused so far), so fix #3 could not be exercised against real data; covered by code review and the shared code path with fix #1's already-verified logic. Release evidence `/data/paperless/releases/20260814144526-audit-fixes-69816ac/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction**: `api` deployed same-session — healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260814144640-audit-fixes-69816ac/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260814144719-audit-fixes-69816ac/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260814144813-audit-fixes-69816ac/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-14 (all four shops, paperless-api only): HOTFIX for the slot-reconciliation regression below
 
 Within an hour of the `4a018fd` deploy directly below, Damrong reported a new failure: at `/config/documents/1CO/workflow`, removing a signer from Position 2 (5 signers, one of them the just-fixed `999:ผู้จัดการแผนก` case) and clicking save returned `500 document_config_workflow_save_failed`. Confirmed in `paperless-damrong-api` logs: `ERROR: duplicate key value violates unique constraint "signature_template_boxes_slot_unique_idx"`, `docFormatCode=1CO`.

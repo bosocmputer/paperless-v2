@@ -42,8 +42,26 @@ Fixed in `paperless-api:9d3ac59` (was `4a018fd`): a box whose signer is no longe
 
 **Do not use `4a018fd` as a rollback target** — it carries this regression. Only roll back to it to isolate a problem specific to `9d3ac59` itself.
 
+## Proactive Full-Codebase Audit — 8 Fixes
+
+Customer asked for a full audit for other bugs after the two same-day incidents above. Spawned parallel review agents across `internal/store`/`internal/api` from multiple angles (correctness, concurrency, simplification, efficiency, altitude, removed-behavior), cross-verified and deduplicated to 8 confirmed findings — **none triggered by a user report**, purely proactive.
+
+Fixed in `paperless-api:69816ac` (was `9d3ac59`):
+
+1. `ReplaceSignatureTemplateBoxes` — added `FOR UPDATE` on the revision check, closing a silent-clobber race identical in shape to the slot-reconciliation bug above, just on template-box saves instead of workflow saves.
+2. `DeleteDocumentConfigWorkflow` / `DeleteInternalDocumentMaster` — added the advisory lock `ReplaceDocumentConfigWorkflow` already uses for the same key, closing a concurrent save-vs-delete race.
+3. Slot reconciliation now also covers `signer_note_template_boxes` (identical shape to `signature_template_boxes`, previously untouched — would have silently reproduced today's bug on note boxes instead of erroring).
+4. Slot reconciliation now deletes boxes for a step whose condition type changed away from "every signer must sign," instead of leaving them stale.
+5. `copyDocumentConfigWorkflow` now copies all 10 signer slots instead of just the first 3 — the backend counterpart to a frontend truncation fix shipped in `847fd23` was missed at the time.
+6. `ReserveInternalDocument` now resolves a client double-submit racing the idempotency check to the winning document instead of a raw 500.
+7. `signerRowsForStep` now matches signature boxes to signers by identity instead of array position, closing a latent (not currently UI-reachable) landmine.
+8. Deleting an orphaned signature/sign-note box during a workflow save is now logged to the audit trail (`document_config.signature_box_removed`) — the delete itself is unchanged, just no longer silent.
+
+Deployed same-session, `api`-only, to all four shops (`web`/`db`/`sml-api` untouched). Damrong's `1CO` Position 2 data (3 boxes) confirmed unchanged post-deploy; the condition-type-change scenario (fix #4) was dry-run against that same real data in a rolled-back transaction before deploying and confirmed correct. Release evidence under each shop's `/data/paperless/releases/20260814144*-audit-fixes-69816ac/postdeploy-checks.txt`.
+
 ## Status As Of 2026-08-14 (end of session)
 
 - **Workflow delete**: awaiting real-usage feedback from the customer. Did not simulate a delete directly against the production DB (would bypass the very API layer being added), so the delete button has not yet been exercised end-to-end on a real shop. Two things to confirm once tested: (1) deleting a genuinely unused Workflow succeeds and removes it from the list; (2) attempting to delete a Workflow that already has real documents still returns the blocking `document_config_workflow_in_use` error instead of deleting anything.
 - **Signature-template slot reconciliation**: Damrong's immediate data fix (2CO Position 2) is confirmed correct. The follow-up hotfix (9d3ac59) is deployed and its own test scenario (removing a signer from 1CO Position 2) passed in a rolled-back transaction, but has not yet been exercised live by the customer through the UI. Awaiting customer confirmation on both: adding the 6th box on 2CO Position 2, and removing a signer + saving on 1CO Position 2.
+- **Proactive audit fixes (8 items)**: none were reported by the customer, so there is nothing specific to ask them to retest — normal usage over the coming days is the real-world verification. Two items worth flagging if anything unexpected surfaces: fix #7 (signer-box identity matching) changed matching logic on the document-creation path, and fix #6 (idempotency fallback) changes behavior only under a double-submit race, both low-traffic paths that hadn't been exercised with adversarial timing before this audit.
 - No other work in progress or blocked as of this entry.
