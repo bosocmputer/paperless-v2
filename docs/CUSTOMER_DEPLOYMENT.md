@@ -18,6 +18,26 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-14 (all four shops, paperless-api only): HOTFIX for the slot-reconciliation regression below
+
+Within an hour of the `4a018fd` deploy directly below, Damrong reported a new failure: at `/config/documents/1CO/workflow`, removing a signer from Position 2 (5 signers, one of them the just-fixed `999:ผู้จัดการแผนก` case) and clicking save returned `500 document_config_workflow_save_failed`. Confirmed in `paperless-damrong-api` logs: `ERROR: duplicate key value violates unique constraint "signature_template_boxes_slot_unique_idx"`, `docFormatCode=1CO`.
+
+Root cause: a regression in `4a018fd` itself. `reconcileSignatureTemplateBoxSlotsTx` correctly re-derived slots for signers who stayed in the Workflow but changed index, but for a signer **removed entirely** from the step it left that signer's box on its old slot number (incorrectly treated as "unchanged"). When a remaining signer's new index landed on that stale slot, the two-phase placeholder update never moved the orphaned box out of the way first, so the final `UPDATE` collided with it — **every Workflow save that removed a signer with an existing signature box now failed outright**, a worse regression than the original bug (previously the Workflow itself still saved fine; only *adding* a new box could hit the slot-duplicate error).
+
+Verified root cause and fix against production DB (rolled-back transaction, not live data) reproducing the exact scenario: removing `0021:แจ่มจันทร์` from `1CO` Position 2's 5 signers. Old code: unique-constraint conflict. New code: orphaned box deleted first, remaining boxes re-slotted cleanly with no error.
+
+**Fixed in `paperless-api:9d3ac59`** (was `4a018fd`): `reconcileSignatureTemplateBoxSlotsTx` now deletes a box outright once its signer is no longer in the step's user list at all, before reconciling the remaining boxes' slots via the existing two-phase placeholder update — closing the gap instead of leaving a stale slot to collide with.
+
+This is an `api`-only hotfix, deployed to all four shops within the same session as the regression it fixes (not staged Damrong-first, given the severity — Workflow save was broken for a real edit-in-progress).
+
+- **Damrong Homeplus**: `api` deployed, healthy. Confirmed post-deploy that `1CO` Position 2 still has all 5 original boxes untouched (the failed save attempts rolled back cleanly, no partial writes). Release evidence `/data/paperless/releases/20260814141210-signature-slot-reconcile-hotfix-9d3ac59/postdeploy-checks.txt`. Customer to retest: remove a signer from `1CO` Position 2 and save again.
+- **Pui, Wirat Home Mart, Insee Construction**: `api` deployed same-session — healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260814141315-signature-slot-reconcile-hotfix-9d3ac59/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260814141355-signature-slot-reconcile-hotfix-9d3ac59/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260814141441-signature-slot-reconcile-hotfix-9d3ac59/postdeploy-checks.txt`
+
+**Rollback note**: do not roll back to `4a018fd` as a general-purpose rollback target — it carries the regression described above. Only use it to isolate a problem that turns out to be specific to `9d3ac59` itself.
+
 ## Current Customer Status - 2026-08-14 (all four shops, paperless-api only): signature-template box slot reconciliation
 
 Damrong reported: at `/config/documents/2CO/signature-template`, adding the 6th signature box for Position 2 ("อนุมัติตรวจสินค้า", signer `999:ผู้จัดการแผนก`) always failed with `กรอบของ Position 2 มีลำดับ signer ซ้ำ`.

@@ -34,8 +34,16 @@ Deployed same-session to all four shops as an `api`-only redeploy (`--no-deps ap
 - Verification per shop: `api` `healthy`, public URL smoke `HTTP 200`, `/health/live` and `/health/ready` both OK. Damrong additionally confirmed post-deploy that Position 2's corrected slots were undisturbed by the restart.
 - Release evidence under each shop's `/data/paperless/releases/20260814*-signature-slot-reconcile-4a018fd/postdeploy-checks.txt`.
 
+## Signature-Template Box Slot Reconciliation — Hotfix
+
+Within an hour of the fix above shipping, Damrong hit a regression it introduced: removing a signer (not just reordering one) from a condition-2 Workflow step and saving returned `500 document_config_workflow_save_failed`, confirmed in API logs as a `signature_template_boxes_slot_unique_idx` violation on `1CO` Position 2. The reconciliation logic correctly re-slotted signers who moved index but left a *removed* signer's box on its old slot, so a remaining signer's new index collided with it — every Workflow save that removed a signer with an existing box failed outright, worse than the bug being fixed (previously the Workflow itself still saved fine).
+
+Fixed in `paperless-api:9d3ac59` (was `4a018fd`): a box whose signer is no longer in the step's user list at all is now deleted before the remaining boxes' slots are reconciled, closing the gap instead of leaving a stale slot to collide with. Verified against a rolled-back transaction reproducing the exact failing scenario before deploying. Rolled out to all four shops within the same session as the regression (not staged Damrong-first, given real edit-in-progress was broken). Release evidence under each shop's `/data/paperless/releases/20260814*-signature-slot-reconcile-hotfix-9d3ac59/postdeploy-checks.txt`.
+
+**Do not use `4a018fd` as a rollback target** — it carries this regression. Only roll back to it to isolate a problem specific to `9d3ac59` itself.
+
 ## Status As Of 2026-08-14 (end of session)
 
 - **Workflow delete**: awaiting real-usage feedback from the customer. Did not simulate a delete directly against the production DB (would bypass the very API layer being added), so the delete button has not yet been exercised end-to-end on a real shop. Two things to confirm once tested: (1) deleting a genuinely unused Workflow succeeds and removes it from the list; (2) attempting to delete a Workflow that already has real documents still returns the blocking `document_config_workflow_in_use` error instead of deleting anything.
-- **Signature-template slot reconciliation**: Damrong's immediate data fix is confirmed correct (verified directly on production DB post-deploy). Awaiting customer confirmation that adding the 6th box on `2CO` Position 2 now succeeds in the UI.
+- **Signature-template slot reconciliation**: Damrong's immediate data fix (2CO Position 2) is confirmed correct. The follow-up hotfix (9d3ac59) is deployed and its own test scenario (removing a signer from 1CO Position 2) passed in a rolled-back transaction, but has not yet been exercised live by the customer through the UI. Awaiting customer confirmation on both: adding the 6th box on 2CO Position 2, and removing a signer + saving on 1CO Position 2.
 - No other work in progress or blocked as of this entry.
