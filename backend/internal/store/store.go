@@ -1697,6 +1697,10 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 		}
 	}
 
+	if err := reconcileSignatureTemplateBoxSlotsTx(ctx, tx, tenant, screenCode, docFormatCode, steps); err != nil {
+		return nil, err
+	}
+
 	updated, err := listDocumentConfigStepsTx(ctx, tx, screenCode, docFormatCode, false)
 	if err != nil {
 		return nil, err
@@ -1705,6 +1709,122 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 		return nil, err
 	}
 	return updated, nil
+}
+
+// reconcileSignatureTemplateBoxSlotsTx keeps existing signature-template boxes
+// aligned with a Workflow step's signer order after that step is saved. A box
+// records the signer it belongs to (signer_user) but positions it on the page
+// via signer_slot, which the UI derives from that signer's index in the
+// step's userNN list. If a save reorders or changes that list, boxes for
+// signers who kept their slot are untouched, but a signer who moved to a
+// different index would collide with whichever box already holds that slot
+// number the next time the UI tries to place a new box there — surfacing as
+// a spurious "signer slot duplicate" error with no way to resolve it from the
+// UI, even though nothing is actually duplicated. Re-deriving each box's slot
+// from the just-saved step closes that gap. Boxes for signers no longer in
+// the step (or whose position/condition changed entirely) are left alone;
+// removing a position from a Workflow does not retroactively touch signature
+// templates, matching the existing step-level delete behavior.
+func reconcileSignatureTemplateBoxSlotsTx(ctx context.Context, tx pgx.Tx, tenant, screenCode, docFormatCode string, steps []models.DocumentConfigStepRequest) error {
+	for _, step := range steps {
+		if step.ConditionType != 2 {
+			continue
+		}
+		users := stepRequestUsers(step)
+		if len(users) == 0 {
+			continue
+		}
+		indexByUser := make(map[string]int, len(users))
+		for i, user := range users {
+			indexByUser[strings.ToLower(user)] = i + 1
+		}
+
+		rows, err := tx.Query(ctx, `
+SELECT b.id::text, b.signer_slot, b.signer_user
+FROM signature_template_boxes b
+JOIN signature_templates t ON t.id = b.template_id
+WHERE t.status IN ('draft', 'active')
+  AND ($1 = '' OR t.sml_tenant = $1)
+  AND t.screen_code = $2
+  AND lower(t.doc_format_code) = lower($3)
+  AND lower(b.position_code) = lower($4)
+FOR UPDATE OF b
+`, tenant, screenCode, docFormatCode, step.PositionCode)
+		if err != nil {
+			return err
+		}
+		type boxSlot struct {
+			id        string
+			slot      int
+			nextSlot  int
+			signerKey string
+		}
+		boxes := []boxSlot{}
+		for rows.Next() {
+			var b boxSlot
+			if err := rows.Scan(&b.id, &b.slot, &b.signerKey); err != nil {
+				rows.Close()
+				return err
+			}
+			b.signerKey = strings.ToLower(strings.TrimSpace(b.signerKey))
+			boxes = append(boxes, b)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows.Close()
+
+		changed := false
+		for i := range boxes {
+			if nextSlot, ok := indexByUser[boxes[i].signerKey]; ok {
+				boxes[i].nextSlot = nextSlot
+				if nextSlot != boxes[i].slot {
+					changed = true
+				}
+			} else {
+				boxes[i].nextSlot = boxes[i].slot
+			}
+		}
+		if !changed {
+			continue
+		}
+
+		// Two-phase update: first move every changed box to a high placeholder
+		// slot (signer_slot has a DB check constraint requiring > 0, so this
+		// must stay positive) so no intermediate UPDATE can collide with the
+		// unique (template_id, position_code, signer_slot) index, then set
+		// the real target slots.
+		const placeholderSlotBase = 100000
+		for i, box := range boxes {
+			if box.nextSlot == box.slot {
+				continue
+			}
+			if _, err := tx.Exec(ctx, `UPDATE signature_template_boxes SET signer_slot = $1 WHERE id = $2`, placeholderSlotBase+i+1, box.id); err != nil {
+				return err
+			}
+		}
+		for _, box := range boxes {
+			if box.nextSlot == box.slot {
+				continue
+			}
+			if _, err := tx.Exec(ctx, `UPDATE signature_template_boxes SET signer_slot = $1 WHERE id = $2`, box.nextSlot, box.id); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func stepRequestUsers(step models.DocumentConfigStepRequest) []string {
+	values := []string{step.User01, step.User02, step.User03, step.User04, step.User05, step.User06, step.User07, step.User08, step.User09, step.User10}
+	users := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			users = append(users, trimmed)
+		}
+	}
+	return users
 }
 
 func listDocumentConfigStepsTx(ctx context.Context, tx pgx.Tx, screenCode, docFormatCode string, forUpdate bool) ([]models.DocumentConfigStep, error) {

@@ -38,3 +38,22 @@ func TestComputeDocumentConfigWorkflowRevision(t *testing.T) {
 		t.Fatalf("revision did not change after workflow field changed")
 	}
 }
+
+func TestStepRequestUsers(t *testing.T) {
+	step := models.DocumentConfigStepRequest{
+		User01: "04002:กุลธิดา",
+		User02: "  ",
+		User03: "0000:JIRAPONG",
+		User06: "999:ผู้จัดการแผนก",
+	}
+	got := stepRequestUsers(step)
+	want := []string{"04002:กุลธิดา", "0000:JIRAPONG", "999:ผู้จัดการแผนก"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d users, got %d (%#v)", len(want), len(got), got)
+	}
+	for i, value := range want {
+		if got[i] != value {
+			t.Fatalf("expected users[%d] = %q, got %q", i, value, got[i])
+		}
+	}
+}
