@@ -57,6 +57,8 @@ var (
 	ErrDocumentConfigDuplicate          = errors.New("document config step already exists")
 	ErrDocumentConfigNotFound           = errors.New("document config step not found")
 	ErrDocumentConfigRevisionConflict   = errors.New("document config workflow revision conflict")
+	ErrDocumentConfigWorkflowNotFound   = errors.New("document config workflow not found")
+	ErrDocumentConfigWorkflowInUse      = errors.New("document config workflow is already in use")
 	ErrSignatureTemplateNotFound        = errors.New("signature template not found")
 	ErrSignatureRevisionConflict        = errors.New("signature template revision conflict")
 	ErrSignatureTemplateNotDraft        = errors.New("signature template is not draft")
@@ -1557,6 +1559,51 @@ func (s *Store) DeleteDocumentConfigStep(ctx context.Context, id string) error {
 		return ErrDocumentConfigNotFound
 	}
 	return nil
+}
+
+func (s *Store) DeleteDocumentConfigWorkflow(ctx context.Context, screenCode, docFormatCode string) error {
+	tenant := NormalizeSMLTenant(tenantFilterValue(ctx))
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+SELECT EXISTS(
+    SELECT 1 FROM document_config_steps
+    WHERE ($1 = '' OR sml_tenant = $1) AND screen_code = $2 AND lower(doc_format_code) = lower($3)
+)`, tenant, screenCode, docFormatCode).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrDocumentConfigWorkflowNotFound
+	}
+
+	var hasDocuments bool
+	if err := tx.QueryRow(ctx, `
+SELECT EXISTS(
+    SELECT 1 FROM signing_documents
+    WHERE ($1 = '' OR sml_tenant = $1) AND screen_code = $2 AND lower(doc_format_code) = lower($3)
+)`, tenant, screenCode, docFormatCode).Scan(&hasDocuments); err != nil {
+		return err
+	}
+	if hasDocuments {
+		return ErrDocumentConfigWorkflowInUse
+	}
+
+	if _, err := tx.Exec(ctx, `
+DELETE FROM signature_templates
+WHERE ($1 = '' OR sml_tenant = $1) AND screen_code = $2 AND lower(doc_format_code) = lower($3)`, tenant, screenCode, docFormatCode); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+DELETE FROM document_config_steps
+WHERE ($1 = '' OR sml_tenant = $1) AND screen_code = $2 AND lower(doc_format_code) = lower($3)`, tenant, screenCode, docFormatCode); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) CountSignatureTemplateBoxesForConfig(ctx context.Context, screenCode, docFormatCode, positionCode string) (int, error) {

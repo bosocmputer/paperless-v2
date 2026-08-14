@@ -91,6 +91,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/document-config-workflows", s.requireSuperAdmin(http.HandlerFunc(s.listDocumentConfigWorkflows)))
 	mux.Handle("GET /api/document-config-workflows/{docFormatCode}", s.requireSuperAdmin(http.HandlerFunc(s.getDocumentConfigWorkflow)))
 	mux.Handle("PUT /api/document-config-workflows/{docFormatCode}", s.requireSuperAdmin(http.HandlerFunc(s.saveDocumentConfigWorkflow)))
+	mux.Handle("DELETE /api/document-config-workflows/{docFormatCode}", s.requireSuperAdmin(http.HandlerFunc(s.deleteDocumentConfigWorkflow)))
 	mux.Handle("POST /api/document-config-workflows/{docFormatCode}/copy", s.requireSuperAdmin(http.HandlerFunc(s.copyDocumentConfigWorkflow)))
 	mux.Handle("POST /api/document-config-workflows/{docFormatCode}/events", s.requireSuperAdmin(http.HandlerFunc(s.recordDocumentConfigWorkflowEvent)))
 	mux.Handle("GET /api/signature-templates", s.requireAdmin(http.HandlerFunc(s.getSignatureTemplateState)))

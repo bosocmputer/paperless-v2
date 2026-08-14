@@ -24,6 +24,7 @@ const copySourceDocFormat = ref('');
 const copyPreview = ref(null);
 const loadingCopyPreview = ref(false);
 const copying = ref(false);
+const deleting = ref(false);
 
 const configuredCodes = computed(() => new Set(workflows.value.map((item) => normalizeCode(item.docFormatCode))));
 const availableDocFormatOptions = computed(() =>
@@ -168,6 +169,37 @@ async function copyWorkflow() {
     }
 }
 
+function confirmDelete(workflow) {
+    confirm.require({
+        message: `ลบ Workflow ของ ${workflow.docFormatCode}? ระบบจะลบเฉพาะกรณีที่ยังไม่มีเอกสารใช้ Workflow นี้`,
+        header: 'ยืนยันลบ Workflow',
+        icon: 'pi pi-trash',
+        rejectProps: {
+            label: 'ยกเลิก',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ลบ Workflow',
+            severity: 'danger'
+        },
+        accept: () => deleteWorkflow(workflow)
+    });
+}
+
+async function deleteWorkflow(workflow) {
+    deleting.value = true;
+    try {
+        await api.deleteDocumentConfigWorkflow(workflow.docFormatCode);
+        toast.add({ severity: 'success', summary: 'ลบ Workflow แล้ว', life: 2500 });
+        await loadPage();
+    } catch (err) {
+        toast.add({ severity: 'error', summary: err.status === 409 ? 'ลบไม่ได้ Workflow นี้ถูกใช้งานแล้ว' : 'ลบไม่สำเร็จ', detail: err.message, life: 4500 });
+    } finally {
+        deleting.value = false;
+    }
+}
+
 function docFormatName(format = {}) {
     return format.name_1 || format.name_2 || format.format || 'ไม่มีชื่อเอกสาร';
 }
@@ -283,6 +315,7 @@ function sameCode(left, right) {
                             @click="openCopy(data)"
                         />
                         <Button icon="pi pi-map-marker" severity="secondary" rounded outlined aria-label="กรอบเริ่มต้น" @click="openPreset(data.docFormatCode)" />
+                        <Button icon="pi pi-trash" severity="danger" rounded outlined aria-label="ลบ Workflow" :loading="deleting" @click="confirmDelete(data)" />
                     </div>
                 </template>
             </Column>

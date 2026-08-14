@@ -105,6 +105,49 @@ func (s *Server) getDocumentConfigWorkflow(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"workflow": workflow})
 }
 
+func (s *Server) deleteDocumentConfigWorkflow(w http.ResponseWriter, r *http.Request) {
+	docFormatCode := strings.TrimSpace(r.PathValue("docFormatCode"))
+	if docFormatCode == "" {
+		writeError(w, http.StatusBadRequest, "missing_doc_format_code", "Doc format code is required.")
+		return
+	}
+	steps, err := s.store.ListDocumentConfigSteps(r.Context(), "", docFormatCode)
+	if err != nil {
+		s.logger.Error("load document config workflow for delete failed", "error", err, "docFormatCode", docFormatCode)
+		writeError(w, http.StatusInternalServerError, "document_config_workflow_delete_failed", "Cannot delete document workflow right now.")
+		return
+	}
+	if len(steps) == 0 {
+		writeError(w, http.StatusNotFound, "document_config_workflow_not_found", "Document workflow was not found.")
+		return
+	}
+	screenCode := steps[0].ScreenCode
+
+	if err := s.store.DeleteDocumentConfigWorkflow(r.Context(), screenCode, docFormatCode); err != nil {
+		switch {
+		case errors.Is(err, store.ErrDocumentConfigWorkflowNotFound):
+			writeError(w, http.StatusNotFound, "document_config_workflow_not_found", "Document workflow was not found.")
+		case errors.Is(err, store.ErrDocumentConfigWorkflowInUse):
+			writeError(w, http.StatusConflict, "document_config_workflow_in_use", "Workflow นี้ถูกใช้งานสร้างเอกสารแล้ว ไม่สามารถลบได้")
+		default:
+			s.logger.Error("delete document config workflow failed", "error", err, "docFormatCode", docFormatCode)
+			writeError(w, http.StatusInternalServerError, "document_config_workflow_delete_failed", "Cannot delete document workflow right now.")
+		}
+		return
+	}
+
+	actor, _ := currentUser(r)
+	if err := s.store.WriteAuditWithMetadata(r.Context(), actor.ID, "document_config.workflow_delete", "document_config_workflow", docFormatCode, clientIP(r), r.UserAgent(), map[string]any{
+		"docFormatCode": docFormatCode,
+		"screenCode":    screenCode,
+		"stepCount":     len(steps),
+	}); err != nil {
+		s.logger.Warn("write workflow delete audit failed", "error", err, "docFormatCode", docFormatCode)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
 func (s *Server) saveDocumentConfigWorkflow(w http.ResponseWriter, r *http.Request) {
 	docFormatCode := strings.TrimSpace(r.PathValue("docFormatCode"))
 	var req models.DocumentConfigWorkflowSaveRequest

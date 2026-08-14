@@ -276,6 +276,9 @@ export const api = {
             body: JSON.stringify(payload)
         });
     },
+    deleteDocumentConfigWorkflow(docFormatCode) {
+        return request(`/api/document-config-workflows/${encodeURIComponent(docFormatCode)}`, { method: 'DELETE' });
+    },
     recordDocumentConfigWorkflowEvent(docFormatCode, payload) {
         return request(`/api/document-config-workflows/${encodeURIComponent(docFormatCode)}/events`, {
             method: 'POST',
