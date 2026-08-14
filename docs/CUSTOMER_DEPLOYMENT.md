@@ -18,6 +18,23 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-14 (all four shops, api+web): Workflow delete feature
+
+Customer request: allow deleting a Workflow at `/config/document-configs` when it has never been used to create a document — previously there was no delete action at all for a whole Workflow, only for individual steps within one (and step-delete itself was blocked while any signature-template box referenced that step).
+
+Added `paperless-api:6f59db8` (was `17cd7ce`) / `paperless-web:6f59db8` (was `847fd23`):
+
+- Backend: `DELETE /api/document-config-workflows/{docFormatCode}`. Blocks with `document_config_workflow_in_use` (`409`) if any `signing_documents` row exists for that `(tenant, screen_code, doc_format_code)` — this single check covers both SML-sourced and internal documents, since both write to `signing_documents`. Otherwise deletes that workflow's `signature_templates` rows first (cascading to `signature_template_boxes`/`signer_note_template_boxes` via the existing `ON DELETE CASCADE` FK), then its `document_config_steps` rows, all in one transaction.
+- Frontend: delete button (trash icon) added to the Workflow list page (`config/document-configs`), with a confirm dialog before calling the new endpoint.
+
+This is a `paperless-api` + `paperless-web` change only — `sml-api-bybos`/`db` untouched, so only `api` and `web` were redeployed on each shop.
+
+- **Damrong Homeplus**: deployed, both healthy. Release evidence `/data/paperless/releases/20260814105058-workflow-delete-6f59db8/postdeploy-checks.txt`. Did not simulate the delete directly against the DB (would bypass the API layer being added) — customer to retest: create/reach an unused Workflow and confirm the new delete button works, and separately confirm a Workflow with real documents still blocks with `document_config_workflow_in_use`.
+- **Pui, Wirat Home Mart, Insee Construction**: deployed together with Damrong (not a Damrong-specific bug fix, a new feature rolled out everywhere at once) — healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260814105232-workflow-delete-6f59db8/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260814111424-workflow-delete-6f59db8/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260814111704-workflow-delete-6f59db8/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-13 (all four shops, paperless-api only): stop auto-reseeding PAYREQ/ADV/PREPAY on every masters-list load
 
 Follow-up to the cascade-delete fix directly below. Customer deleted a `virin`-tenant `PREPAY` master (`DELETE` returned `204`, confirmed removed from the DB), but the very next `GET /api/internal-document-masters` list showed a `PREPAY` row again with a brand-new id. Root cause: both `listDocumentTypes` and `listInternalDocumentMasters` handlers called `store.EnsureDefaultInternalDocumentMasters` on every request, which `INSERT`ed `PAYREQ`/`ADV`/`PREPAY` back (`ON CONFLICT (sml_tenant, code) DO NOTHING`, so only when that code didn't already exist) — any delete of one of these three codes was immediately undone by the next page load/list refresh.
