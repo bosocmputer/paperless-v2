@@ -105,6 +105,29 @@ func (s *Server) getDocumentConfigWorkflow(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"workflow": workflow})
 }
 
+// auditRemovedSignatureBoxes records one audit event per signature/sign-note
+// box that reconcileSignatureTemplateBoxSlotsTx deleted during this save,
+// since those box coordinates are not otherwise recoverable (see the
+// function's doc comment in store.go). Best-effort: a logging failure here
+// does not fail the request, matching how the workflow_save/workflow_copy
+// audit events next to this call are also best-effort.
+func (s *Server) auditRemovedSignatureBoxes(r *http.Request, docFormatCode string, removedBoxes []models.RemovedSignatureBox) {
+	if len(removedBoxes) == 0 {
+		return
+	}
+	actor, _ := currentUser(r)
+	for _, box := range removedBoxes {
+		if err := s.store.WriteAuditWithMetadata(r.Context(), actor.ID, "document_config.signature_box_removed", "signature_template_box", docFormatCode, clientIP(r), r.UserAgent(), map[string]any{
+			"docFormatCode": docFormatCode,
+			"positionCode":  box.PositionCode,
+			"signerUser":    box.SignerUser,
+			"table":         box.Table,
+		}); err != nil {
+			s.logger.Warn("write removed signature box audit failed", "error", err, "docFormatCode", docFormatCode, "positionCode", box.PositionCode)
+		}
+	}
+}
+
 func (s *Server) deleteDocumentConfigWorkflow(w http.ResponseWriter, r *http.Request) {
 	docFormatCode := strings.TrimSpace(r.PathValue("docFormatCode"))
 	if docFormatCode == "" {
@@ -180,7 +203,7 @@ func (s *Server) saveDocumentConfigWorkflow(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	updatedSteps, err := s.store.ReplaceDocumentConfigWorkflow(r.Context(), screenCode, strings.TrimSpace(format.Code), req.Revision, steps)
+	updatedSteps, removedBoxes, err := s.store.ReplaceDocumentConfigWorkflow(r.Context(), screenCode, strings.TrimSpace(format.Code), req.Revision, steps)
 	if errors.Is(err, store.ErrDocumentConfigRevisionConflict) {
 		actor, _ := currentUser(r)
 		_ = s.store.WriteAuditWithMetadata(r.Context(), actor.ID, "document_config.workflow_revision_conflict", "document_config_workflow", strings.TrimSpace(format.Code), clientIP(r), r.UserAgent(), map[string]any{
@@ -215,6 +238,7 @@ func (s *Server) saveDocumentConfigWorkflow(w http.ResponseWriter, r *http.Reque
 	}); err != nil {
 		s.logger.Warn("write workflow save audit failed", "error", err, "docFormatCode", workflow.DocFormat.Code)
 	}
+	s.auditRemovedSignatureBoxes(r, workflow.DocFormat.Code, removedBoxes)
 
 	writeJSON(w, http.StatusOK, map[string]any{"workflow": workflow})
 }
@@ -267,6 +291,13 @@ func (s *Server) copyDocumentConfigWorkflow(w http.ResponseWriter, r *http.Reque
 			User01:                 step.User01,
 			User02:                 step.User02,
 			User03:                 step.User03,
+			User04:                 step.User04,
+			User05:                 step.User05,
+			User06:                 step.User06,
+			User07:                 step.User07,
+			User08:                 step.User08,
+			User09:                 step.User09,
+			User10:                 step.User10,
 			SequenceNo:             step.SequenceNo,
 			ConditionType:          step.ConditionType,
 			AttachmentRequirements: step.AttachmentRequirements,
@@ -286,7 +317,7 @@ func (s *Server) copyDocumentConfigWorkflow(w http.ResponseWriter, r *http.Reque
 	}
 
 	targetScreenCode := normalizeScreenCode(targetFormat.ScreenCode)
-	updatedSteps, err := s.store.ReplaceDocumentConfigWorkflow(r.Context(), targetScreenCode, strings.TrimSpace(targetFormat.Code), req.Revision, normalizedSteps)
+	updatedSteps, removedBoxes, err := s.store.ReplaceDocumentConfigWorkflow(r.Context(), targetScreenCode, strings.TrimSpace(targetFormat.Code), req.Revision, normalizedSteps)
 	if errors.Is(err, store.ErrDocumentConfigRevisionConflict) {
 		writeError(w, http.StatusConflict, "workflow_revision_conflict", "Target workflow was changed from another tab. Refresh before copying again.")
 		return
@@ -312,6 +343,7 @@ func (s *Server) copyDocumentConfigWorkflow(w http.ResponseWriter, r *http.Reque
 	}); err != nil {
 		s.logger.Warn("write workflow copy audit failed", "error", err, "targetDocFormatCode", workflow.DocFormat.Code)
 	}
+	s.auditRemovedSignatureBoxes(r, workflow.DocFormat.Code, removedBoxes)
 
 	writeJSON(w, http.StatusOK, map[string]any{"workflow": workflow})
 }

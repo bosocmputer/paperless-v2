@@ -1569,6 +1569,10 @@ func (s *Store) DeleteDocumentConfigWorkflow(ctx context.Context, screenCode, do
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, tenant+":"+screenCode, strings.ToLower(docFormatCode)); err != nil {
+		return err
+	}
+
 	var exists bool
 	if err := tx.QueryRow(ctx, `
 SELECT EXISTS(
@@ -1652,24 +1656,24 @@ ORDER BY lower(b.position_code)
 	return counts, rows.Err()
 }
 
-func (s *Store) ReplaceDocumentConfigWorkflow(ctx context.Context, screenCode, docFormatCode, expectedRevision string, steps []models.DocumentConfigStepRequest) ([]models.DocumentConfigStep, error) {
+func (s *Store) ReplaceDocumentConfigWorkflow(ctx context.Context, screenCode, docFormatCode, expectedRevision string, steps []models.DocumentConfigStepRequest) ([]models.DocumentConfigStep, []models.RemovedSignatureBox, error) {
 	tenant := NormalizeSMLTenant(tenantFilterValue(ctx))
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, tenant+":"+screenCode, strings.ToLower(docFormatCode)); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	current, err := listDocumentConfigStepsTx(ctx, tx, screenCode, docFormatCode, true)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if ComputeDocumentConfigWorkflowRevision(current) != strings.TrimSpace(expectedRevision) {
-		return nil, ErrDocumentConfigRevisionConflict
+		return nil, nil, ErrDocumentConfigRevisionConflict
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -1678,7 +1682,7 @@ WHERE sml_tenant = $1
   AND screen_code = $2
   AND lower(doc_format_code) = lower($3)
 `, tenant, screenCode, docFormatCode); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	for _, step := range steps {
@@ -1691,64 +1695,82 @@ INSERT INTO document_config_steps (
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb)
 `, tenant, screenCode, docFormatCode, step.PositionCode, step.PositionName, step.User01, step.User02, step.User03, step.User04, step.User05, step.User06, step.User07, step.User08, step.User09, step.User10, step.SequenceNo, step.ConditionType, attachmentRequirementsJSON(step.AttachmentRequirements)); err != nil {
 			if strings.Contains(err.Error(), "document_config_steps_unique_position_idx") {
-				return nil, ErrDocumentConfigDuplicate
+				return nil, nil, ErrDocumentConfigDuplicate
 			}
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	if err := reconcileSignatureTemplateBoxSlotsTx(ctx, tx, tenant, screenCode, docFormatCode, steps); err != nil {
-		return nil, err
+	removedBoxes, err := reconcileSignatureTemplateBoxSlotsTx(ctx, tx, tenant, screenCode, docFormatCode, steps)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	updated, err := listDocumentConfigStepsTx(ctx, tx, screenCode, docFormatCode, false)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return updated, nil
+	return updated, removedBoxes, nil
 }
 
 // reconcileSignatureTemplateBoxSlotsTx keeps existing signature-template boxes
-// aligned with a Workflow step's signer order after that step is saved. A box
-// records the signer it belongs to (signer_user) but positions it on the page
-// via signer_slot, which the UI derives from that signer's index in the
-// step's userNN list. If a save reorders or changes that list, boxes for
-// signers who kept their slot are untouched, but a signer who moved to a
-// different index would collide with whichever box already holds that slot
-// number the next time the UI tries to place a new box there — surfacing as
-// a spurious "signer slot duplicate" error with no way to resolve it from the
-// UI, even though nothing is actually duplicated. Re-deriving each box's slot
-// from the just-saved step closes that gap.
+// (and the parallel signer-note boxes, which share the identical
+// position/signer_slot/signer_user shape and the same unique-index
+// constraint) aligned with each Workflow step's signer order after that step
+// is saved. A box records the signer it belongs to (signer_user) but
+// positions it on the page via signer_slot, which the UI derives from that
+// signer's index in the step's userNN list. If a save reorders or changes
+// that list, boxes for signers who kept their slot are untouched, but a
+// signer who moved to a different index would collide with whichever box
+// already holds that slot number the next time the UI tries to place a new
+// box there — surfacing as a spurious "signer slot duplicate" error with no
+// way to resolve it from the UI, even though nothing is actually duplicated.
+// Re-deriving each box's slot from the just-saved step closes that gap.
 //
 // A box whose signer is no longer in the step's user list at all (removed
 // from the Workflow, not just reordered) is deleted outright rather than
 // left on its old slot: keeping it would either orphan a box nothing in the
 // Workflow points to anymore, or block a remaining signer from reusing that
 // slot number, reproducing the same unresolvable collision this function
-// exists to prevent. Boxes for a position no longer in the step at all (or
-// whose condition type changed) are left alone; removing a position from a
-// Workflow does not retroactively touch signature templates, matching the
-// existing step-level delete behavior.
-func reconcileSignatureTemplateBoxSlotsTx(ctx context.Context, tx pgx.Tx, tenant, screenCode, docFormatCode string, steps []models.DocumentConfigStepRequest) error {
+// exists to prevent.
+//
+// A position whose ConditionType changed away from 2 in this save is treated
+// the same as ConditionType 2 with zero users: every existing per-signer box
+// for that position is deleted, since slot-based placement is meaningless
+// once the step is no longer "every signer must sign here." Positions
+// removed from the Workflow entirely are left alone; removing a position
+// does not retroactively touch signature templates, matching the existing
+// step-level delete behavior.
+func reconcileSignatureTemplateBoxSlotsTx(ctx context.Context, tx pgx.Tx, tenant, screenCode, docFormatCode string, steps []models.DocumentConfigStepRequest) ([]models.RemovedSignatureBox, error) {
+	removed := []models.RemovedSignatureBox{}
 	for _, step := range steps {
-		if step.ConditionType != 2 {
-			continue
+		var users []string
+		if step.ConditionType == 2 {
+			users = stepRequestUsers(step)
 		}
-		users := stepRequestUsers(step)
-		if len(users) == 0 {
-			continue
+		for _, table := range []string{"signature_template_boxes", "signer_note_template_boxes"} {
+			tableRemoved, err := reconcileSlotTableForStepTx(ctx, tx, table, tenant, screenCode, docFormatCode, step.PositionCode, users)
+			if err != nil {
+				return nil, err
+			}
+			removed = append(removed, tableRemoved...)
 		}
-		indexByUser := make(map[string]int, len(users))
-		for i, user := range users {
-			indexByUser[strings.ToLower(user)] = i + 1
-		}
+	}
+	return removed, nil
+}
 
-		rows, err := tx.Query(ctx, `
+func reconcileSlotTableForStepTx(ctx context.Context, tx pgx.Tx, table, tenant, screenCode, docFormatCode, positionCode string, users []string) ([]models.RemovedSignatureBox, error) {
+	indexByUser := make(map[string]int, len(users))
+	for i, user := range users {
+		indexByUser[strings.ToLower(user)] = i + 1
+	}
+
+	rows, err := tx.Query(ctx, `
 SELECT b.id::text, b.signer_slot, b.signer_user
-FROM signature_template_boxes b
+FROM `+table+` b
 JOIN signature_templates t ON t.id = b.template_id
 WHERE t.status IN ('draft', 'active')
   AND ($1 = '' OR t.sml_tenant = $1)
@@ -1756,80 +1778,82 @@ WHERE t.status IN ('draft', 'active')
   AND lower(t.doc_format_code) = lower($3)
   AND lower(b.position_code) = lower($4)
 FOR UPDATE OF b
-`, tenant, screenCode, docFormatCode, step.PositionCode)
-		if err != nil {
-			return err
+`, tenant, screenCode, docFormatCode, positionCode)
+	if err != nil {
+		return nil, err
+	}
+	type boxSlot struct {
+		id         string
+		slot       int
+		nextSlot   int
+		signerUser string
+		signerKey  string
+	}
+	boxes := []boxSlot{}
+	for rows.Next() {
+		var b boxSlot
+		if err := rows.Scan(&b.id, &b.slot, &b.signerUser); err != nil {
+			rows.Close()
+			return nil, err
 		}
-		type boxSlot struct {
-			id        string
-			slot      int
-			nextSlot  int
-			signerKey string
-		}
-		boxes := []boxSlot{}
-		for rows.Next() {
-			var b boxSlot
-			if err := rows.Scan(&b.id, &b.slot, &b.signerKey); err != nil {
-				rows.Close()
-				return err
-			}
-			b.signerKey = strings.ToLower(strings.TrimSpace(b.signerKey))
-			boxes = append(boxes, b)
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		rows.Close()
+		b.signerKey = strings.ToLower(strings.TrimSpace(b.signerUser))
+		boxes = append(boxes, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
 
-		remaining := boxes[:0]
-		for _, box := range boxes {
-			if _, ok := indexByUser[box.signerKey]; !ok {
-				if _, err := tx.Exec(ctx, `DELETE FROM signature_template_boxes WHERE id = $1`, box.id); err != nil {
-					return err
-				}
-				continue
+	removed := []models.RemovedSignatureBox{}
+	remaining := boxes[:0]
+	for _, box := range boxes {
+		if _, ok := indexByUser[box.signerKey]; !ok {
+			if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE id = $1`, box.id); err != nil {
+				return nil, err
 			}
-			remaining = append(remaining, box)
-		}
-		boxes = remaining
-
-		changed := false
-		for i := range boxes {
-			boxes[i].nextSlot = indexByUser[boxes[i].signerKey]
-			if boxes[i].nextSlot != boxes[i].slot {
-				changed = true
-			}
-		}
-		if !changed {
+			removed = append(removed, models.RemovedSignatureBox{Table: table, PositionCode: positionCode, SignerUser: box.signerUser})
 			continue
 		}
+		remaining = append(remaining, box)
+	}
+	boxes = remaining
 
-		// Two-phase update: first move every changed box to a high placeholder
-		// slot (signer_slot has a DB check constraint requiring > 0, so this
-		// must stay positive) so no intermediate UPDATE can collide with the
-		// unique (template_id, position_code, signer_slot) index, then set
-		// the real target slots. Boxes whose signer left the step were
-		// already deleted above, so every remaining box's target slot is
-		// guaranteed free once all changed boxes have cleared their old slot.
-		const placeholderSlotBase = 100000
-		for i, box := range boxes {
-			if box.nextSlot == box.slot {
-				continue
-			}
-			if _, err := tx.Exec(ctx, `UPDATE signature_template_boxes SET signer_slot = $1 WHERE id = $2`, placeholderSlotBase+i+1, box.id); err != nil {
-				return err
-			}
-		}
-		for _, box := range boxes {
-			if box.nextSlot == box.slot {
-				continue
-			}
-			if _, err := tx.Exec(ctx, `UPDATE signature_template_boxes SET signer_slot = $1 WHERE id = $2`, box.nextSlot, box.id); err != nil {
-				return err
-			}
+	changed := false
+	for i := range boxes {
+		boxes[i].nextSlot = indexByUser[boxes[i].signerKey]
+		if boxes[i].nextSlot != boxes[i].slot {
+			changed = true
 		}
 	}
-	return nil
+	if !changed {
+		return removed, nil
+	}
+
+	// Two-phase update: first move every changed box to a high placeholder
+	// slot (signer_slot has a DB check constraint requiring > 0, so this
+	// must stay positive) so no intermediate UPDATE can collide with the
+	// unique (template_id, position_code, signer_slot) index, then set
+	// the real target slots. Boxes whose signer left the step were
+	// already deleted above, so every remaining box's target slot is
+	// guaranteed free once all changed boxes have cleared their old slot.
+	const placeholderSlotBase = 100000
+	for i, box := range boxes {
+		if box.nextSlot == box.slot {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `UPDATE `+table+` SET signer_slot = $1 WHERE id = $2`, placeholderSlotBase+i+1, box.id); err != nil {
+			return nil, err
+		}
+	}
+	for _, box := range boxes {
+		if box.nextSlot == box.slot {
+			continue
+		}
+		if _, err := tx.Exec(ctx, `UPDATE `+table+` SET signer_slot = $1 WHERE id = $2`, box.nextSlot, box.id); err != nil {
+			return nil, err
+		}
+	}
+	return removed, nil
 }
 
 func stepRequestUsers(step models.DocumentConfigStepRequest) []string {
@@ -2324,7 +2348,7 @@ func (s *Store) ReplaceSignatureTemplateBoxes(ctx context.Context, templateID st
 
 	var status string
 	var currentRevision int
-	if err := tx.QueryRow(ctx, `SELECT status, revision FROM signature_templates WHERE id = $1 AND ($2 = '' OR sml_tenant = $2)`, templateID, tenant).Scan(&status, &currentRevision); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT status, revision FROM signature_templates WHERE id = $1 AND ($2 = '' OR sml_tenant = $2) FOR UPDATE`, templateID, tenant).Scan(&status, &currentRevision); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.SignatureTemplate{}, ErrSignatureTemplateNotFound
 		}

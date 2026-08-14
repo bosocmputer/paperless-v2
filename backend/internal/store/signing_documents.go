@@ -2784,9 +2784,19 @@ func signerRowsForStep(step models.DocumentConfigStep, boxes []models.SignatureT
 		if len(boxes) == 0 {
 			return nil, fmt.Errorf("missing signature box for position %s", step.PositionCode)
 		}
-		for i, box := range boxes {
+		if len(users) == 0 {
+			return nil, fmt.Errorf("missing signer users for position %s", step.PositionCode)
+		}
+		// Match each configured signer to their box by identity (SignerUser),
+		// not by array position: boxes are sorted by SignerSlot before this
+		// runs, which only lines up with users' index when every box's slot
+		// happens to equal that signer's userNN position. Matching by
+		// identity keeps this correct even if that assumption doesn't hold
+		// for a box populated outside the normal layout-designer flow.
+		for i, user := range users {
+			box := findBoxForUser(boxes, user)
 			if strings.TrimSpace(box.SignerUser) == "" {
-				return nil, fmt.Errorf("missing signer user for position %s", step.PositionCode)
+				return nil, fmt.Errorf("missing signature box for signer %s in position %s", user, step.PositionCode)
 			}
 			out = append(out, signerFromBox(step, box, i+1, "internal", box.SignerUser, status))
 		}

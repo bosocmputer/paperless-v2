@@ -141,6 +141,10 @@ FOR UPDATE`, id, tenant).Scan(&code, &smlTenant)
 		return err
 	}
 
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, smlTenant+":INTERNAL", strings.ToLower(code)); err != nil {
+		return err
+	}
+
 	var hasDocuments bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM internal_documents WHERE master_id = $1)`, id).Scan(&hasDocuments); err != nil {
 		return err
@@ -236,6 +240,23 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::numeric,$16::jsonb,'
 RETURNING id::text`, tenant, master.ID, master.Code, master.Name, master.Revision, master.Prefix, master.RunningPattern,
 		documentNo, input.DocumentDate, input.RequiredDate, input.RequesterName, input.PositionName, input.DepartmentName, input.Purpose,
 		input.TotalAmount, string(companyRaw), input.IdempotencyKey, input.ActorID).Scan(&documentID)
+	if isUniqueViolation(err) {
+		// Lost a race against a concurrent request carrying the same
+		// idempotency key (the SELECT check above is not locked, so two
+		// requests can both pass it before either commits). The DB's unique
+		// constraint on (sml_tenant, created_by, idempotency_key) is the real
+		// safety net; fall back to the winner's document instead of
+		// surfacing a raw constraint-violation 500. The running number this
+		// losing attempt consumed is not reclaimed, matching how a manually
+		// cancelled draft also leaves a gap rather than reusing a number.
+		_ = tx.Rollback(ctx)
+		var winnerID string
+		if findErr := s.pool.QueryRow(ctx, `SELECT id::text FROM internal_documents WHERE sml_tenant=$1 AND created_by=$2 AND idempotency_key=$3`, tenant, input.ActorID, input.IdempotencyKey).Scan(&winnerID); findErr != nil {
+			return models.InternalDocument{}, false, findErr
+		}
+		doc, findErr := s.FindInternalDocumentByID(ctx, winnerID)
+		return doc, true, findErr
+	}
 	if err != nil {
 		return models.InternalDocument{}, false, err
 	}

@@ -317,6 +317,17 @@ type DocumentConfigStepRequest struct {
 	AttachmentRequirements []AttachmentRequirement `json:"attachmentRequirements,omitempty"`
 }
 
+// RemovedSignatureBox records a signature-template box (or sign-note box)
+// that reconcileSignatureTemplateBoxSlotsTx deleted because its signer is no
+// longer in the saved Workflow step's user list. Surfaced back to the API
+// layer so it can be written to the audit log alongside the workflow save
+// event, since the box's placed coordinates are not otherwise recoverable.
+type RemovedSignatureBox struct {
+	Table        string `json:"table"`
+	PositionCode string `json:"positionCode"`
+	SignerUser   string `json:"signerUser"`
+}
+
 type AttachmentRequirement struct {
 	Key        string `json:"key"`
 	Label      string `json:"label"`
