@@ -18,6 +18,22 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-15 (all four shops, paperless-web only): PDF layout designer horizontal scroll fix
+
+Customer reported: in the "จัดวางกรอบบน PDF ฉบับจริง" layout designer (the non-maximized dialog used from `SigningDocumentCreate.vue`/`SigningDocumentDetail.vue` to place signature boxes on the real uploaded PDF), a landscape page zoomed past 100% could not be scrolled horizontally — content past the pane's right edge was simply cut off, screenshotted from a real signing task. Confirmed as affecting all four shops since this is shared frontend code, not shop-specific data — the customer separately confirmed `ContinuousPdfViewer.vue` (the main signing-task PDF viewer used everywhere else) scrolls correctly, narrowing the bug to `DocumentLayoutDesigner.vue` specifically.
+
+Root cause confirmed by reading the code: `.pdf-pane` in `DocumentLayoutDesigner.vue` was a plain block element in the default (non-`fullHeight`) dialog mode — only `.layout-designer-full .pdf-pane` had `display: flex; flex-direction: column`. Combined with `.pdf-pane`'s `overflow: hidden`, this clipped any content in the inner `.pdf-viewport` wider than the pane instead of letting the viewport's own `overflow: auto` scroll it. Per explicit customer instruction, this was not reproduced in a live dev-server/browser session before deploying — the fix was verified by code reading and a clean `npm run build` only.
+
+**Fixed in `paperless-web:286560b`** (was `6f59db8`): made `.pdf-pane` a flex column unconditionally (matching what `fullHeight` mode already did), so `.pdf-viewport` gets a real flex-constrained box to scroll within in both dialog modes. Merged the previously mode-duplicated flex rules into the base selectors.
+
+This is a `paperless-web`-only change — `sml-api-bybos`/`paperless-api`/`db` untouched, so only `web` was redeployed on each shop.
+
+- **Damrong Homeplus**: `web` deployed, healthy, public URL smoke HTTP 200. Release evidence `/data/paperless/releases/20260815171610-pdf-pane-scroll-fix-286560b/postdeploy-checks.txt`. Customer to retest: open the layout designer (non-maximized) on a landscape document, zoom past the point the page overflows the pane, confirm horizontal scroll now works.
+- **Pui, Wirat Home Mart, Insee Construction**: `web` deployed same-session per explicit customer instruction to roll out to all four shops immediately (bug affects shared code, not shop-specific data) — healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260815171836-pdf-pane-scroll-fix-286560b/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260815171929-pdf-pane-scroll-fix-286560b/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260815172155-pdf-pane-scroll-fix-286560b/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-14 (all four shops, paperless-api only): proactive full-codebase audit — 8 fixes
 
 Customer asked for a full audit for other bugs after the two same-day production incidents below (4a018fd, 9d3ac59) on the signature-slot reconciliation logic. Spawned parallel review agents across the backend `internal/store` and `internal/api` layers (correctness, concurrency, simplification, efficiency, altitude, and removed-behavior angles), cross-verified and deduplicated the results down to 8 confirmed findings, fixed all 8, and verified each via `build`/`vet`/`test` plus rolled-back transactions against production data before deploying. **No user-reported symptom triggered any of these** — purely proactive, at the customer's request.
