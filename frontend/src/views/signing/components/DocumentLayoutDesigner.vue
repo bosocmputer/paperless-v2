@@ -861,18 +861,17 @@ defineExpose({ validationIssues, totalBoxes });
 }
 .pdf-pane {
     min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     border: 1px solid var(--surface-border);
     border-radius: 8px;
     overflow: hidden;
     background: var(--surface-ground);
 }
-.layout-designer-full .pdf-pane {
-    display: flex;
-    min-height: 0;
-    flex-direction: column;
-}
 .layout-toolbar {
     min-height: 3rem;
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -896,13 +895,13 @@ defineExpose({ validationIssues, totalBoxes });
 }
 .pdf-viewport {
     height: min(64dvh, 42rem);
+    min-height: 0;
+    flex: 1 1 auto;
     overflow: auto;
     padding: 1rem;
 }
 .layout-designer-full .pdf-viewport {
     height: auto;
-    min-height: 0;
-    flex: 1 1 auto;
 }
 .pdf-empty {
     height: 100%;
