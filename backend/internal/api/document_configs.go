@@ -775,15 +775,10 @@ func normalizeDocumentConfigWorkflowSteps(format models.SMLDocFormat, rawSteps [
 }
 
 func normalizeAttachmentRequirementsForStep(step models.DocumentConfigStepRequest) ([]models.AttachmentRequirement, []string) {
-	const maxRequirementsPerStep = 12
 	const maxRequirementLabelLength = 80
 
 	raw := step.AttachmentRequirements
 	messages := []string{}
-	if len(raw) > maxRequirementsPerStep {
-		messages = append(messages, fmt.Sprintf("Required attachments support at most %d items per step.", maxRequirementsPerStep))
-		raw = raw[:maxRequirementsPerStep]
-	}
 	userSlotCount := len(documentConfigStepUsers(step.User01, step.User02, step.User03, step.User04, step.User05, step.User06, step.User07, step.User08, step.User09, step.User10))
 	if step.ConditionType == 3 {
 		userSlotCount = 1

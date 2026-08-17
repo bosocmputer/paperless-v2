@@ -431,7 +431,6 @@ function validateSingleStep(step, key) {
         });
     }
     const requirements = normalizeAttachmentRequirements(step);
-    if (requirements.length > 12) issues.push({ key, message: `${label}: เอกสารแนบบังคับได้ไม่เกิน 12 รายการ` });
     const seenRequirements = new Set();
     const slotCount = Number(step.conditionType) === 3 ? 1 : Math.max(1, signerValues(step).length);
     requirements.forEach((requirement) => {
