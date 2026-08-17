@@ -18,6 +18,22 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-17 (all four shops, api+web): remove 12-item required-attachment cap
+
+Customer reported, with a screenshot: at `/config/documents/2JEPO/workflow`, clicking "ใช้กับทุกผู้เซ็น" (apply required-attachment labels to all signers) on Position 1 (8 signers, 2 attachment labels) failed to save with `Position 1: เอกสารแนบบังคับได้ไม่เกิน 12 รายการ`. The customer's own annotation on the screenshot worked out the math: 8 signers × 2 labels = 16, exceeding the cap.
+
+Root cause: the "apply to all signers" button multiplies label count by signer count by design (one copy of each label per signer slot) — this routinely exceeds the old hardcoded 12-item cap once a step has more than a handful of signers or more than one label. The cap existed identically in both `normalizeAttachmentRequirementsForStep` (backend) and `validateSingleStep` (frontend) as an arbitrary constant, not tied to any DB/storage constraint (`attachment_requirements` is stored as JSONB with no length limit). Per explicit customer instruction, the cap was removed entirely on both sides rather than raised to a new arbitrary number.
+
+**Fixed in `paperless-api:b9c24dc`** (was `69816ac`) and **`paperless-web:b9c24dc`** (was `286560b`).
+
+This deploy also included a proactive investigation the customer asked for after the PDF-scroll fix two days earlier ("ลองไล่ดูเมนูอื่นด้วยว่ามีโอกาสเกิด bug แบบ case นี้ไหม") — a full-codebase sweep for the same `overflow: hidden` parent / `overflow: auto` child mismatch pattern across all `.vue` files found no other occurrences; that investigation required no code change.
+
+- **Damrong Homeplus**: `api`+`web` deployed, healthy. Release evidence `/data/paperless/releases/20260817102801-remove-attachment-cap-b9c24dc/postdeploy-checks.txt`. Customer to retest: reopen `2JEPO` Position 1 (8 signers), click "ใช้กับทุกผู้เซ็น" with the same 2 labels, confirm save now succeeds with all 16 requirement rows.
+- **Pui, Wirat Home Mart, Insee Construction**: deployed same-session per customer instruction to roll out to all four shops immediately (shared code, not shop-specific data) — healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260817103003-remove-attachment-cap-b9c24dc/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260817103112-remove-attachment-cap-b9c24dc/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260817103332-remove-attachment-cap-b9c24dc/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-15 (all four shops, paperless-web only): PDF layout designer horizontal scroll fix
 
 Customer reported: in the "จัดวางกรอบบน PDF ฉบับจริง" layout designer (the non-maximized dialog used from `SigningDocumentCreate.vue`/`SigningDocumentDetail.vue` to place signature boxes on the real uploaded PDF), a landscape page zoomed past 100% could not be scrolled horizontally — content past the pane's right edge was simply cut off, screenshotted from a real signing task. Confirmed as affecting all four shops since this is shared frontend code, not shop-specific data — the customer separately confirmed `ContinuousPdfViewer.vue` (the main signing-task PDF viewer used everywhere else) scrolls correctly, narrowing the bug to `DocumentLayoutDesigner.vue` specifically.
