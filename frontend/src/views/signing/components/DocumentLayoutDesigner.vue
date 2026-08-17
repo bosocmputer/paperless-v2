@@ -251,6 +251,21 @@ function setZoom(value) {
     zoom.value = clamp(value, 0.35, 2.5);
 }
 
+// A plain mouse wheel only reports vertical delta (deltaX stays 0), so a
+// landscape/zoomed page wider than the viewport has no wheel-driven way to
+// pan sideways without dragging the horizontal scrollbar by hand — easy to
+// miss since it only renders as thin OS chrome at the very bottom edge.
+// Holding Shift while scrolling is the standard browser convention for
+// "scroll the vertical wheel horizontally instead," so redirect it here
+// rather than requiring users to find and drag the scrollbar.
+function handleViewportWheel(event) {
+    if (!event.shiftKey) return;
+    const el = viewportRef.value;
+    if (!el || el.scrollWidth <= el.clientWidth) return;
+    event.preventDefault();
+    el.scrollLeft += event.deltaY;
+}
+
 function applyPreset() {
     if (props.readOnly || !canApplyPreset.value) return;
     const hasExisting = boxes.value.length > 0 || legalNotices.value.length > 0 || (props.allowSignNoteBoxes && signNoteBoxes.value.length > 0);
@@ -714,7 +729,7 @@ defineExpose({ validationIssues, totalBoxes });
                 </div>
             </div>
 
-            <div ref="viewportRef" class="pdf-viewport">
+            <div ref="viewportRef" class="pdf-viewport" @wheel="handleViewportWheel">
                 <div v-if="!pdfUrl" class="pdf-empty">อัปโหลด PDF เพื่อเริ่มวางกรอบลายเซ็น</div>
                 <div v-else class="pdf-page-shell" :class="{ rendering }">
                     <canvas ref="canvasRef"></canvas>
@@ -899,6 +914,25 @@ defineExpose({ validationIssues, totalBoxes });
     flex: 1 1 auto;
     overflow: auto;
     padding: 1rem;
+    scrollbar-width: auto;
+    scrollbar-color: color-mix(in srgb, var(--text-color-secondary) 55%, transparent) transparent;
+}
+.pdf-viewport::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+}
+.pdf-viewport::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--text-color-secondary) 55%, transparent);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+}
+.pdf-viewport::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--text-color-secondary) 75%, transparent);
+    background-clip: padding-box;
+}
+.pdf-viewport::-webkit-scrollbar-track {
+    background: transparent;
 }
 .layout-designer-full .pdf-viewport {
     height: auto;
