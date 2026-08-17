@@ -19,7 +19,14 @@ Deployed same-session to all four shops (Damrong Homeplus, Pui, Wirat Home Mart,
 - Verification per shop: `api` `healthy`, `web` `Up`, public URL smoke `HTTP 200`.
 - Release evidence under each shop's `/data/paperless/releases/20260817*-remove-attachment-cap-b9c24dc/postdeploy-checks.txt`; full narrative in `docs/CUSTOMER_DEPLOYMENT.md` (search for `2026-08-17`).
 
+## Mouse Users Couldn't Pan the PDF Layout Designer Horizontally
+
+Same-day follow-up to the 12-item-cap fix above. The customer clarified why the 2026-08-15 scroll fix still didn't resolve their report: the affected user is on a plain mouse (no trackpad, no tilt-wheel), which only ever reports vertical wheel delta. The customer's own trackpad produces horizontal delta directly on a two-finger swipe, which is why it worked when they tested it — but a plain mouse wheel has no equivalent, leaving only "drag the horizontal scrollbar by hand" as an option, and the default OS scrollbar renders thin enough to miss entirely.
+
+- Fix (`paperless-web:b5bd587`, was `b9c24dc`): added `Shift`+wheel → horizontal scroll on the PDF viewport (the standard browser convention), and thickened/darkened the scrollbar (`scrollbar-width`/`-color` for Firefox, `::-webkit-scrollbar` for Chromium/Safari) as a visible fallback for anyone who doesn't know the shortcut.
+- Deployed same-session to all four shops, `web`-only. Release evidence under each shop's `/data/paperless/releases/20260817*-pdf-shift-scroll-fix-b5bd587/postdeploy-checks.txt`.
+
 ## Status As Of 2026-08-17 (end of session)
 
-- **Awaiting real-usage feedback from the customer.** Customer to retest: reopen `2JEPO` Position 1 (8 signers) on Damrong, click "ใช้กับทุกผู้เซ็น" with the same 2 labels, and confirm save now succeeds with all 16 requirement rows.
-- All prior open items from 2026-08-14/15 (Workflow delete, signature-template slot reconciliation, the 8 proactive audit fixes, the PDF layout designer scroll fix) remain awaiting confirmation — nothing new to report on those as of this entry.
+- **Awaiting real-usage feedback from the customer.** Customer to retest: reopen `2JEPO` Position 1 (8 signers) on Damrong, click "ใช้กับทุกผู้เซ็น" with the same 2 labels, and confirm save now succeeds with all 16 requirement rows. Separately, retest the PDF layout designer with a plain mouse (not a trackpad) — confirm Shift+wheel pans horizontally and the scrollbar is now visibly thicker.
+- All prior open items from 2026-08-14/15 (Workflow delete, signature-template slot reconciliation, the 8 proactive audit fixes) remain awaiting confirmation — nothing new to report on those as of this entry.

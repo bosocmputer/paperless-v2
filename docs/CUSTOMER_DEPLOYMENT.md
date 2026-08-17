@@ -18,6 +18,20 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-17 (all four shops, paperless-web only): mouse users couldn't pan the PDF layout designer horizontally
+
+Follow-up to the 2026-08-15 fix that made `.pdf-viewport` actually scrollable. Customer clarified the root cause of the still-not-scrolling report: the affected user is on a plain mouse (no trackpad, no tilt-wheel), which only reports vertical wheel delta — a natural touchpad two-finger swipe (which the customer used to originally verify the fix) produces horizontal delta directly, but a plain mouse wheel does not. The only way left to pan a wide/zoomed page with a plain mouse was dragging the horizontal scrollbar by hand, which renders as thin default OS/browser chrome easy to miss or not realize is draggable.
+
+**Fixed in `paperless-web:b5bd587`** (was `b9c24dc`): added `Shift`+wheel → horizontal scroll on `.pdf-viewport` (the standard browser convention — hold Shift while scrolling the wheel to pan sideways instead of down), and thickened/darkened the scrollbar via `scrollbar-width`/`scrollbar-color` (Firefox) and `::-webkit-scrollbar` (Chrome/Edge/Safari) as a visible fallback for users who don't know the shortcut. Per customer decision, did both rather than picking one.
+
+This is a `paperless-web`-only change — `sml-api-bybos`/`paperless-api`/`db` untouched, so only `web` was redeployed on each shop.
+
+- **Damrong Homeplus**: `web` deployed, healthy, public URL smoke HTTP 200. Release evidence `/data/paperless/releases/20260817150033-pdf-shift-scroll-fix-b5bd587/postdeploy-checks.txt`. Customer to retest with a plain mouse: open the layout designer on a landscape/zoomed page, confirm the horizontal scrollbar is now visibly thicker, and confirm holding Shift while scrolling the wheel pans left/right.
+- **Pui, Wirat Home Mart, Insee Construction**: `web` deployed same-session per customer instruction to roll out to all four shops immediately (shared frontend code) — healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260817150139-pdf-shift-scroll-fix-b5bd587/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260817150224-pdf-shift-scroll-fix-b5bd587/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260817150321-pdf-shift-scroll-fix-b5bd587/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-17 (all four shops, api+web): remove 12-item required-attachment cap
 
 Customer reported, with a screenshot: at `/config/documents/2JEPO/workflow`, clicking "ใช้กับทุกผู้เซ็น" (apply required-attachment labels to all signers) on Position 1 (8 signers, 2 attachment labels) failed to save with `Position 1: เอกสารแนบบังคับได้ไม่เกิน 12 รายการ`. The customer's own annotation on the screenshot worked out the math: 8 signers × 2 labels = 16, exceeding the cap.
