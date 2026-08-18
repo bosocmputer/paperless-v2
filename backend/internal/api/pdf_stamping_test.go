@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 	"github.com/phpdave11/gofpdf"
+	"github.com/phpdave11/gofpdf/contrib/gofpdi"
 )
 
 func TestStampPDFWithSignatures(t *testing.T) {
@@ -703,5 +706,83 @@ func TestSigningPlacementsForSignersExpandsSingleSignerToMultiplePages(t *testin
 	}
 	if stampSigners[0].SignatureFileID != "file-1" || stampSigners[1].SignatureFileID != "file-1" {
 		t.Fatalf("expected both placements to use the signed file")
+	}
+}
+
+// writeRotatedPortraitTestPDF writes a minimal, hand-built single-page PDF
+// whose /MediaBox is portrait (595x842, A4) but whose page dictionary
+// carries /Rotate 90 - the same shape scan/mobile-capture apps commonly
+// produce for a "landscape" page: the content is authored to fill the
+// rotated box, but the raw box itself is never swapped. gofpdf has no API
+// to set /Rotate on a generated page, so the PDF is assembled by hand with
+// byte offsets computed directly (not patched after the fact, which would
+// require recomputing every later object's offset in the xref table).
+func writeRotatedPortraitTestPDF(t *testing.T, path string) {
+	t.Helper()
+	const mediaW, mediaH = 595.28, 841.89
+	objs := make([]string, 0, 5)
+	objs = append(objs, "<< /Type /Catalog /Pages 2 0 R >>")
+	objs = append(objs, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+	objs = append(objs, fmt.Sprintf(
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.2f %.2f] /Rotate 90 /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+		mediaW, mediaH,
+	))
+	content := "BT /F1 12 Tf 72 72 Td (rotated source) Tj ET"
+	objs = append(objs, fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content))
+	objs = append(objs, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+	var buf bytes.Buffer
+	buf.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objs)+1)
+	for i, body := range objs {
+		offsets[i+1] = buf.Len()
+		fmt.Fprintf(&buf, "%d 0 obj\n%s\nendobj\n", i+1, body)
+	}
+	xrefStart := buf.Len()
+	fmt.Fprintf(&buf, "xref\n0 %d\n", len(objs)+1)
+	buf.WriteString("0000000000 65535 f \n")
+	for i := 1; i <= len(objs); i++ {
+		fmt.Fprintf(&buf, "%010d 00000 n \n", offsets[i])
+	}
+	fmt.Fprintf(&buf, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF", len(objs)+1, xrefStart)
+
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("write rotated test pdf: %v", err)
+	}
+}
+
+func TestReadPDFPageRotationsReadsRotateEntry(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "rotated.pdf")
+	writeRotatedPortraitTestPDF(t, source)
+
+	rotations := readPDFPageRotations(source, 1)
+	if rotations[1] != 90 {
+		t.Fatalf("expected page 1 rotation 90, got %#v", rotations)
+	}
+}
+
+func TestImportPDFPagesSwapsDimensionsForRotatedPage(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "rotated.pdf")
+	writeRotatedPortraitTestPDF(t, source)
+
+	pdf := gofpdf.New("P", "pt", "A4", "")
+	pdf.SetCompression(false)
+	importer := gofpdi.NewImporter()
+
+	var gotWd, gotHt float64
+	if err := importPDFPages(pdf, importer, source, 1, func(pageNo int, size gofpdf.SizeType) {
+		gotWd, gotHt = size.Wd, size.Ht
+	}); err != nil {
+		t.Fatalf("importPDFPages: %v", err)
+	}
+
+	// The raw /MediaBox is portrait (595x842); /Rotate 90 means the page
+	// should be treated as landscape (842x595) once rotation is accounted
+	// for - the bug being fixed here previously left this at the raw,
+	// un-swapped portrait size.
+	if gotWd <= gotHt {
+		t.Fatalf("expected landscape dimensions after accounting for /Rotate 90, got Wd=%.2f Ht=%.2f", gotWd, gotHt)
 	}
 }

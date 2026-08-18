@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
+	pdfparse "github.com/ledongthuc/pdf"
 	"github.com/phpdave11/gofpdf"
 	"github.com/phpdave11/gofpdf/contrib/gofpdi"
 )
@@ -557,11 +558,26 @@ func createPrintCopyPDF(sourcePath string, pageCount int, evidence printEvidence
 }
 
 func importPDFPages(pdf *gofpdf.Fpdf, importer *gofpdi.Importer, sourcePath string, pageCount int, onPage func(pageNo int, size gofpdf.SizeType)) error {
+	// Some source PDFs (common from scan/mobile-capture apps) mark a page as
+	// landscape via the page's /Rotate entry instead of swapping /MediaBox
+	// itself - every normal viewer honors /Rotate and shows it correctly.
+	// gofpdi's ImportPage/UseImportedTemplate already account for /Rotate
+	// when drawing the page content (see gofpdi's writer.go tpl.Rotation
+	// handling), but Importer.GetPageSizes() reads the raw /MediaBox only and
+	// knows nothing about rotation. Without correcting for that mismatch
+	// here, a rotated-landscape source page gets built onto a portrait
+	// destination page (wrong orientation from AddPageFormat) while gofpdi
+	// still draws its (correctly rotated) content scaled to fit that too-
+	// narrow box, so the page comes out clipped/squeezed into portrait.
+	rotations := readPDFPageRotations(sourcePath, pageCount)
 	for pageNo := 1; pageNo <= pageCount; pageNo++ {
 		tpl := importer.ImportPage(pdf, sourcePath, pageNo, "/MediaBox")
 		size := importedPageSize(importer, pageNo)
 		if size.Wd <= 0 || size.Ht <= 0 {
 			return fmt.Errorf("cannot read pdf page size for page %d", pageNo)
+		}
+		if rotation := rotations[pageNo]; rotation == 90 || rotation == 270 {
+			size.Wd, size.Ht = size.Ht, size.Wd
 		}
 		orientation := "P"
 		if size.Wd > size.Ht {
@@ -574,6 +590,62 @@ func importPDFPages(pdf *gofpdf.Fpdf, importer *gofpdi.Importer, sourcePath stri
 		}
 	}
 	return nil
+}
+
+// readPDFPageRotations returns each page's /Rotate value (normalized to one
+// of 0, 90, 180, 270), inherited from a parent page-tree node when a page
+// does not set it directly. Best-effort: any read failure (including a page
+// with no explicit or inherited rotation) simply omits that page from the
+// result, which importPDFPages treats as 0 - i.e. falls back to today's
+// pre-fix behavior of trusting the raw /MediaBox orientation.
+func readPDFPageRotations(sourcePath string, pageCount int) map[int]int {
+	rotations := make(map[int]int, pageCount)
+	f, err := os.Open(sourcePath)
+	if err != nil {
+		return rotations
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return rotations
+	}
+	reader, err := pdfparse.NewReader(f, info.Size())
+	if err != nil {
+		return rotations
+	}
+	for pageNo := 1; pageNo <= pageCount && pageNo <= reader.NumPage(); pageNo++ {
+		page := reader.Page(pageNo)
+		if page.V.IsNull() {
+			continue
+		}
+		value := pdfInheritedValue(page.V, "Rotate")
+		if value.IsNull() {
+			continue
+		}
+		angle := int(value.Int64()) % 360
+		if angle < 0 {
+			angle += 360
+		}
+		if angle%90 != 0 {
+			continue
+		}
+		rotations[pageNo] = angle
+	}
+	return rotations
+}
+
+// pdfInheritedValue looks up key on a page dictionary, walking up /Parent
+// nodes the same way the PDF spec requires for inheritable page attributes
+// like /Rotate (ledongthuc/pdf's own equivalent, Page.findInherited, is
+// unexported).
+func pdfInheritedValue(v pdfparse.Value, key string) pdfparse.Value {
+	for !v.IsNull() {
+		if r := v.Key(key); !r.IsNull() {
+			return r
+		}
+		v = v.Key("Parent")
+	}
+	return pdfparse.Value{}
 }
 
 func drawLegalNoticeBox(pdf *gofpdf.Fpdf, notice models.LegalNoticeSnapshot, size gofpdf.SizeType) {
