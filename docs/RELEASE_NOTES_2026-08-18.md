@@ -26,6 +26,20 @@ Fix (`paperless-api:8c4133e`, was `9531674`):
 
 **Existing documents created before this fix retain their broken portrait PDF** — this only prevents the bug going forward; there is no automatic repair of already-stored files. For document `IA26050134` specifically (still in `draft` status, never sent/signed), the simplest safe fix is for the customer to delete and re-upload it now that the fix is live, rather than a one-off data repair script touching production.
 
+## PDF 2.0 Header Rejected as "Unreadable" on Upload
+
+Customer testing multi-file import on Wirat Home Mart hit `400 invalid_pdf` — `"Uploaded file must be a readable PDF."` — on upload, before any signing/stamping logic ran. Customer supplied the three actual files that failed.
+
+Root cause: `github.com/ledongthuc/pdf`'s `NewReader` hard-codes acceptance of only `%PDF-1.0` through `%PDF-1.7` headers, rejecting anything else — including `%PDF-2.0` — outright. All three customer files are valid PDF 2.0 documents (confirmed via `qpdf --check`: no syntax/stream errors, not encrypted) produced by "PDF Architect" — PDF 2.0 kept the same base xref/object model as 1.x for ordinary documents, so only the version-string prefix check rejected them. `gofpdi` (the library actually used to stamp/import pages) has no such header check at all, so these files were never truly unreadable — only the upload-time validation gate was too strict.
+
+Fix (`paperless-api:c984648`, was `9531674`/`8c4133e`):
+
+- `readPDFPageCount` and `readPDFPageRotations` now normalize the header to `%PDF-1.7` via `normalizePDFHeaderForReader` before parsing, whenever the source declares a version other than 1.0–1.7. The rewrite only changes the fixed 8-byte version token in place, so it cannot shift any xref offset elsewhere in the file.
+- Verified against the customer's actual PDF 2.0 files — all three parsed and stamped successfully after the fix, failed identically to the report before it.
+- New unit tests use a hand-patched `%PDF-2.0` fixture, since `gofpdf` itself never emits anything but `%PDF-1.x`.
+
+This deploy also brought Damrong, Wirat, and Insee up to the landscape-PDF double-swap fix above (Pui had already received it separately) — all four shops are now on the same `paperless-api:c984648` image.
+
 ## Sign-Note Box: Scroll Jump and Hard-to-Drag Fix
 
 Customer relayed two related complaints from an end-user about the sign-note box feature in `ContinuousPdfViewer.vue` (the main signing-task PDF viewer): entering text-edit on a note felt like it "jumped to a different position," and dragging the box to reposition it was difficult and unreliable.
@@ -42,22 +56,38 @@ Fix (`paperless-web:72974a7`, was `b5bd587`):
 
 ## Customer Deployment
 
-Both fixes above deployed same-session to all four shops (Damrong Homeplus, Pui, Wirat Home Mart, Insee Construction).
+All four fixes above deployed same-session to all four shops (Damrong Homeplus, Pui, Wirat Home Mart, Insee Construction), across three separate `api`-only passes plus one `web`-only pass.
 
-**Landscape PDF rotation fix** — `api`-only redeploy (`--no-deps api`) — `web`/`db`/`sml-api` kept their exact prior container everywhere.
+**Landscape PDF rotation fix** (`/Rotate`-declared pages) — `api`-only redeploy (`--no-deps api`).
 
 - Image: `paperless-api:9531674` (was `b9c24dc`).
 - Verification per shop: `api` `Up`/healthy, public URL smoke `HTTP 200`, `/health/live` `HTTP 200`.
-- Release evidence: Damrong `/data/paperless/releases/20260818115529-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`, Pui `/data/paperless/releases/20260818045629-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`, Wirat `/data/paperless/releases/20260818045728-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`, Insee `/data/paperless/releases/20260818045821-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`; full narrative in `docs/CUSTOMER_DEPLOYMENT.md` (search for `landscape source PDF`).
+- Release evidence: Damrong `/data/paperless/releases/20260818115529-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`, Pui `/data/paperless/releases/20260818045629-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`, Wirat `/data/paperless/releases/20260818045728-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`, Insee `/data/paperless/releases/20260818045821-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`.
+
+**Landscape PDF double-swap fix** (genuinely landscape `/MediaBox`) — `api`-only redeploy, Pui first per customer request, then bundled into the PDF 2.0 fix below for the other three shops.
+
+- Image: `paperless-api:8c4133e` (was `9531674`).
+- Verification: Pui `api` `Up`/healthy, public URL smoke `HTTP 200`, `/health/live` `HTTP 200`.
+- Release evidence: Pui `/data/paperless/releases/20260818060140-landscape-pdf-double-swap-fix-8c4133e/postdeploy-checks.txt`.
+
+**PDF 2.0 header fix** — `api`-only redeploy, all four shops (brought Damrong/Wirat/Insee up to `8c4133e` at the same time).
+
+- Image: `paperless-api:c984648` (was `9531674` on Damrong/Wirat/Insee, `8c4133e` on Pui).
+- Verification per shop: `api` `Up`/healthy, public URL smoke `HTTP 200`, `/health/live` `HTTP 200`.
+- Release evidence: Damrong `/data/paperless/releases/20260818062153-pdf-2.0-header-fix-c984648/postdeploy-checks.txt`, Pui `/data/paperless/releases/20260818062155-pdf-2.0-header-fix-c984648/postdeploy-checks.txt`, Wirat `/data/paperless/releases/20260818062157-pdf-2.0-header-fix-c984648/postdeploy-checks.txt`, Insee `/data/paperless/releases/20260818062159-pdf-2.0-header-fix-c984648/postdeploy-checks.txt`.
 
 **Note-box scroll/drag fix** — `web`-only redeploy (`--no-deps web`) — `api`/`db`/`sml-api` kept their exact prior container everywhere.
 
 - Image: `paperless-web:72974a7` (was `b5bd587`).
 - Verification per shop: `web` `Up`, public URL smoke `HTTP 200`.
-- Release evidence under each shop's `/data/paperless/releases/20260818*-notebox-scroll-drag-fix-72974a7/postdeploy-checks.txt`; full narrative in `docs/CUSTOMER_DEPLOYMENT.md` (search for `2026-08-18`).
+- Release evidence under each shop's `/data/paperless/releases/20260818*-notebox-scroll-drag-fix-72974a7/postdeploy-checks.txt`.
+
+Full narrative for all `api` fixes in `docs/CUSTOMER_DEPLOYMENT.md` (search for `landscape source PDF` and `PDF 2.0`); note-box fix search for `2026-08-18`.
 
 ## Status As Of 2026-08-18 (end of session)
 
-- **Landscape PDF rotation fix**: deployed and smoke-tested (container healthy, HTTP 200) on all four shops. Awaiting customer confirmation with a real landscape-orientation scan/mobile-capture upload on `/signing/documents/new`, and ideally a print-copy check too since that flow shares the fix.
+- **All four `paperless-api` PDF fixes** (rotation, double-swap, PDF 2.0 header) are live on all four shops as of `paperless-api:c984648`, smoke-tested (container healthy, HTTP 200) everywhere.
+- Customer confirmed the first landscape-PDF fix resolved upload orientation on their initial test, then found and reported the second (double-swap) bug via further testing on Pui, then found and reported the PDF 2.0 header issue while testing multi-file import on Wirat. Awaiting confirmation that both are now resolved: re-test a genuinely landscape (non-`/Rotate`) source PDF, and re-upload the three PDF 2.0 purchase-order files (or any other PDF 2.0 file) through both single and batch import.
+- Document `IA26050134` (created on Pui before the double-swap fix landed) still has its old broken portrait PDF stored — customer advised to delete and re-upload it now that the fix is live, since it's still in `draft` status.
 - **Awaiting real-usage feedback from the customer** on the note-box fix. Customer to retest with the end-user who originally reported this: open a signing task with sign-note boxes, click into a note near the bottom of a tall page and confirm the view no longer re-centers, then confirm dragging the box body itself works reliably (including a brief hold-before-move not immediately opening text-edit).
 - All prior open items (Workflow delete, signature-template slot reconciliation, the 8 proactive audit fixes, the PDF layout designer horizontal-scroll and Shift+wheel fixes, the required-attachment cap removal) remain awaiting confirmation — nothing new to report on those as of this entry.

@@ -36,6 +36,39 @@ This is a `paperless-api`-only change — `paperless-web`/`sml-api-bybos`/`db` u
 
 Customer to retest: on `/signing/documents/new`, upload a landscape-orientation source PDF (especially one captured on a phone/scanner app) and confirm the resulting document keeps its landscape shape rather than being clipped into portrait. Also worth confirming print-copy generation for an existing landscape document, since that flow shares the same fix.
 
+## Current Customer Status - 2026-08-18 (all four shops, paperless-api only): landscape source PDF still clipped to portrait (second, separate bug)
+
+Customer retested after the fix above and reported the same document still came out portrait, this time on the Pui shop (document `IA26050134`). Investigation against the customer's actual uploaded file (pulled from the Pui production server) found this was a **different bug** from the `/Rotate` case above: the source file was already genuinely landscape (`/MediaBox` 841.92×595.32, `/Rotate 0` — produced by Windows "Print to PDF" from a landscape layout), so the `/Rotate` fix didn't apply.
+
+Root cause: `importPDFPages` correctly picked destination orientation `"L"` for this page, but passed `gofpdf.AddPageFormat` the already-landscape-shaped size (`Wd>Ht`). `gofpdf.AddPageFormat` always expects its size argument in portrait-native order (`Wd<=Ht`) and swaps internally when told `"L"` — passing an already-swapped size caused a second swap, landing back on portrait. This bug pre-dates this session entirely (present since `importPDFPages` was first written) and affects any source PDF whose `/MediaBox` is directly landscape, regardless of `/Rotate`.
+
+**Fixed in `paperless-api:8c4133e`** (was `9531674`): `importPDFPages` now always passes `AddPageFormat` a portrait-native-order size, swapping back before the call whenever the destination orientation is `"L"`. Reproduced end-to-end against the customer's real file before and after the fix (portrait 595.32×841.89 before, landscape 841.92×595.32 — matching the original — after). New regression test builds a genuinely landscape-native source PDF and asserts the *final output* PDF's page dimensions (the previous test suite only checked `importPDFPages`' intermediate callback value, which is why it didn't catch this) — confirmed the new test fails without the fix and passes with it.
+
+**Existing documents created before this fix retain their broken portrait PDF** — this only prevents the bug going forward; there is no automatic repair of already-stored files. For `IA26050134` specifically (still in `draft` status, never sent/signed), customer was advised to delete and re-upload it now that the fix is live, rather than a one-off data repair script touching production.
+
+Deployed to **Pui only** in the first pass of this fix (customer's explicit request, since that's where they were actively testing); rolled out to the remaining three shops together with the PDF 2.0 header fix below in the next pass.
+
+- **Pui**: `api` deployed, healthy, public URL smoke HTTP 200, `/health/live` HTTP 200. Release evidence `/data/paperless/releases/20260818060140-landscape-pdf-double-swap-fix-8c4133e/postdeploy-checks.txt`.
+- **Damrong Homeplus, Wirat Home Mart, Insee Construction**: received `8c4133e` bundled together with the PDF 2.0 header fix (`c984648`) in the next deploy pass — see release evidence in that section below.
+
+## Current Customer Status - 2026-08-18 (all four shops, paperless-api only): PDF 2.0 header rejected as "unreadable"
+
+Customer testing multi-file import on Wirat Home Mart hit `400 invalid_pdf` — `"Uploaded file must be a readable PDF."` — on upload, before any signing/stamping logic ran. Customer supplied the three actual PDF files that failed (`PO6908-0230.pdf`, `PO6908-0232.pdf`, `PO6908-0233.pdf`).
+
+Root cause: `github.com/ledongthuc/pdf`'s `NewReader` hard-codes acceptance of only `%PDF-1.0` through `%PDF-1.7` headers, rejecting anything else — including `%PDF-2.0` — outright with `"not a PDF file: invalid header"`. All three customer files are valid PDF 2.0 documents (confirmed via `qpdf --check`: no syntax or stream errors, not encrypted) produced by "PDF Architect" — PDF 2.0 kept the same base xref/object model as 1.x for ordinary documents, so only the version-string prefix check rejected them; `gofpdi` (the library actually used to stamp/import pages) has no such header check at all, so these files were never truly unreadable, only the upload-time validation gate was too strict.
+
+**Fixed in `paperless-api:c984648`** (was `9531674`/`8c4133e` depending on shop): `readPDFPageCount` and `readPDFPageRotations` now normalize the header to `%PDF-1.7` via `normalizePDFHeaderForReader` before handing bytes to `ledongthuc/pdf`, whenever the source declares a version other than 1.0–1.7. The rewrite only changes the fixed 8-byte version token in place, so it cannot shift any xref offset elsewhere in the file. Verified against the customer's actual PDF 2.0 files — all three parsed and stamped successfully after the fix, failed identically to the report before it — plus new unit tests using a hand-patched `%PDF-2.0` fixture (`gofpdf` itself never emits anything but `%PDF-1.x`, so a real fixture had to be built by patching a generated file's header bytes).
+
+This deploy also brought Damrong, Wirat, and Insee up to the landscape-PDF double-swap fix (`8c4133e`) above, since Pui had already received it separately — all four shops are now on the same `paperless-api:c984648` image, which includes both landscape-PDF fixes plus this PDF 2.0 header fix.
+
+- **All four shops** (Pui, Damrong Homeplus, Wirat Home Mart, Insee Construction): `api` deployed same-session, healthy on each, public URL smoke HTTP 200, `/health/live` HTTP 200. Release evidence:
+  - Damrong Homeplus: `/data/paperless/releases/20260818062153-pdf-2.0-header-fix-c984648/postdeploy-checks.txt`
+  - Pui: `/data/paperless/releases/20260818062155-pdf-2.0-header-fix-c984648/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260818062157-pdf-2.0-header-fix-c984648/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260818062159-pdf-2.0-header-fix-c984648/postdeploy-checks.txt`
+
+Customer to retest: re-upload the same three PO PDFs (or any other PDF 2.0 file) through both the single-document upload and the multi-file batch import dialog on Wirat Home Mart, and confirm they upload successfully instead of failing with "Uploaded file must be a readable PDF."
+
 ## Current Customer Status - 2026-08-18 (all four shops, paperless-web only): note-box scroll-jump and drag-ability fix
 
 Customer relayed two related complaints from an end-user (in `ContinuousPdfViewer.vue`, the main signing-task PDF viewer, not the layout designer touched on 2026-08-15/17): (1) entering text-edit on a sign-note box felt like the note "jumped to a different position"; (2) dragging the note box to reposition it was difficult and often failed.
