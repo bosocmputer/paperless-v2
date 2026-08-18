@@ -18,6 +18,24 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-18 (all four shops, paperless-api only): landscape source PDF was clipped to portrait on save
+
+Customer reported: on `/signing/documents/new`, uploading a landscape-orientation source PDF resulted in the saved/stamped document being cut/clipped into portrait instead of preserving landscape.
+
+Root cause: many scan/mobile-capture PDFs declare landscape orientation via the page's `/Rotate 90` or `/Rotate 270` entry rather than swapping the `/MediaBox` width/height directly — every normal PDF viewer honors `/Rotate` and displays these correctly. The import library (`gofpdi`) already rotates the drawn page *content* correctly for this case, but the separate call used to size the *destination* page (`Importer.GetPageSizes()`) only reads the raw, un-rotated `/MediaBox`. This mismatch meant a landscape source page (e.g. 842×595 as displayed) was built onto a portrait-shaped destination page (595×842, matching the un-rotated MediaBox), so the correctly-rotated content was squeezed/clipped into the wrong-shaped page. This affected both new signing-document creation and print-copy generation — both call the same shared `importPDFPages` function.
+
+**Fixed in `paperless-api:9531674`** (was `b9c24dc`): `importPDFPages` now independently reads each page's inherited `/Rotate` value (via `github.com/ledongthuc/pdf`, already a project dependency) and swaps width/height before choosing the destination page's orientation/size, so it matches what the importer actually draws. Covered by two new unit tests (`TestReadPDFPageRotationsReadsRotateEntry`, `TestImportPDFPagesSwapsDimensionsForRotatedPage`) built against a hand-constructed PDF with a genuine `/Rotate 90` entry, since `gofpdf` has no API to produce one for a test fixture. Swept the rest of the codebase for the same bug class: confirmed `importedPageSize`/`ImportPage`/`UseImportedTemplate` are only ever called from within `importPDFPages`, so this is the single, exhaustive fix point — no other independent page-sizing logic exists elsewhere (`signature_templates.go`/`signing_documents.go` only call `readPDFPageCount`, which doesn't touch dimensions).
+
+This is a `paperless-api`-only change — `paperless-web`/`sml-api-bybos`/`db` untouched, so only `api` was redeployed on each shop.
+
+- **Damrong Homeplus**: `api` deployed, healthy, public URL smoke HTTP 200, `/health/live` HTTP 200. Release evidence `/data/paperless/releases/20260818115529-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction**: `api` deployed same-session per customer instruction to roll out to all four shops immediately (shared backend code) — healthy on each, public URL smoke HTTP 200, `/health/live` HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260818045629-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260818045728-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260818045821-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`
+
+Customer to retest: on `/signing/documents/new`, upload a landscape-orientation source PDF (especially one captured on a phone/scanner app) and confirm the resulting document keeps its landscape shape rather than being clipped into portrait. Also worth confirming print-copy generation for an existing landscape document, since that flow shares the same fix.
+
 ## Current Customer Status - 2026-08-18 (all four shops, paperless-web only): note-box scroll-jump and drag-ability fix
 
 Customer relayed two related complaints from an end-user (in `ContinuousPdfViewer.vue`, the main signing-task PDF viewer, not the layout designer touched on 2026-08-15/17): (1) entering text-edit on a sign-note box felt like the note "jumped to a different position"; (2) dragging the note box to reposition it was difficult and often failed.

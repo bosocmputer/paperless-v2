@@ -1,5 +1,17 @@
 # PaperLess Release Notes - 2026-08-18
 
+## Landscape Source PDF Clipped to Portrait on Save
+
+Customer reported: on `/signing/documents/new`, uploading a landscape-orientation source PDF resulted in the saved/stamped document being cut into portrait.
+
+Root cause: scan/mobile-capture PDFs commonly declare landscape via the page's `/Rotate 90|270` entry instead of a swapped `/MediaBox` — every normal viewer honors `/Rotate`. The PDF import library (`gofpdi`) already rotates the drawn page content correctly for this case, but the separate call used to size the *destination* page (`Importer.GetPageSizes()`) reads only the raw, un-rotated `/MediaBox`. A landscape source page was therefore built onto a portrait-shaped destination page, clipping/squeezing the correctly-rotated content into the wrong shape. Affects both new signing-document creation and print-copy generation (both share the same `importPDFPages` function).
+
+Fix (`paperless-api:9531674`, was `b9c24dc`):
+
+- `importPDFPages` now independently reads each page's inherited `/Rotate` (via `github.com/ledongthuc/pdf`, already a dependency) and swaps width/height before choosing the destination page's orientation, matching what the importer actually draws.
+- Verified with two new unit tests against a hand-built PDF carrying a genuine `/Rotate 90` entry (`gofpdf` has no API to produce one for a fixture, so the PDF's object/xref structure was constructed by hand).
+- Swept the codebase for the same bug class: confirmed the rotation-blind page-sizing call is only ever reached through `importPDFPages` — no other independent PDF page-sizing logic exists elsewhere in the codebase.
+
 ## Sign-Note Box: Scroll Jump and Hard-to-Drag Fix
 
 Customer relayed two related complaints from an end-user about the sign-note box feature in `ContinuousPdfViewer.vue` (the main signing-task PDF viewer): entering text-edit on a note felt like it "jumped to a different position," and dragging the box to reposition it was difficult and unreliable.
@@ -16,7 +28,15 @@ Fix (`paperless-web:72974a7`, was `b5bd587`):
 
 ## Customer Deployment
 
-Deployed same-session to all four shops (Damrong Homeplus, Pui, Wirat Home Mart, Insee Construction) as a `web`-only redeploy (`--no-deps web`) — `api`/`db`/`sml-api` kept their exact prior container everywhere.
+Both fixes above deployed same-session to all four shops (Damrong Homeplus, Pui, Wirat Home Mart, Insee Construction).
+
+**Landscape PDF rotation fix** — `api`-only redeploy (`--no-deps api`) — `web`/`db`/`sml-api` kept their exact prior container everywhere.
+
+- Image: `paperless-api:9531674` (was `b9c24dc`).
+- Verification per shop: `api` `Up`/healthy, public URL smoke `HTTP 200`, `/health/live` `HTTP 200`.
+- Release evidence: Damrong `/data/paperless/releases/20260818115529-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`, Pui `/data/paperless/releases/20260818045629-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`, Wirat `/data/paperless/releases/20260818045728-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`, Insee `/data/paperless/releases/20260818045821-landscape-pdf-rotation-fix-9531674/postdeploy-checks.txt`; full narrative in `docs/CUSTOMER_DEPLOYMENT.md` (search for `landscape source PDF`).
+
+**Note-box scroll/drag fix** — `web`-only redeploy (`--no-deps web`) — `api`/`db`/`sml-api` kept their exact prior container everywhere.
 
 - Image: `paperless-web:72974a7` (was `b5bd587`).
 - Verification per shop: `web` `Up`, public URL smoke `HTTP 200`.
@@ -24,5 +44,6 @@ Deployed same-session to all four shops (Damrong Homeplus, Pui, Wirat Home Mart,
 
 ## Status As Of 2026-08-18 (end of session)
 
-- **Awaiting real-usage feedback from the customer.** Customer to retest with the end-user who originally reported this: open a signing task with sign-note boxes, click into a note near the bottom of a tall page and confirm the view no longer re-centers, then confirm dragging the box body itself works reliably (including a brief hold-before-move not immediately opening text-edit).
+- **Landscape PDF rotation fix**: deployed and smoke-tested (container healthy, HTTP 200) on all four shops. Awaiting customer confirmation with a real landscape-orientation scan/mobile-capture upload on `/signing/documents/new`, and ideally a print-copy check too since that flow shares the fix.
+- **Awaiting real-usage feedback from the customer** on the note-box fix. Customer to retest with the end-user who originally reported this: open a signing task with sign-note boxes, click into a note near the bottom of a tall page and confirm the view no longer re-centers, then confirm dragging the box body itself works reliably (including a brief hold-before-move not immediately opening text-edit).
 - All prior open items (Workflow delete, signature-template slot reconciliation, the 8 proactive audit fixes, the PDF layout designer horizontal-scroll and Shift+wheel fixes, the required-attachment cap removal) remain awaiting confirmation — nothing new to report on those as of this entry.
