@@ -444,6 +444,9 @@ async function focusEditingNoteBox() {
     await nextTick();
     const editor = noteEditorRefs.get(key);
     if (!editor) return;
+    // preventScroll: the box is already wherever the user was looking (they
+    // just clicked it) - jumping the whole page to re-center it here was
+    // disorienting, especially for a box near the top/bottom edge.
     editor.focus({ preventScroll: true });
     const length = editor.value?.length || 0;
     try {
@@ -451,7 +454,6 @@ async function focusEditingNoteBox() {
     } catch {
         // Some mobile browsers can reject selection changes during focus.
     }
-    editor.closest('.pdf-page-shell')?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
 }
 
 function deleteNoteBox(box) {
@@ -465,20 +467,32 @@ function deleteNoteBox(box) {
     if (props.editingNoteBoxKey === key) emit('note-box-edit', '');
 }
 
+// Move/resize threshold in pixels. The box body itself is now the drag
+// handle (not just the small corner button) so it has to double as the
+// click target for entering text-edit mode - a plain tap must still open
+// the editor instead of being swallowed as a zero-distance drag.
+const DRAG_THRESHOLD_PX = 4;
+
 function startNotePointer(event, box, mode = 'move') {
     if (!props.editableNoteBoxes || !box?.clientKey || props.editingNoteBoxKey === box.clientKey) return;
     event.preventDefault();
     event.stopPropagation();
-    selectNoteBox(box);
     const shell = pageShells.get(Number(box.pageNo || 1));
     if (!shell) return;
+    // For the dedicated move handle/resize corner, a drag is the only
+    // possible outcome - commit immediately. For the box body ('move-or-click'),
+    // defer the decision until the pointer actually moves past the threshold.
+    const deferred = mode === 'move-or-click';
     noteDragState = {
         key: box.clientKey,
-        mode,
+        mode: deferred ? 'move' : mode,
+        deferred,
+        moved: false,
         pageNo: Number(box.pageNo || 1),
         startX: event.clientX,
         startY: event.clientY,
         shell,
+        box,
         startBox: {
             xRatio: Number(box.xRatio || 0),
             yRatio: Number(box.yRatio || 0),
@@ -486,6 +500,7 @@ function startNotePointer(event, box, mode = 'move') {
             heightRatio: Number(box.heightRatio || 0)
         }
     };
+    if (!deferred) selectNoteBox(box);
     window.addEventListener('pointermove', moveNotePointer, { passive: false });
     window.addEventListener('pointerup', endNotePointer, { once: true });
     window.addEventListener('pointercancel', endNotePointer, { once: true });
@@ -493,11 +508,18 @@ function startNotePointer(event, box, mode = 'move') {
 
 function moveNotePointer(event) {
     if (!noteDragState) return;
-    event.preventDefault();
     const rect = noteDragState.shell.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
-    const dx = (event.clientX - noteDragState.startX) / rect.width;
-    const dy = (event.clientY - noteDragState.startY) / rect.height;
+    const pixelDx = event.clientX - noteDragState.startX;
+    const pixelDy = event.clientY - noteDragState.startY;
+    if (noteDragState.deferred && !noteDragState.moved) {
+        if (Math.hypot(pixelDx, pixelDy) < DRAG_THRESHOLD_PX) return;
+        noteDragState.moved = true;
+        selectNoteBox(noteDragState.box);
+    }
+    event.preventDefault();
+    const dx = pixelDx / rect.width;
+    const dy = pixelDy / rect.height;
     const minW = 0.04;
     const minH = 0.015;
     const start = noteDragState.startBox;
@@ -513,9 +535,13 @@ function moveNotePointer(event) {
 }
 
 function endNotePointer() {
+    const state = noteDragState;
     flushNoteBoxUpdate();
     removeNotePointerListeners();
     noteDragState = null;
+    // A deferred pointerdown on the box body that never crossed the drag
+    // threshold was a plain click/tap, not a drag - open the text editor.
+    if (state?.deferred && !state.moved) editNoteBox(state.box);
 }
 
 function removeNotePointerListeners() {
@@ -697,7 +723,15 @@ function clampNoteFontSize(value) {
                             @pointerdown.stop
                             @click.stop
                         ></textarea>
-                        <button v-else type="button" class="runtime-note-text" :style="noteBoxContentStyle(box)" @click.stop="editNoteBox(box)" @pointerdown.stop>
+                        <button
+                            v-else
+                            type="button"
+                            class="runtime-note-text"
+                            :style="noteBoxContentStyle(box)"
+                            :aria-label="editableNoteBoxes ? 'ลากเพื่อย้าย หรือแตะเพื่อพิมพ์หมายเหตุ' : undefined"
+                            @click.stop="!editableNoteBoxes && editNoteBox(box)"
+                            @pointerdown="editableNoteBoxes ? startNotePointer($event, box, 'move-or-click') : undefined"
+                        >
                             <span>{{ box.text || 'พิมพ์หมายเหตุ' }}</span>
                         </button>
                         <button v-if="editableNoteBoxes" type="button" class="runtime-note-delete" aria-label="ลบกล่องหมายเหตุ" @pointerdown.stop @click.stop="deleteNoteBox(box)">
@@ -861,6 +895,15 @@ function clampNoteFontSize(value) {
     flex-direction: column;
     overflow: hidden;
     cursor: text;
+    touch-action: none;
+}
+
+.runtime-note-box.editable .runtime-note-text {
+    cursor: grab;
+}
+
+.runtime-note-box.editable .runtime-note-text:active {
+    cursor: grabbing;
 }
 
 .runtime-note-text span {
