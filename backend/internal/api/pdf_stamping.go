@@ -579,11 +579,20 @@ func importPDFPages(pdf *gofpdf.Fpdf, importer *gofpdi.Importer, sourcePath stri
 		if rotation := rotations[pageNo]; rotation == 90 || rotation == 270 {
 			size.Wd, size.Ht = size.Ht, size.Wd
 		}
+		// gofpdf's AddPageFormat always expects size in portrait-native
+		// order (Wd <= Ht) and swaps it internally when orientationStr is
+		// "L" - passing an already-landscape-shaped size (Wd > Ht) here
+		// makes it swap a second time, producing a portrait page. See
+		// beginpage() in gofpdf/fpdf.go: for "L" it sets f.w=size.Ht,
+		// f.h=size.Wd, so size must be given narrow-first regardless of
+		// the destination orientation.
 		orientation := "P"
+		formatSize := size
 		if size.Wd > size.Ht {
 			orientation = "L"
+			formatSize = gofpdf.SizeType{Wd: size.Ht, Ht: size.Wd}
 		}
-		pdf.AddPageFormat(orientation, size)
+		pdf.AddPageFormat(orientation, formatSize)
 		importer.UseImportedTemplate(pdf, tpl, 0, 0, size.Wd, size.Ht)
 		if onPage != nil {
 			onPage(pageNo, size)

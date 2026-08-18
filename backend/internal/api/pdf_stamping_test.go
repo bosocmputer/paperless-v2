@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
+	pdfparse "github.com/ledongthuc/pdf"
 	"github.com/phpdave11/gofpdf"
 	"github.com/phpdave11/gofpdf/contrib/gofpdi"
 )
@@ -784,5 +785,52 @@ func TestImportPDFPagesSwapsDimensionsForRotatedPage(t *testing.T) {
 	// un-swapped portrait size.
 	if gotWd <= gotHt {
 		t.Fatalf("expected landscape dimensions after accounting for /Rotate 90, got Wd=%.2f Ht=%.2f", gotWd, gotHt)
+	}
+}
+
+// TestImportPDFPagesProducesLandscapeOutputForLandscapeMediaBox guards a
+// separate bug from the /Rotate case above: a source PDF whose /MediaBox is
+// already genuinely landscape (Wd>Ht, /Rotate 0 - e.g. "Print to PDF" from
+// a landscape print layout) was still coming out portrait in the final
+// document. importPDFPages picked orientation "L" correctly, but passed
+// AddPageFormat the already-landscape-shaped size; gofpdf's AddPageFormat
+// always expects portrait-native (Wd<=Ht) input and swaps internally for
+// "L", so an already-swapped size got swapped a second time back to
+// portrait. This only shows up by inspecting the actual output PDF's page
+// size, not the intermediate size value from importPDFPages' callback.
+func TestImportPDFPagesProducesLandscapeOutputForLandscapeMediaBox(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "landscape.pdf")
+
+	landscapeSrc := gofpdf.New("L", "pt", "A4", "")
+	landscapeSrc.AddPage()
+	landscapeSrc.SetFont("Helvetica", "", 12)
+	landscapeSrc.Text(72, 72, "landscape source")
+	if err := landscapeSrc.OutputFileAndClose(source); err != nil {
+		t.Fatalf("write landscape source pdf: %v", err)
+	}
+
+	out, err := stampPDFWithSignaturePlacementsAndLegalNotices(source, 1, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("stampPDFWithSignaturePlacementsAndLegalNotices: %v", err)
+	}
+
+	outPath := filepath.Join(dir, "output.pdf")
+	if err := os.WriteFile(outPath, out, 0o644); err != nil {
+		t.Fatalf("write output pdf: %v", err)
+	}
+	reader, err := pdfparse.NewReader(bytes.NewReader(out), int64(len(out)))
+	if err != nil {
+		t.Fatalf("read output pdf: %v", err)
+	}
+	page := reader.Page(1)
+	mediaBox := pdfInheritedValue(page.V, "MediaBox")
+	if mediaBox.IsNull() || mediaBox.Len() != 4 {
+		t.Fatalf("expected output page to have a MediaBox, got %#v", mediaBox)
+	}
+	wd := mediaBox.Index(2).Float64() - mediaBox.Index(0).Float64()
+	ht := mediaBox.Index(3).Float64() - mediaBox.Index(1).Float64()
+	if wd <= ht {
+		t.Fatalf("expected landscape output page, got Wd=%.2f Ht=%.2f", wd, ht)
 	}
 }
