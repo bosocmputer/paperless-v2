@@ -18,6 +18,25 @@ The same release is also deployed for Insee Construction at `http://45.122.49.25
 
 The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:8095`, using stack path `/data/paperless` and Compose project/container prefix `paperless-damrong`. This server hosts multiple unrelated customer projects (traefik, smlmcp, pickandpack, tms, accountupdater, pgadmin4) alongside a shared `sml_postgresql` instance serving many unrelated SML tenants; PaperLess containers and network are fully isolated under the `paperless-damrong-*` prefix and only port `8095` is published.
 
+## Current Customer Status - 2026-08-18 (all four shops, paperless-web only): note-box scroll-jump and drag-ability fix
+
+Customer relayed two related complaints from an end-user (in `ContinuousPdfViewer.vue`, the main signing-task PDF viewer, not the layout designer touched on 2026-08-15/17): (1) entering text-edit on a sign-note box felt like the note "jumped to a different position"; (2) dragging the note box to reposition it was difficult and often failed.
+
+Root cause, both traced to the same runtime note-box UI:
+
+1. `focusEditingNoteBox()` called `scrollIntoView({block:'center'})` on every edit, re-centering the whole PDF page around whatever box was clicked. The box's coordinates never changed — the viewport did — but for a box near the top or bottom edge of a tall page this reads exactly like "the note jumped."
+2. The only drag handle was a ~22px circle at the box's top-left corner, sitting outside the box itself, and it disappeared entirely while the box was in text-edit mode — the customer's end-user had to exit edit mode first just to find and grab the tiny handle.
+
+**Fixed in `paperless-web:72974a7`** (was `b5bd587`): removed the `scrollIntoView` call — `editor.focus({preventScroll:true})` already keeps focus without forcing a scroll. Made the box body itself draggable: `pointerdown` on it starts a deferred move that only commits once the pointer crosses a 4px threshold, so a plain tap still opens the text editor (the same click-vs-drag distinction browsers use natively) while a press-and-drag repositions the box. The small corner handle and resize corner remain as an explicit alternative.
+
+This is a `paperless-web`-only change — `sml-api-bybos`/`paperless-api`/`db` untouched, so only `web` was redeployed on each shop.
+
+- **Damrong Homeplus**: `web` deployed, healthy, public URL smoke HTTP 200. Release evidence `/data/paperless/releases/20260818095812-notebox-scroll-drag-fix-72974a7/postdeploy-checks.txt`. Customer to retest: open a signing task with sign-note boxes, click into a note near the bottom of a tall page and confirm the view no longer re-centers, then confirm dragging the box body itself works (including a brief hold-before-move not immediately opening text-edit).
+- **Pui, Wirat Home Mart, Insee Construction**: `web` deployed same-session per customer instruction to roll out to all four shops immediately (shared frontend code) — healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260818095908-notebox-scroll-drag-fix-72974a7/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260818095949-notebox-scroll-drag-fix-72974a7/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260818100049-notebox-scroll-drag-fix-72974a7/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-17 (all four shops, paperless-web only): mouse users couldn't pan the PDF layout designer horizontally
 
 Follow-up to the 2026-08-15 fix that made `.pdf-viewport` actually scrollable. Customer clarified the root cause of the still-not-scrolling report: the affected user is on a plain mouse (no trackpad, no tilt-wheel), which only reports vertical wheel delta — a natural touchpad two-finger swipe (which the customer used to originally verify the fix) produces horizontal delta directly, but a plain mouse wheel does not. The only way left to pan a wide/zoomed page with a plain mouse was dragging the horizontal scrollbar by hand, which renders as thin default OS/browser chrome easy to miss or not realize is draggable.
