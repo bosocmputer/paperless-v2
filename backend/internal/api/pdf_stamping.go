@@ -609,16 +609,12 @@ func importPDFPages(pdf *gofpdf.Fpdf, importer *gofpdi.Importer, sourcePath stri
 // pre-fix behavior of trusting the raw /MediaBox orientation.
 func readPDFPageRotations(sourcePath string, pageCount int) map[int]int {
 	rotations := make(map[int]int, pageCount)
-	f, err := os.Open(sourcePath)
+	data, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return rotations
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return rotations
-	}
-	reader, err := pdfparse.NewReader(f, info.Size())
+	data = normalizePDFHeaderForReader(data)
+	reader, err := pdfparse.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return rotations
 	}

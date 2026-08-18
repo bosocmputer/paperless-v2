@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
+	"github.com/phpdave11/gofpdf"
 )
 
 func TestValidateSignatureTemplatePOConditions(t *testing.T) {
@@ -270,5 +272,54 @@ func TestNormalizeSignatureDesignerEventMetadataClampsBounds(t *testing.T) {
 	viewport := metadata["viewport"].(map[string]any)
 	if viewport["width"] != 10000 || viewport["height"] != 0 {
 		t.Fatalf("viewport bounds were not clamped: %#v", viewport)
+	}
+}
+
+// buildPDFWithHeaderVersion writes a minimal, otherwise-valid single-page
+// PDF using gofpdf, then patches only its 8-byte version token in place
+// (e.g. "%PDF-1.7" -> "%PDF-2.0") - a byte-for-byte-length-preserving edit
+// that cannot shift any xref offset, so the rest of the file stays valid.
+func buildPDFWithHeaderVersion(t *testing.T, header string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	pdfDoc := gofpdf.New("P", "pt", "A4", "")
+	pdfDoc.AddPage()
+	pdfDoc.SetFont("Helvetica", "", 12)
+	pdfDoc.Text(72, 72, "hello")
+	if err := pdfDoc.Output(&buf); err != nil {
+		t.Fatalf("generate base pdf: %v", err)
+	}
+	data := buf.Bytes()
+	if len(data) < 8 || !bytes.HasPrefix(data, []byte("%PDF-1.")) {
+		t.Fatalf("unexpected gofpdf header: %q", data[:minInt(8, len(data))])
+	}
+	copy(data[:8], []byte(header))
+	return data
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func TestReadPDFPageCountAcceptsPDF20Header(t *testing.T) {
+	data := buildPDFWithHeaderVersion(t, "%PDF-2.0")
+
+	count, err := readPDFPageCount(data)
+	if err != nil {
+		t.Fatalf("expected PDF 2.0 header to be readable, got error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 page, got %d", count)
+	}
+}
+
+func TestNormalizePDFHeaderForReaderLeavesSupportedVersionsUntouched(t *testing.T) {
+	data := buildPDFWithHeaderVersion(t, "%PDF-1.4")
+	normalized := normalizePDFHeaderForReader(data)
+	if !bytes.Equal(data, normalized) {
+		t.Fatalf("expected %%PDF-1.4 to be left untouched")
 	}
 }

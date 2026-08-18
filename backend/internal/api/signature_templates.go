@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -489,11 +490,44 @@ func clampInt64(value, min, max int64) int64 {
 }
 
 func readPDFPageCount(data []byte) (int, error) {
+	data = normalizePDFHeaderForReader(data)
 	reader, err := pdf.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return 0, err
 	}
 	return reader.NumPage(), nil
+}
+
+// pdfHeaderVersionRegexp matches a PDF file header declaring any version,
+// e.g. "%PDF-1.7" or "%PDF-2.0".
+var pdfHeaderVersionRegexp = regexp.MustCompile(`^%PDF-\d\.\d`)
+
+// normalizePDFHeaderForReader rewrites a PDF 2.0 (or any non-1.x) header to
+// "%PDF-1.7" so github.com/ledongthuc/pdf's NewReader accepts the file.
+// That reader hard-codes acceptance of only %PDF-1.0 through %PDF-1.7
+// (see its NewReaderEncrypted: bytes.HasPrefix(buf, []byte("%PDF-1."))),
+// rejecting every other version string outright with "not a PDF file:
+// invalid header" - even though the rest of a PDF 2.0 file's structure
+// (xref, objects, trailer) is what that reader already parses for 1.x
+// files, since PDF 2.0 kept the same base object model. Real-world tools
+// (e.g. "PDF Architect") emit %PDF-2.0 headers on otherwise ordinary
+// documents, so without this normalization every such upload was
+// rejected as "unreadable" despite parsing correctly through every other
+// path (gofpdi's importer, which this app uses to actually stamp pages,
+// does no header-version check at all). The rewrite only ever changes
+// the 8-byte version token in place, so it cannot change any offset
+// elsewhere in the file.
+func normalizePDFHeaderForReader(data []byte) []byte {
+	if len(data) < 8 || !pdfHeaderVersionRegexp.Match(data[:8]) {
+		return data
+	}
+	if bytes.HasPrefix(data, []byte("%PDF-1.")) && data[7] >= '0' && data[7] <= '7' {
+		return data
+	}
+	patched := make([]byte, len(data))
+	copy(patched, data)
+	copy(patched[:8], []byte("%PDF-1.7"))
+	return patched
 }
 
 func randomHex(bytesLen int) string {
