@@ -12,6 +12,20 @@ Fix (`paperless-api:9531674`, was `b9c24dc`):
 - Verified with two new unit tests against a hand-built PDF carrying a genuine `/Rotate 90` entry (`gofpdf` has no API to produce one for a fixture, so the PDF's object/xref structure was constructed by hand).
 - Swept the codebase for the same bug class: confirmed the rotation-blind page-sizing call is only ever reached through `importPDFPages` — no other independent PDF page-sizing logic exists elsewhere in the codebase.
 
+## Landscape Source PDF Still Clipped to Portrait (Second, Separate Bug)
+
+Customer retested after the fix above and reported the same document still came out portrait. Investigation against the customer's actual uploaded file (pulled from the Pui production server, signing document `IA26050134`) found this is a **different bug**: the source file was already genuinely landscape (`/MediaBox` 841.92×595.32, `/Rotate 0` — produced by Windows "Print to PDF" from a landscape layout), not a `/Rotate`-declared page, so the fix above didn't apply to it.
+
+Root cause: `importPDFPages` correctly picked destination orientation `"L"` for this page, but passed `gofpdf.AddPageFormat` the already-landscape-shaped size (`Wd>Ht`). `gofpdf.AddPageFormat` always expects its size argument in portrait-native order (`Wd<=Ht`) and swaps internally when told `"L"` — passing an already-swapped size caused a second swap, landing back on portrait. This bug pre-dates today's session entirely (present since `importPDFPages` was first written) and affects any source PDF whose `/MediaBox` is directly landscape, regardless of `/Rotate`.
+
+Fix (`paperless-api:8c4133e`, was `9531674`):
+
+- `importPDFPages` now always passes `AddPageFormat` a portrait-native-order size, swapping back before the call whenever the destination orientation is `"L"`.
+- Reproduced end-to-end against the customer's real file before and after the fix (portrait 595.32×841.92 before, landscape 841.92×595.32 — matching the original — after).
+- New regression test builds a genuinely landscape-native source PDF and asserts the *final output* PDF's page dimensions (the previous test suite only checked `importPDFPages`' intermediate callback value, which is why it didn't catch this). Confirmed the new test fails without the fix and passes with it.
+
+**Existing documents created before this fix retain their broken portrait PDF** — this only prevents the bug going forward; there is no automatic repair of already-stored files. For document `IA26050134` specifically (still in `draft` status, never sent/signed), the simplest safe fix is for the customer to delete and re-upload it now that the fix is live, rather than a one-off data repair script touching production.
+
 ## Sign-Note Box: Scroll Jump and Hard-to-Drag Fix
 
 Customer relayed two related complaints from an end-user about the sign-note box feature in `ContinuousPdfViewer.vue` (the main signing-task PDF viewer): entering text-edit on a note felt like it "jumped to a different position," and dragging the box to reposition it was difficult and unreliable.
