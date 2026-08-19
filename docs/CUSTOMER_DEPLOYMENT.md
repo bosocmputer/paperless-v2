@@ -20,6 +20,27 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-19 (all five shops, api+web): signer can now delete their own reference attachment while pending
+
+Customer feedback: during signing, attaching too many or the wrong reference document left no way to cancel or delete it - only a view (eye icon) action existed. Confirmed by reading the code, not assumed: no delete route existed anywhere in the codebase before this change - not for admin, not for the signer, not on the public/external signing-link flow. This was a missing feature, not a hidden/broken button.
+
+Per explicit customer decision, scoped to signer self-service only: a signer may delete an attachment they uploaded to their own task while that task is still `pending` - the same status gate `uploadMySigningTaskAttachment`/`signMySigningTask` already enforce. Admin views (`SigningDocumentDetail.vue`, always `readonly`) and the public/external signing-link flow are untouched by this change - deliberately out of scope, not overlooked.
+
+**Added in `paperless-api:76e9692`** (was `2f34bd6`) **and `paperless-web:76e9692`** (was `9a510ad`): `DELETE /api/my/signing-tasks/{taskId}/attachments/{attachmentId}` locks the signer row (`FOR UPDATE`) before deleting, so a concurrent sign cannot race a delete of an attachment that satisfies a required-attachment check - `MissingRequiredAttachments` is computed live from `signing_document_attachments`, so a deleted attachment correctly re-opens its requirement with no extra bookkeeping needed. Writes a `signing_attachment_removed` audit event (same pattern as the existing `document_config.signature_box_removed` audit events). Only the `signing_document_attachments` link row is removed - the underlying `uploaded_files` row/bytes are left in place, matching how this codebase never garbage-collects `uploaded_files` elsewhere. Frontend: trash-icon button next to each attachment row in `DocumentAttachmentsPanel.vue`, visible only when the task is interactive, with a confirm dialog before calling through.
+
+No DB-backed test harness exists in this repo, so the store method's transaction/locking logic was verified directly against Pui's real production data in a rolled-back transaction before shipping: found a real pending attachment (`TaxInvoices_SCCC_9012367707.pdf`, still pending from an earlier bug-report session), ran the exact delete+audit-insert SQL sequence the Go code executes, confirmed the row was removed and the event recorded correctly, then rolled back and confirmed the row was still present afterward - no production data was changed by the test itself.
+
+This is an `api`+`web` change - `sml-api-bybos`/`db` untouched, so only `api` and `web` were redeployed on each shop.
+
+- **Pui, Wirat Home Mart, Insee Construction, Amata, Damrong Homeplus** (all five shops): `api`+`web` deployed same-session per customer instruction ("เป็น BUG UI") to roll out immediately - healthy on each, public URL smoke HTTP 200, `/health/ready` HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260819130802-attachment-delete-76e9692/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260819130839-attachment-delete-76e9692/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260819130920-attachment-delete-76e9692/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260819130954-attachment-delete-76e9692/postdeploy-checks.txt`
+  - Damrong Homeplus: `/data/paperless/releases/20260819131025-attachment-delete-76e9692/postdeploy-checks.txt`
+
+Customer to retest: attach an extra/wrong reference document during signing, confirm a trash-icon button now appears next to it, confirm the confirm dialog then successful delete, and confirm a required-attachment slot correctly shows as unfulfilled again after its attachment is deleted.
+
 ## Current Customer Status - 2026-08-19 (all five shops, paperless-web only): zoomed PDF preview overflowed the read-only document dialog
 
 Customer (ร้านพี่ปุ๋ย) reported, with a screenshot: opening a document via the read-only "ดูเอกสาร" dialog and zooming in (244% in the reported case, on `TaxInvoices_SCCC_9012367707.pdf` - the same file from the attachment bug above) pushed the PDF content past the dialog's right edge with no way to scroll to it, clipping columns like จำนวนเงิน/รวมมูลค่าสินค้า out of view entirely.
