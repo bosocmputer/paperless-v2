@@ -20,6 +20,23 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-19 (all five shops, paperless-web only): zoomed PDF preview overflowed the read-only document dialog
+
+Customer (ร้านพี่ปุ๋ย) reported, with a screenshot: opening a document via the read-only "ดูเอกสาร" dialog and zooming in (244% in the reported case, on `TaxInvoices_SCCC_9012367707.pdf` - the same file from the attachment bug above) pushed the PDF content past the dialog's right edge with no way to scroll to it, clipping columns like จำนวนเงิน/รวมมูลค่าสินค้า out of view entirely.
+
+Root cause confirmed by reading the code, not guessed: `ContinuousPdfViewer.vue`'s `.continuous-pdf` root (a flex column) and `ReadOnlyPdfDialog.vue`'s `.readonly-pdf` wrapper (a grid) both had `min-height: 0` but no `min-width: 0` / `minmax(0, 1fr)` column track - the same flex/grid overflow trap already fixed once in `DocumentLayoutDesigner.vue`'s `.pdf-pane` (2026-08-15 entry below), just never applied to this sibling component. Without an explicit `min-width: 0`, a flex/grid item defaults to never shrinking narrower than its content's intrinsic width, so a canvas rendered wider than the dialog (from a high zoom level) grew the whole ancestor chain instead of being clamped and scrolled within `.pdf-scroll`'s existing `overflow: auto`.
+
+**Fixed in `paperless-web:9a510ad`** (was `72974a7`): added `min-width: 0` to `.continuous-pdf` and `min-width: 0` + `grid-template-columns: minmax(0, 1fr)` to `.readonly-pdf`. Per this session's UI-testing guidance, reproduced the exact CSS structure in a standalone before/after screenshot comparison (a PrimeVue-Dialog-equivalent markup/CSS chain with content simulating a 244%-zoomed page) rather than relying on code reading alone - confirmed visually that the scroll box grows past the dialog bounds before the fix and stays correctly clamped/scrollable after. `ContinuousPdfViewer.vue` is also used directly (not only through the read-only dialog) in `SigningDocumentDetail.vue` and `SigningWorkspace.vue` - same latent bug, same fix benefits both, confirmed via `npm run build` clean on all three call sites.
+
+This is a `paperless-web`-only change - `paperless-api`/`sml-api-bybos`/`db` untouched, so only `web` was redeployed on each shop.
+
+- **Pui**: `web` deployed, healthy, public URL smoke HTTP 200. Confirmed by customer directly: re-tested with the same file at high zoom, dialog now stays contained. Release evidence `/data/paperless/releases/20260819110448-pdf-dialog-overflow-fix-9a510ad/postdeploy-checks.txt`.
+- **Wirat Home Mart, Insee Construction, Amata, Damrong Homeplus**: `web` deployed same-session per customer instruction to roll out to all shops immediately (shared frontend code, not shop-specific) - healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Wirat Home Mart: `/data/paperless/releases/20260819112309-pdf-dialog-overflow-fix-9a510ad/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260819112334-pdf-dialog-overflow-fix-9a510ad/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260819112346-pdf-dialog-overflow-fix-9a510ad/postdeploy-checks.txt`
+  - Damrong Homeplus: `/data/paperless/releases/20260819112405-pdf-dialog-overflow-fix-9a510ad/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-19 (all five shops, paperless-api only): PDF attachment rejected with "PDF attachment must be readable" for a valid file
 
 Customer (Wirat Home Mart) reported: on a signing task (`GPV6908-0126`), attaching a reference PDF (`TaxInvoices_SCCC_9012367707.pdf`, a SAP NetWeaver-produced tax invoice from a supplier) via the "แนบไฟล์" attachment dialog failed every retry (6 attempts, all `400 invalid_attachment`) with `PDF attachment must be readable`. Customer supplied the actual failing file.
