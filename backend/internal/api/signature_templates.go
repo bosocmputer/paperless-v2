@@ -491,6 +491,7 @@ func clampInt64(value, min, max int64) int64 {
 
 func readPDFPageCount(data []byte) (int, error) {
 	data = normalizePDFHeaderForReader(data)
+	data = trimTrailingBytesAfterEOF(data)
 	reader, err := pdf.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return 0, err
@@ -528,6 +529,35 @@ func normalizePDFHeaderForReader(data []byte) []byte {
 	copy(patched, data)
 	copy(patched[:8], []byte("%PDF-1.7"))
 	return patched
+}
+
+// pdfEOFMarker is the literal end-of-file marker every PDF trailer ends
+// with (PDF 32000-1:2008, §7.5.5).
+var pdfEOFMarker = []byte("%%EOF")
+
+// trimTrailingBytesAfterEOF drops any bytes after the last "%%EOF" marker
+// in an otherwise well-formed PDF. github.com/ledongthuc/pdf's NewReader
+// only looks at the file's last 100 bytes and requires them to end
+// (after trimming whitespace) in "%%EOF" - see its NewReaderEncrypted,
+// which errors "not a PDF file: missing %%EOF" otherwise. Real-world
+// files sometimes carry a few bytes of trailing garbage past the true
+// EOF marker (e.g. a truncated/appended xref-table fragment left by the
+// producing tool - observed from a SAP NetWeaver-produced invoice PDF),
+// which every normal viewer and qpdf tolerate by scanning backward for
+// "%%EOF" rather than assuming it is the file's exact suffix, but this
+// reader's fixed-suffix check rejects outright. Truncating right after
+// the last "%%EOF" mirrors that tolerant behavior and is a no-op for
+// any file where "%%EOF" already is the true end.
+func trimTrailingBytesAfterEOF(data []byte) []byte {
+	idx := bytes.LastIndex(data, pdfEOFMarker)
+	if idx < 0 {
+		return data
+	}
+	end := idx + len(pdfEOFMarker)
+	if end >= len(data) {
+		return data
+	}
+	return data[:end]
 }
 
 func randomHex(bytesLen int) string {

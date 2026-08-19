@@ -614,6 +614,7 @@ func readPDFPageRotations(sourcePath string, pageCount int) map[int]int {
 		return rotations
 	}
 	data = normalizePDFHeaderForReader(data)
+	data = trimTrailingBytesAfterEOF(data)
 	reader, err := pdfparse.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return rotations

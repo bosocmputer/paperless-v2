@@ -323,3 +323,59 @@ func TestNormalizePDFHeaderForReaderLeavesSupportedVersionsUntouched(t *testing.
 		t.Fatalf("expected %%PDF-1.4 to be left untouched")
 	}
 }
+
+// buildPDFWithTrailingGarbage appends bytes after the file's final "%%EOF"
+// marker, reproducing a real customer PDF (SAP NetWeaver-produced invoice)
+// that had 19 stray bytes - a truncated/appended xref-table fragment left
+// by the producing tool - past its true EOF marker.
+func buildPDFWithTrailingGarbage(t *testing.T, garbage []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	pdfDoc := gofpdf.New("P", "pt", "A4", "")
+	pdfDoc.AddPage()
+	pdfDoc.SetFont("Helvetica", "", 12)
+	pdfDoc.Text(72, 72, "hello")
+	if err := pdfDoc.Output(&buf); err != nil {
+		t.Fatalf("generate base pdf: %v", err)
+	}
+	data := buf.Bytes()
+	if !bytes.HasSuffix(bytes.TrimRight(data, "\r\n"), []byte("%%EOF")) {
+		t.Fatalf("unexpected gofpdf trailer: %q", data[maxInt(0, len(data)-20):])
+	}
+	return append(data, garbage...)
+}
+
+func TestReadPDFPageCountToleratesTrailingBytesAfterEOF(t *testing.T) {
+	data := buildPDFWithTrailingGarbage(t, []byte("\r\nef0 R0000 nRA    "))
+
+	count, err := readPDFPageCount(data)
+	if err != nil {
+		t.Fatalf("expected trailing garbage after %%%%EOF to be tolerated, got error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 page, got %d", count)
+	}
+}
+
+func TestTrimTrailingBytesAfterEOFLeavesWellFormedFileUntouched(t *testing.T) {
+	// gofpdf's own output ends "...%%EOF\n" - trailing whitespace after the
+	// marker, not extraneous content - so trimming stops exactly at the
+	// marker itself rather than reproducing the file byte-for-byte.
+	data := buildPDFWithHeaderVersion(t, "%PDF-1.4")
+	trimmed := trimTrailingBytesAfterEOF(data)
+	if !bytes.Equal(bytes.TrimRight(data, "\r\n"), trimmed) {
+		t.Fatalf("expected only whitespace after %%%%EOF to be trimmed")
+	}
+	count, err := readPDFPageCount(trimmed)
+	if err != nil || count != 1 {
+		t.Fatalf("expected trimmed well-formed file to still read as 1 page, got count=%d err=%v", count, err)
+	}
+}
+
+func TestTrimTrailingBytesAfterEOFHandlesNoEOFMarker(t *testing.T) {
+	data := []byte("not a pdf at all")
+	trimmed := trimTrailingBytesAfterEOF(data)
+	if !bytes.Equal(data, trimmed) {
+		t.Fatalf("expected data with no %%%%EOF marker to be left untouched")
+	}
+}
