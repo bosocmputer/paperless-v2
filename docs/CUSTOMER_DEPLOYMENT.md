@@ -20,6 +20,31 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Deploy pitfall: `uploads` bind-mount must be chowned to the container's runtime uid/gid
+
+When creating a *new* shop's stack directory from scratch (not copying an existing one), `mkdir -p .../uploads` alone is not enough - the directory is owned by whatever uid/gid the SSH/sudo session used, but the `api` container's process runs as a fixed non-root user (`uid=100 gid=101`, `app:app`) inside the image. If the host directory's owner/permissions don't allow that uid/gid to write, every PDF upload fails at the `os.WriteFile` step with `permission denied` - after already passing content-type and PDF-readability validation, so the user-facing error is the generic `"Cannot save uploaded PDF right now."` (`upload_write_failed`/`upload_record_failed` in `signature_templates.go`, or `upload_store_failed` in `signing_documents.go`), not a PDF-content error. This affects every upload consistently, not intermittently, and can go unnoticed until a real user actually tries to upload.
+
+Before declaring a new shop's initial deploy done, verify (and fix if needed):
+
+```bash
+docker exec <shop>-api id                                    # confirms uid=100 gid=101 app:app
+stat -c "%u:%g %a %n" /data/<shop-path>/uploads               # must be 100:101, mode 770 (or otherwise writable by that uid/gid)
+chown 100:101 /data/<shop-path>/uploads && chmod 770 /data/<shop-path>/uploads   # if not
+docker exec <shop>-api sh -c 'echo test > /app/uploads/permcheck.tmp && echo WRITE_OK && rm /app/uploads/permcheck.tmp'  # live confirm, no restart needed - bind mount permission checks aren't cached
+```
+
+Discovered on Amata (`45.122.49.253:9096`) 2026-08-19: `/data/paperless-amata/uploads` was `1000:1000 755` (leftover from the `mkdir` step during initial setup, never chowned to match the container), vs. Insee's working `/data/paperless/uploads` at `100:101 770`. Fixed live via `chown`/`chmod`, confirmed with a real write test - no code change, no redeploy needed. `config/` differs in ownership too (`0:0 750` on Insee vs `1000:1000 755` on Amata) but is only read at container startup via `--env-file` by the host-side `docker compose` process, not written to by the running app, so it does not need the same fix.
+
+## Current Customer Status - 2026-08-19 (Amata only, infra fix, no code deploy): PDF upload failed with "Cannot save uploaded PDF right now."
+
+Customer (Amata) reported: uploading a PDF while configuring the initial signature-box frame for a PO document type (`signature-template` designer, "กำหนดกรอบเริ่มต้น") failed every time with `"Cannot save uploaded PDF right now."` - a different error from the earlier `"must be a readable PDF"` reports, which was the first signal this was not the same bug class.
+
+Root cause confirmed directly from `paperless-amata-api` container logs, not guessed: every failed upload logged `write uploaded pdf failed ... permission denied` writing to `/app/uploads/<file>.pdf` - i.e. the file had already passed content-type and PDF-readability validation and failed purely at the disk-write step. See the "Deploy pitfall" section above for the full root cause: `/data/paperless-amata/uploads` was owned `1000:1000` (mode `755`) on the host instead of `100:101` (mode `770`) matching the `api` container's runtime user, a gap from this shop's initial setup the day before that had gone unnoticed until a real upload was attempted.
+
+**Fixed live, no code change or redeploy**: `chown 100:101 /data/paperless-amata/uploads && chmod 770 /data/paperless-amata/uploads`, confirmed immediately with a real write test executed inside the running container (`docker exec paperless-amata-api sh -c 'echo test > /app/uploads/permcheck.tmp && ...'` - succeeded) - bind-mount permission checks are not cached, so no container restart was needed.
+
+Customer to retest: re-attempt the PO signature-template PDF upload on Amata and confirm it now succeeds.
+
 ## Current Customer Status - 2026-08-19 (all five shops, api+web): signer can now delete their own reference attachment while pending
 
 Customer feedback: during signing, attaching too many or the wrong reference document left no way to cancel or delete it - only a view (eye icon) action existed. Confirmed by reading the code, not assumed: no delete route existed anywhere in the codebase before this change - not for admin, not for the signer, not on the public/external signing-link flow. This was a missing feature, not a hidden/broken button.
