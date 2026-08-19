@@ -2,6 +2,7 @@
 import { formatThaiDateTimeNumeric } from '@/utils/signingFormatters';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
 const props = defineProps({
@@ -10,6 +11,7 @@ const props = defineProps({
     error: { type: String, default: '' },
     readonly: { type: Boolean, default: false },
     canUpload: { type: Boolean, default: false },
+    canDelete: { type: Boolean, default: false },
     requirements: { type: Array, default: () => [] },
     signerId: { type: String, default: '' },
     allowOptionalUpload: { type: Boolean, default: true },
@@ -18,12 +20,15 @@ const props = defineProps({
     headers: { type: Object, default: () => ({}) },
     fileUrlResolver: { type: Function, default: null },
     onUpload: { type: Function, default: null },
+    onDelete: { type: Function, default: null },
     onReload: { type: Function, default: null }
 });
 
 const toast = useToast();
+const confirm = useConfirm();
 const note = ref('');
 const uploading = ref(false);
+const deletingId = ref('');
 const pdfVisible = ref(false);
 const pdfUrl = ref('');
 const pdfTitle = ref('ดูไฟล์แนบ');
@@ -33,6 +38,7 @@ const imageTitle = ref('ดูไฟล์แนบ');
 
 const attachmentCount = computed(() => props.attachments.length || 0);
 const showUpload = computed(() => !props.readonly && props.canUpload && !!props.onUpload);
+const showDelete = computed(() => !props.readonly && props.canDelete && !!props.onDelete);
 const requirementItems = computed(() =>
     (props.requirements || [])
         .map((item) => ({
@@ -130,6 +136,37 @@ async function uploadAttachment(event, requirement = null) {
     }
 }
 
+function confirmDeleteAttachment(attachment) {
+    if (!showDelete.value || deletingId.value) return;
+    confirm.require({
+        message: `ลบไฟล์แนบ "${fileName(attachment)}"?`,
+        header: 'ยืนยันลบไฟล์แนบ',
+        icon: 'pi pi-trash',
+        rejectProps: {
+            label: 'ยกเลิก',
+            severity: 'secondary',
+            outlined: true
+        },
+        acceptProps: {
+            label: 'ลบไฟล์แนบ',
+            severity: 'danger'
+        },
+        accept: () => deleteAttachment(attachment)
+    });
+}
+
+async function deleteAttachment(attachment) {
+    deletingId.value = attachment.id;
+    try {
+        await props.onDelete(attachment.id);
+        toast.add({ severity: 'success', summary: 'ลบไฟล์แนบแล้ว', life: 2200 });
+    } catch (err) {
+        toast.add({ severity: 'error', summary: 'ลบไฟล์แนบไม่สำเร็จ', detail: err.message, life: 3500 });
+    } finally {
+        deletingId.value = '';
+    }
+}
+
 async function openAttachment(attachment) {
     const url = props.fileUrlResolver?.(attachment);
     if (!url) {
@@ -223,7 +260,22 @@ function revokeImageUrl() {
                         <small v-if="attachment.note">หมายเหตุ: {{ attachment.note }}</small>
                     </div>
                 </div>
-                <Button icon="pi pi-eye" severity="secondary" outlined rounded size="small" title="ดูไฟล์" aria-label="ดูไฟล์" @click="openAttachment(attachment)" />
+                <div class="attachment-row-actions">
+                    <Button icon="pi pi-eye" severity="secondary" outlined rounded size="small" title="ดูไฟล์" aria-label="ดูไฟล์" @click="openAttachment(attachment)" />
+                    <Button
+                        v-if="showDelete"
+                        icon="pi pi-trash"
+                        severity="danger"
+                        outlined
+                        rounded
+                        size="small"
+                        title="ลบไฟล์แนบ"
+                        aria-label="ลบไฟล์แนบ"
+                        :loading="deletingId === attachment.id"
+                        :disabled="!!deletingId && deletingId !== attachment.id"
+                        @click="confirmDeleteAttachment(attachment)"
+                    />
+                </div>
             </article>
         </div>
         <Message v-else severity="info" class="m-0">ยังไม่มีไฟล์แนบอ้างอิง</Message>
@@ -381,6 +433,13 @@ function revokeImageUrl() {
     cursor: not-allowed;
 }
 
+.attachment-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+}
+
 .attachment-row {
     display: flex;
     align-items: center;
@@ -474,6 +533,7 @@ function revokeImageUrl() {
 @media (max-width: 640px) {
     .attachments-head,
     .attachment-row,
+    .attachment-row-actions,
     .requirement-row {
         align-items: stretch;
         flex-direction: column;

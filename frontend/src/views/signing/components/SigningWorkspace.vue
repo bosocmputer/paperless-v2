@@ -35,6 +35,7 @@ const props = defineProps({
     onSign: { type: Function, default: null },
     onReject: { type: Function, default: null },
     onAttach: { type: Function, default: null },
+    onDeleteAttachment: { type: Function, default: null },
     onReloadAttachments: { type: Function, default: null },
     attachmentFileUrl: { type: Function, default: null },
     onRecordEvent: { type: Function, default: null },
@@ -614,6 +615,11 @@ async function handleAttachmentUpload(file, note, requirementKey = '') {
     recordEvent('attachment_upload');
 }
 
+async function handleAttachmentDelete(attachmentId) {
+    await props.onDeleteAttachment?.(attachmentId);
+    recordEvent('attachment_delete');
+}
+
 function openFullPDF() {
     if (!allowFullPDF.value) return;
     if (!props.pdfUrl) {
@@ -877,7 +883,9 @@ function newRequestKey() {
                     :allow-optional-upload="!externalSignOnly"
                     :headers="pdfHeaders"
                     :can-upload="canInteract"
+                    :can-delete="canInteract"
                     :on-upload="handleAttachmentUpload"
+                    :on-delete="handleAttachmentDelete"
                     :on-reload="onReloadAttachments"
                     :file-url-resolver="attachmentFileUrl"
                 />

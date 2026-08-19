@@ -126,6 +126,11 @@ async function attachFile(file, note, requirementKey = '') {
     await loadAttachments(route.params.taskId);
 }
 
+async function deleteAttachment(attachmentId) {
+    await api.deleteMyTaskAttachment(route.params.taskId, attachmentId);
+    await loadAttachments(route.params.taskId);
+}
+
 async function loadAttachments(taskId = route.params.taskId) {
     if (!taskId) return;
     const requestSeq = ++attachmentRequestSeq;
@@ -196,6 +201,7 @@ function goBackToTasks() {
         :on-sign="signTask"
         :on-reject="rejectTask"
         :on-attach="attachFile"
+        :on-delete-attachment="deleteAttachment"
         :on-reload-attachments="loadAttachments"
         :attachment-file-url="attachmentFileUrl"
         :on-record-event="recordEvent"

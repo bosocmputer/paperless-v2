@@ -2075,6 +2075,67 @@ VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, $6, NULLIF($7,'')::uuid)
 	return err
 }
 
+// DeleteSigningAttachment removes an attachment the given signer uploaded to
+// their own pending task. Scoped to signerID (not just attachmentID) so a
+// signer can only delete their own uploads, and locks the signer row so a
+// concurrent sign cannot race a delete of an attachment that satisfies a
+// required-attachment check. Only the link row is removed - the underlying
+// uploaded_files row/bytes are left in place, matching how this codebase
+// never garbage-collects uploaded_files elsewhere.
+func (s *Store) DeleteSigningAttachment(ctx context.Context, attachmentID, signerID, actorUserID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var documentID, signerStatus string
+	if err := tx.QueryRow(ctx, `
+SELECT document_id::text, status
+FROM signing_document_signers
+WHERE id = $1
+FOR UPDATE
+`, signerID).Scan(&documentID, &signerStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrSigningTaskNotFound
+		}
+		return err
+	}
+	if signerStatus != "pending" {
+		return ErrSigningTaskUnavailable
+	}
+
+	var originalName string
+	// Best-effort file name for the audit message, looked up before the
+	// delete below removes the row the join depends on.
+	_ = tx.QueryRow(ctx, `
+SELECT f.original_name
+FROM signing_document_attachments a
+JOIN uploaded_files f ON f.id = a.file_id
+WHERE a.id = $1 AND a.signer_id = $2
+`, attachmentID, signerID).Scan(&originalName)
+
+	tag, err := tx.Exec(ctx, `
+DELETE FROM signing_document_attachments
+WHERE id = $1 AND signer_id = $2
+`, attachmentID, signerID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrSigningAttachmentNotFound
+	}
+
+	if err := insertSigningEvent(ctx, tx, documentID, actorUserID, "", "signing_attachment_removed", "ลบไฟล์แนบอ้างอิง", "", "", map[string]any{
+		"attachmentId": attachmentID,
+		"signerId":     signerID,
+		"fileName":     originalName,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) RegenerateExternalToken(ctx context.Context, signerID, tokenHash, otpHash, createdBy string, expiresAt time.Time) (string, error) {
 	tenant := tenantFilterValue(ctx)
 	tx, err := s.pool.Begin(ctx)

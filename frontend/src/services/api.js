@@ -575,6 +575,9 @@ export const api = {
             body: form
         });
     },
+    deleteMyTaskAttachment(taskId, attachmentId) {
+        return request(`/api/my/signing-tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(attachmentId)}`, { method: 'DELETE' });
+    },
     getSigningDocumentAttachments(id) {
         return request(`/api/signing-documents/${id}/attachments`);
     },

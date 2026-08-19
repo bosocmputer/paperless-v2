@@ -55,6 +55,7 @@ var signingUXEventNames = map[string]bool{
 	"sign_error":                     true,
 	"reject_success":                 true,
 	"attachment_upload":              true,
+	"attachment_delete":              true,
 	"ready_task_open":                true,
 	"waiting_queue_seen":             true,
 	"waiting_task_open":              true,
@@ -3062,6 +3063,42 @@ func (s *Server) uploadMySigningTaskAttachment(w http.ResponseWriter, r *http.Re
 		s.logger.Warn("reload signing attachment after upload failed", "error", err, "signerID", signer.ID)
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"attachment": attachmentResponse})
+}
+
+func (s *Server) deleteMySigningTaskAttachment(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r)
+	taskID := strings.TrimSpace(r.PathValue("taskId"))
+	attachmentID := strings.TrimSpace(r.PathValue("attachmentId"))
+	signer, err := s.store.FindSigningTaskByID(r.Context(), taskID)
+	if errors.Is(err, store.ErrSigningTaskNotFound) || (err == nil && !strings.EqualFold(signer.SignerUser, user.Username)) {
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "signing_task_failed", "Cannot load signing task right now.")
+		return
+	}
+	if signer.Status != "pending" {
+		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
+		return
+	}
+	err = s.store.DeleteSigningAttachment(r.Context(), attachmentID, signer.ID, user.ID)
+	switch {
+	case errors.Is(err, store.ErrSigningAttachmentNotFound):
+		writeError(w, http.StatusNotFound, "attachment_not_found", "Attachment was not found.")
+		return
+	case errors.Is(err, store.ErrSigningTaskNotFound):
+		writeError(w, http.StatusNotFound, "signing_task_not_found", "Signing task was not found.")
+		return
+	case errors.Is(err, store.ErrSigningTaskUnavailable):
+		writeError(w, http.StatusConflict, taskUnavailableCode(signer.Status), taskUnavailableMessage(signer.Status))
+		return
+	case err != nil:
+		s.logger.Error("delete signing attachment failed", "error", err, "signerID", signer.ID, "attachmentID", attachmentID)
+		writeError(w, http.StatusInternalServerError, "attachment_delete_failed", "Cannot remove attachment right now.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) signMySigningTask(w http.ResponseWriter, r *http.Request) {

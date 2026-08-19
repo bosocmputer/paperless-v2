@@ -142,6 +142,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/my/signing-tasks/{taskId}/attachments", s.requireAuth(http.HandlerFunc(s.listMySigningTaskAttachments)))
 	mux.Handle("GET /api/my/signing-tasks/{taskId}/attachments/{attachmentId}/file", s.requireAuth(http.HandlerFunc(s.getMySigningTaskAttachmentFile)))
 	mux.Handle("POST /api/my/signing-tasks/{taskId}/attachments", s.requireAuth(http.HandlerFunc(s.uploadMySigningTaskAttachment)))
+	mux.Handle("DELETE /api/my/signing-tasks/{taskId}/attachments/{attachmentId}", s.requireAuth(http.HandlerFunc(s.deleteMySigningTaskAttachment)))
 	mux.Handle("POST /api/my/signing-tasks/{taskId}/sign", s.requireAuth(http.HandlerFunc(s.signMySigningTask)))
 	mux.Handle("POST /api/my/signing-tasks/{taskId}/reject", s.requireAuth(http.HandlerFunc(s.rejectMySigningTask)))
 	mux.HandleFunc("POST /api/public/signing/{token}/verify-otp", s.verifyExternalOTP)

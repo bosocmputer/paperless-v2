@@ -73,6 +73,7 @@ var (
 	ErrSigningTaskNotFound              = errors.New("signing task not found")
 	ErrSigningTaskUnavailable           = errors.New("signing task is not available")
 	ErrRequiredAttachmentsMissing       = errors.New("required signing attachments are missing")
+	ErrSigningAttachmentNotFound        = errors.New("signing attachment not found")
 	ErrExternalSignerNotTurn            = errors.New("external signer is not the active turn")
 	ErrExternalSignerUnavailable        = errors.New("external signer is unavailable")
 	ErrExternalTokenNotFound            = errors.New("external signing token not found")
