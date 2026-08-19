@@ -752,6 +752,7 @@ function clampNoteFontSize(value) {
 
 <style scoped>
 .continuous-pdf {
+    min-width: 0;
     min-height: 0;
     height: 100%;
     display: flex;

@@ -103,8 +103,10 @@ function openActionUrl() {
 <style scoped>
 .readonly-pdf {
     height: min(78dvh, 52rem);
+    min-width: 0;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.75rem;
 }
 
