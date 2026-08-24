@@ -14,6 +14,20 @@ type User struct {
 	SavedSignature *SavedSignatureSummary `json:"savedSignature,omitempty"`
 }
 
+type UserMenuPermissions struct {
+	UserID        string     `json:"userId"`
+	MenuKeys      []string   `json:"menuKeys"`
+	DocumentScope string     `json:"documentScope"` // "all" | "own"
+	Configured    bool       `json:"configured"`    // false = no row yet, defaults applied
+	UpdatedAt     *time.Time `json:"updatedAt,omitempty"`
+}
+
+type UpdateUserMenuPermissionsRequest struct {
+	MenuKeys          []string   `json:"menuKeys"`
+	DocumentScope     string     `json:"documentScope"`
+	ExpectedUpdatedAt *time.Time `json:"expectedUpdatedAt,omitempty"` // nil = client believes this is the first save
+}
+
 type SavedSignatureSummary struct {
 	Available bool       `json:"available"`
 	Version   string     `json:"version,omitempty"`
@@ -1079,17 +1093,18 @@ type SchemaRepairRequest struct {
 }
 
 type LoginResponse struct {
-	Token            string              `json:"token,omitempty"`
-	TokenType        string              `json:"tokenType,omitempty"`
-	ExpiresAt        *time.Time          `json:"expiresAt,omitempty"`
-	User             *User               `json:"user,omitempty"`
-	Session          *AuthSession        `json:"session,omitempty"`
-	DatabaseRequired bool                `json:"databaseRequired,omitempty"`
-	Databases        []SMLAuthDatabase   `json:"databases,omitempty"`
-	AuthSource       string              `json:"authSource,omitempty"`
-	TenantReadiness  *SMLTenantReadiness `json:"tenantReadiness,omitempty"`
-	Features         map[string]bool     `json:"features,omitempty"`
-	TrialExpiresAt   *time.Time          `json:"trialExpiresAt,omitempty"`
+	Token            string               `json:"token,omitempty"`
+	TokenType        string               `json:"tokenType,omitempty"`
+	ExpiresAt        *time.Time           `json:"expiresAt,omitempty"`
+	User             *User                `json:"user,omitempty"`
+	Session          *AuthSession         `json:"session,omitempty"`
+	DatabaseRequired bool                 `json:"databaseRequired,omitempty"`
+	Databases        []SMLAuthDatabase    `json:"databases,omitempty"`
+	AuthSource       string               `json:"authSource,omitempty"`
+	TenantReadiness  *SMLTenantReadiness  `json:"tenantReadiness,omitempty"`
+	Features         map[string]bool      `json:"features,omitempty"`
+	Permissions      *UserMenuPermissions `json:"permissions,omitempty"`
+	TrialExpiresAt   *time.Time           `json:"trialExpiresAt,omitempty"`
 }
 
 type AuthSession struct {

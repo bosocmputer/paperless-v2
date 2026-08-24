@@ -6,11 +6,23 @@ export const authStore = reactive({
     token: localStorage.getItem('paperless_token'),
     session: JSON.parse(localStorage.getItem('paperless_session') || 'null'),
     features: JSON.parse(localStorage.getItem('paperless_features') || '{}'),
+    permissions: JSON.parse(localStorage.getItem('paperless_permissions') || 'null'),
     trialExpiresAt: localStorage.getItem('paperless_trial_expires_at') || null,
     sessionChecked: false,
 
     isAuthenticated() {
         return Boolean(this.token);
+    },
+
+    hasMenuPermission(menuKey) {
+        if (this.user?.role === 'superadmin') return true;
+        if (!menuKey) return true;
+        return Array.isArray(this.permissions?.menuKeys) && this.permissions.menuKeys.includes(menuKey);
+    },
+
+    canSeeAllDocuments() {
+        if (this.user?.role === 'superadmin') return true;
+        return this.permissions?.documentScope !== 'own';
     },
 
     async login(username, password, databaseName = '', authSource = '') {
@@ -20,12 +32,14 @@ export const authStore = reactive({
         this.user = result.user;
         this.session = result.session || null;
         this.features = result.features || {};
+        this.permissions = result.permissions || null;
         this.trialExpiresAt = result.trialExpiresAt || null;
         this.sessionChecked = true;
         localStorage.setItem('paperless_token', result.token);
         localStorage.setItem('paperless_user', JSON.stringify(result.user));
         localStorage.setItem('paperless_session', JSON.stringify(this.session));
         localStorage.setItem('paperless_features', JSON.stringify(this.features));
+        localStorage.setItem('paperless_permissions', JSON.stringify(this.permissions));
         setTrialExpiresAtStorage(this.trialExpiresAt);
         return result;
     },
@@ -35,11 +49,13 @@ export const authStore = reactive({
         this.user = result.user;
         this.session = result.session || null;
         this.features = result.features || {};
+        this.permissions = result.permissions || null;
         this.trialExpiresAt = result.trialExpiresAt || null;
         this.sessionChecked = true;
         localStorage.setItem('paperless_user', JSON.stringify(result.user));
         localStorage.setItem('paperless_session', JSON.stringify(this.session));
         localStorage.setItem('paperless_features', JSON.stringify(this.features));
+        localStorage.setItem('paperless_permissions', JSON.stringify(this.permissions));
         setTrialExpiresAtStorage(this.trialExpiresAt);
         return result.user;
     },
@@ -59,12 +75,14 @@ export const authStore = reactive({
         this.token = null;
         this.session = null;
         this.features = {};
+        this.permissions = null;
         this.trialExpiresAt = null;
         this.sessionChecked = false;
         localStorage.removeItem('paperless_token');
         localStorage.removeItem('paperless_user');
         localStorage.removeItem('paperless_session');
         localStorage.removeItem('paperless_features');
+        localStorage.removeItem('paperless_permissions');
         localStorage.removeItem('paperless_trial_expires_at');
     }
 });

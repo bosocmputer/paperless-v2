@@ -37,14 +37,18 @@ const model = computed(() => {
                     icon: 'pi pi-fw pi-home',
                     to: '/'
                 },
-                {
-                    label: 'เอกสารเตรียมส่ง',
-                    icon: 'pi pi-fw pi-file-plus',
-                    to: '/signing/documents/drafts',
-                    menuKey: SIGNING_DOCUMENT_MENU_KEYS.draft,
-                    activeMatch: '/signing/documents/drafts'
-                },
-                ...(internalDocumentsEnabled.value
+                ...(authStore.hasMenuPermission(SIGNING_DOCUMENT_MENU_KEYS.draft)
+                    ? [
+                          {
+                              label: 'เอกสารเตรียมส่ง',
+                              icon: 'pi pi-fw pi-file-plus',
+                              to: '/signing/documents/drafts',
+                              menuKey: SIGNING_DOCUMENT_MENU_KEYS.draft,
+                              activeMatch: '/signing/documents/drafts'
+                          }
+                      ]
+                    : []),
+                ...(internalDocumentsEnabled.value && authStore.hasMenuPermission(INTERNAL_DOCUMENT_MENU_KEYS.create)
                     ? [
                           {
                               label: 'สร้างเอกสารภายใน',
@@ -55,38 +59,54 @@ const model = computed(() => {
                           }
                       ]
                     : []),
-                {
-                    label: 'เอกสารรอเซ็น',
-                    icon: 'pi pi-fw pi-send',
-                    to: '/signing/documents',
-                    menuKey: SIGNING_DOCUMENT_MENU_KEYS.active
-                },
-                {
-                    label: 'ประวัติเอกสาร',
-                    icon: 'pi pi-fw pi-history',
-                    to: '/signing/documents/history',
-                    menuKey: SIGNING_DOCUMENT_MENU_KEYS.history,
-                    activeMatch: '/signing/documents/history'
-                }
+                ...(authStore.hasMenuPermission(SIGNING_DOCUMENT_MENU_KEYS.active) && authStore.canSeeAllDocuments()
+                    ? [
+                          {
+                              label: 'เอกสารรอเซ็น',
+                              icon: 'pi pi-fw pi-send',
+                              to: '/signing/documents',
+                              menuKey: SIGNING_DOCUMENT_MENU_KEYS.active
+                          }
+                      ]
+                    : []),
+                ...(authStore.hasMenuPermission(SIGNING_DOCUMENT_MENU_KEYS.history)
+                    ? [
+                          {
+                              label: 'ประวัติเอกสาร',
+                              icon: 'pi pi-fw pi-history',
+                              to: '/signing/documents/history',
+                              menuKey: SIGNING_DOCUMENT_MENU_KEYS.history,
+                              activeMatch: '/signing/documents/history'
+                          }
+                      ]
+                    : [])
             ]
         },
         {
             label: 'งานของฉัน',
             items: [
-                {
-                    label: 'งานรอเซ็นของฉัน',
-                    icon: 'pi pi-fw pi-inbox',
-                    to: '/admin/signing/tasks',
-                    menuKey: ADMIN_SIGNER_MENU_KEYS.tasks,
-                    activeMatch: '/admin/signing/tasks'
-                },
-                {
-                    label: 'ประวัติการเซ็นของฉัน',
-                    icon: 'pi pi-fw pi-history',
-                    to: '/admin/signing/history',
-                    menuKey: ADMIN_SIGNER_MENU_KEYS.history,
-                    activeMatch: '/admin/signing/history'
-                }
+                ...(authStore.hasMenuPermission(ADMIN_SIGNER_MENU_KEYS.tasks)
+                    ? [
+                          {
+                              label: 'งานรอเซ็นของฉัน',
+                              icon: 'pi pi-fw pi-inbox',
+                              to: '/admin/signing/tasks',
+                              menuKey: ADMIN_SIGNER_MENU_KEYS.tasks,
+                              activeMatch: '/admin/signing/tasks'
+                          }
+                      ]
+                    : []),
+                ...(authStore.hasMenuPermission(ADMIN_SIGNER_MENU_KEYS.history)
+                    ? [
+                          {
+                              label: 'ประวัติการเซ็นของฉัน',
+                              icon: 'pi pi-fw pi-history',
+                              to: '/admin/signing/history',
+                              menuKey: ADMIN_SIGNER_MENU_KEYS.history,
+                              activeMatch: '/admin/signing/history'
+                          }
+                      ]
+                    : [])
             ]
         }
     ];
@@ -125,16 +145,24 @@ const model = computed(() => {
                           }
                       ]
                     : []),
-                {
-                    label: 'คู่มือการใช้งาน',
-                    icon: 'pi pi-fw pi-book',
-                    to: '/admin/guide'
-                },
-                {
-                    label: 'คู่มือผู้เซ็น',
-                    icon: 'pi pi-fw pi-info-circle',
-                    to: '/admin/user-guide'
-                }
+                ...(authStore.hasMenuPermission('admin-guide')
+                    ? [
+                          {
+                              label: 'คู่มือการใช้งาน',
+                              icon: 'pi pi-fw pi-book',
+                              to: '/admin/guide'
+                          }
+                      ]
+                    : []),
+                ...(authStore.hasMenuPermission('admin-user-guide')
+                    ? [
+                          {
+                              label: 'คู่มือผู้เซ็น',
+                              icon: 'pi pi-fw pi-info-circle',
+                              to: '/admin/user-guide'
+                          }
+                      ]
+                    : [])
             ]
         }
     );

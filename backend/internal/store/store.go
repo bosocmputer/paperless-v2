@@ -74,6 +74,7 @@ var (
 	ErrSigningTaskUnavailable           = errors.New("signing task is not available")
 	ErrRequiredAttachmentsMissing       = errors.New("required signing attachments are missing")
 	ErrSigningAttachmentNotFound        = errors.New("signing attachment not found")
+	ErrPermissionRevisionConflict       = errors.New("permission revision conflict")
 	ErrExternalSignerNotTurn            = errors.New("external signer is not the active turn")
 	ErrExternalSignerUnavailable        = errors.New("external signer is unavailable")
 	ErrExternalTokenNotFound            = errors.New("external signing token not found")
@@ -314,6 +315,22 @@ CREATE TABLE IF NOT EXISTS user_saved_signatures (
 
 CREATE INDEX IF NOT EXISTS user_saved_signatures_tenant_idx
 ON user_saved_signatures (sml_tenant, lower(sml_user_code));
+
+CREATE TABLE IF NOT EXISTS user_menu_permissions (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    menu_keys TEXT[] NOT NULL DEFAULT '{}',
+    document_scope TEXT NOT NULL DEFAULT 'all',
+    updated_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE user_menu_permissions
+DROP CONSTRAINT IF EXISTS user_menu_permissions_document_scope_check;
+
+ALTER TABLE user_menu_permissions
+ADD CONSTRAINT user_menu_permissions_document_scope_check
+CHECK (document_scope IN ('all', 'own'));
 
 DO $$
 BEGIN

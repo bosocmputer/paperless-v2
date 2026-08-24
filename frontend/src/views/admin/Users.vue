@@ -2,9 +2,11 @@
 import { api } from '@/services/api';
 import { formatThaiDateTime } from '@/utils/signingFormatters';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
+const router = useRouter();
 const confirm = useConfirm();
 const toast = useToast();
 const users = ref([]);
@@ -330,6 +332,10 @@ function syncTenantLabel(result) {
 function normalizeSearch(value) {
     return String(value || '').toLowerCase().trim();
 }
+
+function openMenuPermissions() {
+    router.push({ name: 'user-menu-permissions' });
+}
 </script>
 
 <template>
@@ -341,6 +347,7 @@ function normalizeSearch(value) {
             </div>
             <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
                 <InputText v-model="searchQuery" type="search" placeholder="ค้นหา user, ชื่อ, สิทธิ์, แหล่งบัญชี" class="w-full sm:w-80" />
+                <Button label="สิทธิ์การเข้าถึงเมนู" icon="pi pi-shield" severity="secondary" outlined @click="openMenuPermissions" />
                 <Button label="Sync จาก SML" icon="pi pi-sync" severity="secondary" outlined :loading="syncLoading" @click="openSyncDialog" />
                 <Button label="เพิ่มผู้ใช้" icon="pi pi-plus" @click="openCreate" />
             </div>

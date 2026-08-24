@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/bosocmputer/paperless-v2/backend/internal/auth"
@@ -101,6 +102,40 @@ func (s *Server) requireSuperAdmin(next http.Handler) http.Handler {
 
 func isAdminRole(role string) bool {
 	return role == "admin" || role == "superadmin"
+}
+
+// requireMenuPermission gates a route on the caller's per-user menu grant,
+// wrapping requireAdmin so the existing role gate still runs first - a
+// user-role account still gets today's 403 from requireAdmin, unaffected
+// by this check. Superadmin always bypasses. When requireAllDocumentScope
+// is true, also denies admin-role callers whose document_scope is "own" -
+// evaluated against the same fetched permission row so this never costs a
+// second query on top of the menu-key check.
+func (s *Server) requireMenuPermission(menuKey string, requireAllDocumentScope bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return s.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, _ := currentUser(r)
+			if user.Role == "superadmin" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			perm, err := s.store.GetUserMenuPermissions(r.Context(), user.ID)
+			if err != nil {
+				s.logger.Error("check menu permission failed", "error", err, "userID", user.ID, "menuKey", menuKey)
+				writeError(w, http.StatusInternalServerError, "permission_check_failed", "Cannot verify permission right now.")
+				return
+			}
+			if !slices.Contains(perm.MenuKeys, menuKey) {
+				writeError(w, http.StatusForbidden, "menu_permission_denied", "You do not have access to this screen.")
+				return
+			}
+			if requireAllDocumentScope && perm.DocumentScope == "own" {
+				writeError(w, http.StatusForbidden, "document_scope_own_only", "You can only view documents where you are the signer. Use your own task/history screens.")
+				return
+			}
+			next.ServeHTTP(w, r)
+		}))
+	}
 }
 
 func (s *Server) recover(next http.Handler) http.Handler {

@@ -170,6 +170,18 @@ export const api = {
     deactivateUser(id) {
         return request(`/api/users/${id}`, { method: 'DELETE' });
     },
+    getUserMenuPermissions(id) {
+        return request(`/api/users/${encodeURIComponent(id)}/menu-permissions`);
+    },
+    setUserMenuPermissions(id, payload) {
+        return request(`/api/users/${encodeURIComponent(id)}/menu-permissions`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+    },
+    listAllUserMenuPermissions() {
+        return request('/api/users/menu-permissions');
+    },
     listSMLScreenCodes() {
         return request('/api/sml/screen-codes');
     },

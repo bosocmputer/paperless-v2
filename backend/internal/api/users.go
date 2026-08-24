@@ -490,6 +490,104 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
 }
 
+func (s *Server) getUserMenuPermissions(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing_user_id", "User id is required.")
+		return
+	}
+	if _, err := s.store.FindUserByID(r.Context(), id); err != nil {
+		writeError(w, http.StatusNotFound, "user_not_found", "User was not found.")
+		return
+	}
+	perm, err := s.store.GetUserMenuPermissions(r.Context(), id)
+	if err != nil {
+		s.logger.Error("get user menu permissions failed", "error", err, "userID", id)
+		writeError(w, http.StatusInternalServerError, "permissions_failed", "Cannot load permissions right now.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"permissions": perm})
+}
+
+func (s *Server) listAllUserMenuPermissions(w http.ResponseWriter, r *http.Request) {
+	users, err := s.store.ListUsers(r.Context())
+	if err != nil {
+		s.logger.Error("list users for permissions failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "permissions_failed", "Cannot load permissions right now.")
+		return
+	}
+	configured, err := s.store.ListUserMenuPermissions(r.Context())
+	if err != nil {
+		s.logger.Error("list user menu permissions failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "permissions_failed", "Cannot load permissions right now.")
+		return
+	}
+	result := map[string]models.UserMenuPermissions{}
+	for _, user := range users {
+		if user.Role == "superadmin" {
+			continue
+		}
+		if perm, ok := configured[user.ID]; ok {
+			result[user.ID] = perm
+			continue
+		}
+		result[user.ID] = models.UserMenuPermissions{
+			UserID:        user.ID,
+			MenuKeys:      store.DefaultGrantedMenuKeys(),
+			DocumentScope: "all",
+			Configured:    false,
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"permissions": result})
+}
+
+func (s *Server) setUserMenuPermissions(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing_user_id", "User id is required.")
+		return
+	}
+	target, err := s.store.FindUserByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "user_not_found", "User was not found.")
+		return
+	}
+	if target.Role == "superadmin" {
+		writeError(w, http.StatusBadRequest, "cannot_configure_superadmin", "Superadmin accounts are always unrestricted and cannot be configured.")
+		return
+	}
+
+	var req models.UpdateUserMenuPermissionsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "Request body must be valid JSON.")
+		return
+	}
+
+	actor, _ := currentUser(r)
+	perm, err := s.store.UpsertUserMenuPermissions(r.Context(), id, actor.ID, req)
+	switch {
+	case errors.Is(err, store.ErrPermissionRevisionConflict):
+		writeError(w, http.StatusConflict, "permission_revision_conflict", "Someone else already updated this user's permissions. Please reload and try again.")
+		return
+	case errors.Is(err, store.ErrInvalidMenuPermissionKey):
+		writeError(w, http.StatusBadRequest, "invalid_menu_permission", "One or more menu keys are invalid.")
+		return
+	case errors.Is(err, store.ErrInvalidDocumentScope):
+		writeError(w, http.StatusBadRequest, "invalid_document_scope", "Document scope must be 'all' or 'own'.")
+		return
+	case err != nil:
+		s.logger.Error("set user menu permissions failed", "error", err, "userID", id)
+		writeError(w, http.StatusInternalServerError, "permissions_update_failed", "Cannot update permissions right now.")
+		return
+	}
+
+	if err := s.store.WriteAudit(r.Context(), actor.ID, "user.menu_permissions.update", "user", id, clientIP(r), r.UserAgent()); err != nil {
+		s.logger.Warn("write menu permissions audit failed", "error", err, "userID", id)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"permissions": perm})
+}
+
 func (s *Server) deactivateUser(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {

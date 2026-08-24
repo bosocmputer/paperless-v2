@@ -436,6 +436,7 @@ func (s *Server) handleSMLLoginSuccess(w http.ResponseWriter, r *http.Request, r
 		AuthSource:      "sml",
 		TenantReadiness: &readiness,
 		Features:        s.clientFeatureFlags(),
+		Permissions:     permPtr(s.clientMenuPermissions(r.Context(), user)),
 		TrialExpiresAt:  s.cfg.TrialExpiresAt,
 	})
 }
@@ -627,6 +628,7 @@ func (s *Server) handleLocalFallbackLogin(w http.ResponseWriter, r *http.Request
 		Session:        &session,
 		AuthSource:     "local_fallback",
 		Features:       s.clientFeatureFlags(),
+		Permissions:    permPtr(s.clientMenuPermissions(r.Context(), user)),
 		TrialExpiresAt: s.cfg.TrialExpiresAt,
 	})
 	return true
@@ -639,12 +641,46 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		"user":           user,
 		"session":        session,
 		"features":       s.clientFeatureFlags(),
+		"permissions":    s.clientMenuPermissions(r.Context(), user),
 		"trialExpiresAt": s.cfg.TrialExpiresAt,
 	})
 }
 
 func (s *Server) clientFeatureFlags() map[string]bool {
 	return map[string]bool{"internalDocuments": s.cfg.InternalDocuments}
+}
+
+// clientMenuPermissions resolves what a user's menu/document-scope
+// permissions look like for the client. Superadmin is always fully
+// unrestricted (no DB call needed). On a query error, it fails open to
+// the default-permissive shape rather than failing the whole login/me
+// request - this is a UX-only surface (menu rendering); the real
+// security boundary is requireMenuPermission on each route, which
+// independently fails closed on its own query error.
+func (s *Server) clientMenuPermissions(ctx context.Context, user models.User) models.UserMenuPermissions {
+	if user.Role == "superadmin" {
+		return models.UserMenuPermissions{
+			UserID:        user.ID,
+			MenuKeys:      store.DefaultGrantedMenuKeys(),
+			DocumentScope: "all",
+			Configured:    true,
+		}
+	}
+	perm, err := s.store.GetUserMenuPermissions(ctx, user.ID)
+	if err != nil {
+		s.logger.Warn("load menu permissions for client failed", "error", err, "userID", user.ID)
+		return models.UserMenuPermissions{
+			UserID:        user.ID,
+			MenuKeys:      store.DefaultGrantedMenuKeys(),
+			DocumentScope: "all",
+			Configured:    false,
+		}
+	}
+	return perm
+}
+
+func permPtr(perm models.UserMenuPermissions) *models.UserMenuPermissions {
+	return &perm
 }
 
 func rejectExpiredTrial(w http.ResponseWriter, trialExpiresAt *time.Time) bool {

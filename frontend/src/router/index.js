@@ -101,21 +101,30 @@ const router = createRouter({
                     meta: { role: 'superadmin' }
                 },
                 {
+                    path: '/admin/users/menu-permissions',
+                    name: 'user-menu-permissions',
+                    component: () => import('@/views/admin/UserMenuPermissions.vue'),
+                    meta: { role: 'superadmin' }
+                },
+                {
                     path: '/admin/guide',
                     name: 'admin-guide',
                     component: () => import('@/views/admin/AdminGuide.vue'),
-                    meta: { role: 'admin' }
+                    meta: { role: 'admin', menuKey: 'admin-guide' }
                 },
                 {
                     path: '/admin/user-guide',
                     name: 'admin-user-guide',
                     component: () => import('@/views/signing/UserGuide.vue'),
-                    meta: { role: 'admin', guideAudience: 'admin' }
+                    meta: { role: 'admin', guideAudience: 'admin', menuKey: 'admin-user-guide' }
                 },
                 {
                     path: '/admin/signing/tasks',
                     name: 'admin-my-signing-tasks',
                     component: () => import('@/views/signing/AdminMySigningTasks.vue'),
+                    // No menuKey here on purpose: this is a self-scoped "my own work"
+                    // screen every authenticated admin is entitled to, not a menu
+                    // grant. Only the sidebar link is permission-gated (AppMenu.vue).
                     meta: { role: 'admin', adminSignerWorkspace: true, activeMenuKey: ADMIN_SIGNER_MENU_KEYS.tasks }
                 },
                 {
@@ -170,19 +179,19 @@ const router = createRouter({
                     path: '/signing/documents/drafts',
                     name: 'signing-document-drafts',
                     component: () => import('@/views/signing/SigningDocuments.vue'),
-                    meta: { role: 'admin', queue: 'draft', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.draft }
+                    meta: { role: 'admin', queue: 'draft', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.draft, menuKey: SIGNING_DOCUMENT_MENU_KEYS.draft }
                 },
                 {
                     path: '/signing/documents',
                     name: 'signing-documents',
                     component: () => import('@/views/signing/SigningDocuments.vue'),
-                    meta: { role: 'admin', queue: 'active', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.active }
+                    meta: { role: 'admin', queue: 'active', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.active, menuKey: SIGNING_DOCUMENT_MENU_KEYS.active }
                 },
                 {
                     path: '/signing/documents/history',
                     name: 'signing-document-history',
                     component: () => import('@/views/signing/SigningDocuments.vue'),
-                    meta: { role: 'admin', queue: 'history', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.history }
+                    meta: { role: 'admin', queue: 'history', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.history, menuKey: SIGNING_DOCUMENT_MENU_KEYS.history }
                 },
                 {
                     path: '/document-flow',
@@ -199,25 +208,25 @@ const router = createRouter({
                     path: '/signing/documents/new',
                     name: 'signing-document-new',
                     component: () => import('@/views/signing/SigningDocumentCreate.vue'),
-                    meta: { role: 'admin', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.draft }
+                    meta: { role: 'admin', activeMenuKey: SIGNING_DOCUMENT_MENU_KEYS.draft, menuKey: SIGNING_DOCUMENT_MENU_KEYS.draft }
                 },
                 {
                     path: '/signing/internal-documents/new',
                     name: 'internal-document-new',
                     component: () => import('@/views/signing/InternalDocumentForm.vue'),
-                    meta: { role: 'admin', feature: 'internalDocuments', activeMenuKey: INTERNAL_DOCUMENT_MENU_KEYS.create }
+                    meta: { role: 'admin', feature: 'internalDocuments', activeMenuKey: INTERNAL_DOCUMENT_MENU_KEYS.create, menuKey: INTERNAL_DOCUMENT_MENU_KEYS.create }
                 },
                 {
                     path: '/signing/internal-documents/:id/edit',
                     name: 'internal-document-edit',
                     component: () => import('@/views/signing/InternalDocumentForm.vue'),
-                    meta: { role: 'admin', feature: 'internalDocuments', activeMenuKey: INTERNAL_DOCUMENT_MENU_KEYS.create }
+                    meta: { role: 'admin', feature: 'internalDocuments', activeMenuKey: INTERNAL_DOCUMENT_MENU_KEYS.create, menuKey: INTERNAL_DOCUMENT_MENU_KEYS.create }
                 },
                 {
                     path: '/signing/documents/:id',
                     name: 'signing-document-detail',
                     component: () => import('@/views/signing/SigningDocumentDetail.vue'),
-                    meta: { role: 'admin' }
+                    meta: { role: 'admin', menuKey: SIGNING_DOCUMENT_MENU_KEYS.active }
                 }
             ]
         },
@@ -287,6 +296,14 @@ router.beforeEach(async (to) => {
 
     if (to.meta.feature && authStore.features?.[to.meta.feature] !== true) {
         return defaultRouteForRole(authStore.user?.role);
+    }
+
+    if (to.meta.menuKey && !authStore.hasMenuPermission(to.meta.menuKey)) {
+        return defaultRouteForRole(authStore.user?.role);
+    }
+
+    if (to.name === 'signing-documents' && !authStore.canSeeAllDocuments()) {
+        return { name: 'admin-my-signing-history' };
     }
 
     return true;
