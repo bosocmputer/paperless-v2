@@ -235,7 +235,7 @@ function roleSeverity(role) {
 </script>
 
 <template>
-    <div class="card">
+    <div class="card permission-page">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
             <div>
                 <div class="font-semibold text-xl mb-1">สิทธิ์การเข้าถึงเมนู</div>
@@ -259,7 +259,7 @@ function roleSeverity(role) {
             <ProgressSpinner aria-label="กำลังโหลด" style="width: 2.5rem; height: 2.5rem" />
         </div>
 
-        <div v-else class="permission-matrix-scroll">
+        <div v-else class="permission-matrix-scroll flex-1">
             <table class="permission-matrix">
                 <thead>
                     <tr>
@@ -321,9 +321,16 @@ function roleSeverity(role) {
 </template>
 
 <style scoped>
+.permission-page {
+    display: flex;
+    flex-direction: column;
+    height: calc(100dvh - 8rem);
+    min-height: 26rem;
+}
+
 .permission-matrix-scroll {
     overflow: auto;
-    max-height: min(64vh, 42rem);
+    min-height: 0;
     border: 1px solid var(--surface-border);
     border-radius: 8px;
 }
