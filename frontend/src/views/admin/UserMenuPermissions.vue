@@ -322,7 +322,10 @@ function roleSeverity(role) {
 
 <style scoped>
 .permission-matrix-scroll {
-    overflow-x: auto;
+    overflow: auto;
+    max-height: min(64vh, 42rem);
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
 }
 
 .permission-matrix {
@@ -351,6 +354,14 @@ function roleSeverity(role) {
     font-size: 0.85rem;
     color: var(--text-color-secondary);
     font-weight: 600;
+    background: var(--surface-card);
+}
+
+.permission-matrix thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    box-shadow: inset 0 -1px 0 var(--surface-border);
 }
 
 .sticky-col {
@@ -358,6 +369,10 @@ function roleSeverity(role) {
     left: 0;
     background: var(--surface-card);
     z-index: 1;
+}
+
+.permission-matrix thead th.sticky-col {
+    z-index: 3;
 }
 
 tr.unconfigured .sticky-col {
