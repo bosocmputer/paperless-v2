@@ -73,31 +73,29 @@ function toggleMenu(userId, menuKey) {
     else row.menuKeys.add(menuKey);
 }
 
-function isAllChecked(userId) {
-    const row = edits[userId];
-    if (!row) return false;
-    return GRANTABLE_MENUS.every((menu) => row.menuKeys.has(menu.key));
-}
-
-function toggleAllForUser(userId) {
-    const row = edits[userId];
-    if (!row || row.saving) return;
-    if (isAllChecked(userId)) {
-        row.menuKeys.clear();
-    } else {
-        for (const menu of GRANTABLE_MENUS) row.menuKeys.add(menu.key);
-    }
+// Standard "select all" header checkbox for one menu column, tri-state
+// (checked / unchecked / indeterminate) reflecting the currently-visible
+// rows - the recognizable spreadsheet/admin-table pattern, rather than a
+// per-row control mixed into the name cell.
+function columnState(menuKey) {
+    const rows = filteredUsers.value.map((user) => edits[user.id]).filter(Boolean);
+    if (!rows.length) return { checked: false, indeterminate: false };
+    const checkedCount = rows.filter((row) => row.menuKeys.has(menuKey)).length;
+    return {
+        checked: checkedCount === rows.length,
+        indeterminate: checkedCount > 0 && checkedCount < rows.length
+    };
 }
 
 // Toggles one menu column across every currently-visible (filtered) user's
 // IN-MEMORY selection only - each row still needs its own "บันทึก" click to
 // persist, matching this screen's per-row-save design (no bulk-save API).
-function toggleAllForMenu(menuKey) {
+function toggleColumn(menuKey) {
     const rows = filteredUsers.value.map((user) => edits[user.id]).filter((row) => row && !row.saving);
     if (!rows.length) return;
-    const allChecked = rows.every((row) => row.menuKeys.has(menuKey));
+    const { checked } = columnState(menuKey);
     for (const row of rows) {
-        if (allChecked) row.menuKeys.delete(menuKey);
+        if (checked) row.menuKeys.delete(menuKey);
         else row.menuKeys.add(menuKey);
     }
 }
@@ -198,9 +196,15 @@ function roleSeverity(role) {
                     <tr>
                         <th class="sticky-col">ผู้ใช้</th>
                         <th v-for="menu in GRANTABLE_MENUS" :key="menu.key" class="text-center">
-                            <div class="flex flex-col items-center gap-1">
+                            <div class="column-header">
+                                <Checkbox
+                                    :modelValue="columnState(menu.key).checked"
+                                    :indeterminate="columnState(menu.key).indeterminate"
+                                    binary
+                                    :aria-label="`เลือกทั้งหมด: ${menu.label}`"
+                                    @update:modelValue="toggleColumn(menu.key)"
+                                />
                                 <span>{{ menu.label }}</span>
-                                <Button label="เลือกทั้งหมด" link size="small" class="column-check-all" @click="toggleAllForMenu(menu.key)" />
                             </div>
                         </th>
                         <th>ขอบเขตเอกสาร</th>
@@ -210,24 +214,12 @@ function roleSeverity(role) {
                 <tbody>
                     <tr v-for="user in filteredUsers" :key="user.id" :class="{ unconfigured: !edits[user.id]?.configured }">
                         <td class="sticky-col">
-                            <div class="flex items-start gap-2">
-                                <Checkbox
-                                    :modelValue="isAllChecked(user.id)"
-                                    binary
-                                    :disabled="edits[user.id]?.saving"
-                                    aria-label="เลือกทั้งหมด"
-                                    title="เลือกทั้งหมด/ไม่เลือกเลย"
-                                    @update:modelValue="toggleAllForUser(user.id)"
-                                />
-                                <div>
-                                    <div class="font-medium">{{ user.displayName }}</div>
-                                    <div class="flex items-center gap-2">
-                                        <span class="text-sm text-muted-color">@{{ user.username }}</span>
-                                        <Tag :value="user.role" :severity="roleSeverity(user.role)" />
-                                    </div>
-                                    <small v-if="!edits[user.id]?.configured" class="text-muted-color">ยังไม่เคยกำหนด (สิทธิ์เต็มตามค่าเริ่มต้น)</small>
-                                </div>
+                            <div class="font-medium">{{ user.displayName }}</div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-sm text-muted-color">@{{ user.username }}</span>
+                                <Tag :value="user.role" :severity="roleSeverity(user.role)" />
                             </div>
+                            <small v-if="!edits[user.id]?.configured" class="text-muted-color">ยังไม่เคยกำหนด (สิทธิ์เต็มตามค่าเริ่มต้น)</small>
                         </td>
                         <td v-for="menu in GRANTABLE_MENUS" :key="menu.key" class="text-center">
                             <Checkbox
@@ -282,9 +274,11 @@ function roleSeverity(role) {
     white-space: nowrap;
 }
 
-.column-check-all {
-    font-size: 0.75rem;
-    padding: 0;
+.column-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
 }
 
 .permission-matrix th {
