@@ -1,6 +1,7 @@
 <script setup>
 import { api } from '@/services/api';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { onBeforeRouteLeave } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
 
@@ -22,9 +23,10 @@ const GRANTABLE_MENUS = [
 
 const users = ref([]);
 const loading = ref(false);
+const savingAll = ref(false);
 const error = ref('');
 const searchQuery = ref('');
-// rowId -> { menuKeys: Set<string>, documentScope: 'all'|'own', updatedAt: string|null, configured: boolean, saving: boolean }
+// rowId -> { menuKeys: Set<string>, documentScope: 'all'|'own', updatedAt: string|null, configured: boolean, _savedMenuKeys: string[], _savedDocumentScope: string }
 const edits = reactive({});
 
 const filteredUsers = computed(() => {
@@ -33,7 +35,38 @@ const filteredUsers = computed(() => {
     return users.value.filter((user) => normalizeSearch(`${user.displayName} ${user.username} ${user.role}`).includes(query));
 });
 
-onMounted(loadAll);
+function isRowDirty(userId) {
+    const row = edits[userId];
+    if (!row) return false;
+    const savedKeys = new Set(row._savedMenuKeys || []);
+    const currentKeys = row.menuKeys;
+    if (savedKeys.size !== currentKeys.size) return true;
+    if (row.documentScope !== (row._savedDocumentScope || 'all')) return true;
+    for (const key of currentKeys) {
+        if (!savedKeys.has(key)) return true;
+    }
+    return false;
+}
+
+const dirtyUsers = computed(() => users.value.filter((user) => isRowDirty(user.id)));
+const hasUnsavedChanges = computed(() => dirtyUsers.value.length > 0);
+
+onMounted(() => {
+    window.addEventListener('beforeunload', beforeUnload);
+    void loadAll();
+});
+onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload));
+
+onBeforeRouteLeave(() => {
+    if (!hasUnsavedChanges.value || savingAll.value) return true;
+    return window.confirm('มีการแก้ไขสิทธิ์ที่ยังไม่ได้บันทึก ต้องการออกจากหน้านี้หรือไม่?');
+});
+
+function beforeUnload(event) {
+    if (!hasUnsavedChanges.value || savingAll.value) return;
+    event.preventDefault();
+    event.returnValue = '';
+}
 
 async function loadAll() {
     loading.value = true;
@@ -50,8 +83,8 @@ async function loadAll() {
                 documentScope: perm?.documentScope || 'all',
                 updatedAt: perm?.updatedAt || null,
                 configured: Boolean(perm?.configured),
-                saving: false,
-                _savedMenuKeys: perm?.menuKeys || []
+                _savedMenuKeys: perm?.menuKeys || [],
+                _savedDocumentScope: perm?.documentScope || 'all'
             };
         }
     } catch (err) {
@@ -68,7 +101,7 @@ function isChecked(userId, menuKey) {
 
 function toggleMenu(userId, menuKey) {
     const row = edits[userId];
-    if (!row || row.saving) return;
+    if (!row || savingAll.value) return;
     if (row.menuKeys.has(menuKey)) row.menuKeys.delete(menuKey);
     else row.menuKeys.add(menuKey);
 }
@@ -88,10 +121,11 @@ function columnState(menuKey) {
 }
 
 // Toggles one menu column across every currently-visible (filtered) user's
-// IN-MEMORY selection only - each row still needs its own "บันทึก" click to
-// persist, matching this screen's per-row-save design (no bulk-save API).
+// IN-MEMORY selection only - "บันทึกทั้งหมด" still needs to be clicked to
+// persist any change made here or via the per-cell checkboxes.
 function toggleColumn(menuKey) {
-    const rows = filteredUsers.value.map((user) => edits[user.id]).filter((row) => row && !row.saving);
+    if (savingAll.value) return;
+    const rows = filteredUsers.value.map((user) => edits[user.id]).filter(Boolean);
     if (!rows.length) return;
     const { checked } = columnState(menuKey);
     for (const row of rows) {
@@ -100,52 +134,78 @@ function toggleColumn(menuKey) {
     }
 }
 
-function saveRow(user) {
-    const row = edits[user.id];
-    if (!row || row.saving) return;
+function saveAll() {
+    if (savingAll.value || !dirtyUsers.value.length) return;
 
-    const newKeys = Array.from(row.menuKeys);
-    const previousKeys = new Set(row._savedMenuKeys || []);
-    const isPureRevocation = row.configured && newKeys.every((key) => previousKeys.has(key)) && newKeys.length < previousKeys.size;
+    const isPureRevocationOverall = dirtyUsers.value.some((user) => {
+        const row = edits[user.id];
+        if (!row?.configured) return false;
+        const previousKeys = new Set(row._savedMenuKeys || []);
+        const newKeys = row.menuKeys;
+        for (const key of newKeys) {
+            if (!previousKeys.has(key)) return false;
+        }
+        return newKeys.size < previousKeys.size;
+    });
 
-    if (isPureRevocation) {
+    if (isPureRevocationOverall) {
         confirm.require({
-            message: `จะลบสิทธิ์เมนูบางส่วนของ ${user.displayName} ยืนยันหรือไม่?`,
+            message: `บันทึกจะลบสิทธิ์เมนูบางส่วนของผู้ใช้บางคน (${dirtyUsers.value.length} คนที่แก้ไข) ยืนยันหรือไม่?`,
             header: 'ยืนยันลดสิทธิ์',
             icon: 'pi pi-exclamation-triangle',
             rejectProps: { label: 'ยกเลิก', severity: 'secondary', outlined: true },
             acceptProps: { label: 'ยืนยัน', severity: 'danger' },
-            accept: () => submitRow(user, row)
+            accept: submitAll
         });
         return;
     }
-    submitRow(user, row);
+    submitAll();
 }
 
-async function submitRow(user, row) {
-    row.saving = true;
-    try {
-        const payload = {
-            menuKeys: Array.from(row.menuKeys),
-            documentScope: row.documentScope,
-            ...(row.configured ? { expectedUpdatedAt: row.updatedAt } : {})
-        };
-        const result = await api.setUserMenuPermissions(user.id, payload);
-        const perm = result.permissions || {};
-        row.updatedAt = perm.updatedAt || null;
-        row.configured = true;
-        row._savedMenuKeys = Array.from(row.menuKeys);
-        toast.add({ severity: 'success', summary: `บันทึกสิทธิ์ของ ${user.displayName} แล้ว`, life: 2500 });
-    } catch (err) {
-        if (err.status === 409) {
-            toast.add({ severity: 'warn', summary: 'มีคนแก้ไขสิทธิ์นี้ไปแล้ว', detail: 'กำลังโหลดข้อมูลล่าสุด', life: 3500 });
-            await reloadOneUser(user);
-        } else {
-            toast.add({ severity: 'error', summary: 'บันทึกไม่สำเร็จ', detail: err.message, life: 3500 });
+async function submitAll() {
+    savingAll.value = true;
+    const targets = dirtyUsers.value;
+    let succeeded = 0;
+    let conflicted = 0;
+    let failed = 0;
+
+    for (const user of targets) {
+        const row = edits[user.id];
+        if (!row) continue;
+        try {
+            const payload = {
+                menuKeys: Array.from(row.menuKeys),
+                documentScope: row.documentScope,
+                ...(row.configured ? { expectedUpdatedAt: row.updatedAt } : {})
+            };
+            const result = await api.setUserMenuPermissions(user.id, payload);
+            const perm = result.permissions || {};
+            row.updatedAt = perm.updatedAt || null;
+            row.configured = true;
+            row._savedMenuKeys = Array.from(row.menuKeys);
+            row._savedDocumentScope = row.documentScope;
+            succeeded += 1;
+        } catch (err) {
+            if (err.status === 409) {
+                conflicted += 1;
+                await reloadOneUser(user);
+            } else {
+                failed += 1;
+            }
         }
-    } finally {
-        row.saving = false;
     }
+
+    savingAll.value = false;
+
+    if (!conflicted && !failed) {
+        toast.add({ severity: 'success', summary: `บันทึกสิทธิ์แล้ว ${succeeded} คน`, life: 2500 });
+        return;
+    }
+    const parts = [];
+    if (succeeded) parts.push(`บันทึกสำเร็จ ${succeeded} คน`);
+    if (conflicted) parts.push(`มีคนแก้ไขไปแล้ว ${conflicted} คน (โหลดข้อมูลล่าสุดให้แล้ว กรุณาตรวจสอบและบันทึกอีกครั้ง)`);
+    if (failed) parts.push(`บันทึกไม่สำเร็จ ${failed} คน`);
+    toast.add({ severity: conflicted || failed ? 'warn' : 'success', summary: 'ผลการบันทึก', detail: parts.join(' · '), life: 5500 });
 }
 
 async function reloadOneUser(user) {
@@ -157,8 +217,8 @@ async function reloadOneUser(user) {
             documentScope: perm.documentScope || 'all',
             updatedAt: perm.updatedAt || null,
             configured: Boolean(perm.configured),
-            saving: false,
-            _savedMenuKeys: perm.menuKeys || []
+            _savedMenuKeys: perm.menuKeys || [],
+            _savedDocumentScope: perm.documentScope || 'all'
         };
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลดข้อมูลล่าสุดไม่สำเร็จ', detail: err.message, life: 3500 });
@@ -181,7 +241,16 @@ function roleSeverity(role) {
                 <div class="font-semibold text-xl mb-1">สิทธิ์การเข้าถึงเมนู</div>
                 <p class="text-muted-color m-0">กำหนดว่าแต่ละผู้ใช้ (admin/user) เข้าเมนูไหนได้บ้าง และเห็นเอกสารทั้งหมดหรือเฉพาะของตัวเอง</p>
             </div>
-            <InputText v-model="searchQuery" type="search" placeholder="ค้นหา user หรือชื่อ" class="w-full sm:w-80" />
+            <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
+                <InputText v-model="searchQuery" type="search" placeholder="ค้นหา user หรือชื่อ" class="w-full sm:w-80" />
+                <Button
+                    :label="hasUnsavedChanges ? `บันทึกทั้งหมด (${dirtyUsers.length})` : 'บันทึกทั้งหมด'"
+                    icon="pi pi-save"
+                    :loading="savingAll"
+                    :disabled="!hasUnsavedChanges"
+                    @click="saveAll"
+                />
+            </div>
         </div>
 
         <Message v-if="error" severity="error" class="mb-4">{{ error }}</Message>
@@ -208,16 +277,16 @@ function roleSeverity(role) {
                             </div>
                         </th>
                         <th>ขอบเขตเอกสาร</th>
-                        <th></th>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr v-for="user in filteredUsers" :key="user.id" :class="{ unconfigured: !edits[user.id]?.configured }">
+                    <tr v-for="user in filteredUsers" :key="user.id" :class="{ unconfigured: !edits[user.id]?.configured, dirty: isRowDirty(user.id) }">
                         <td class="sticky-col">
                             <div class="font-medium">{{ user.displayName }}</div>
                             <div class="flex items-center gap-2">
                                 <span class="text-sm text-muted-color">@{{ user.username }}</span>
                                 <Tag :value="user.role" :severity="roleSeverity(user.role)" />
+                                <Tag v-if="isRowDirty(user.id)" value="ยังไม่บันทึก" severity="warn" />
                             </div>
                             <small v-if="!edits[user.id]?.configured" class="text-muted-color">ยังไม่เคยกำหนด (สิทธิ์เต็มตามค่าเริ่มต้น)</small>
                         </td>
@@ -225,7 +294,7 @@ function roleSeverity(role) {
                             <Checkbox
                                 :modelValue="isChecked(user.id, menu.key)"
                                 binary
-                                :disabled="edits[user.id]?.saving"
+                                :disabled="savingAll"
                                 @update:modelValue="toggleMenu(user.id, menu.key)"
                             />
                         </td>
@@ -233,7 +302,7 @@ function roleSeverity(role) {
                             <Select
                                 v-if="edits[user.id]"
                                 v-model="edits[user.id].documentScope"
-                                :disabled="user.role !== 'admin' || edits[user.id]?.saving"
+                                :disabled="user.role !== 'admin' || savingAll"
                                 :options="[
                                     { label: 'ทั้งหมด', value: 'all' },
                                     { label: 'เฉพาะที่เซ็นเอง', value: 'own' }
@@ -242,9 +311,6 @@ function roleSeverity(role) {
                                 optionValue="value"
                                 class="w-full"
                             />
-                        </td>
-                        <td>
-                            <Button label="บันทึก" size="small" icon="pi pi-save" :loading="edits[user.id]?.saving" @click="saveRow(user)" />
                         </td>
                     </tr>
                 </tbody>
@@ -296,5 +362,13 @@ function roleSeverity(role) {
 
 tr.unconfigured .sticky-col {
     background: color-mix(in srgb, var(--surface-ground) 60%, var(--surface-card));
+}
+
+tr.dirty {
+    background: color-mix(in srgb, var(--yellow-50) 55%, transparent);
+}
+
+tr.dirty .sticky-col {
+    background: color-mix(in srgb, var(--yellow-50) 70%, var(--surface-card));
 }
 </style>
