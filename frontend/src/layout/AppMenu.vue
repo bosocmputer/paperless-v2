@@ -142,6 +142,11 @@ const model = computed(() => {
                               label: 'ผู้ใช้งาน',
                               icon: 'pi pi-fw pi-users',
                               to: '/admin/users'
+                          },
+                          {
+                              label: 'สิทธิ์การเข้าถึงเมนู',
+                              icon: 'pi pi-fw pi-shield',
+                              to: '/admin/users/menu-permissions'
                           }
                       ]
                     : []),

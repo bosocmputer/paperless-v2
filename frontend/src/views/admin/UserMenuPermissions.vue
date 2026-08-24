@@ -73,6 +73,35 @@ function toggleMenu(userId, menuKey) {
     else row.menuKeys.add(menuKey);
 }
 
+function isAllChecked(userId) {
+    const row = edits[userId];
+    if (!row) return false;
+    return GRANTABLE_MENUS.every((menu) => row.menuKeys.has(menu.key));
+}
+
+function toggleAllForUser(userId) {
+    const row = edits[userId];
+    if (!row || row.saving) return;
+    if (isAllChecked(userId)) {
+        row.menuKeys.clear();
+    } else {
+        for (const menu of GRANTABLE_MENUS) row.menuKeys.add(menu.key);
+    }
+}
+
+// Toggles one menu column across every currently-visible (filtered) user's
+// IN-MEMORY selection only - each row still needs its own "บันทึก" click to
+// persist, matching this screen's per-row-save design (no bulk-save API).
+function toggleAllForMenu(menuKey) {
+    const rows = filteredUsers.value.map((user) => edits[user.id]).filter((row) => row && !row.saving);
+    if (!rows.length) return;
+    const allChecked = rows.every((row) => row.menuKeys.has(menuKey));
+    for (const row of rows) {
+        if (allChecked) row.menuKeys.delete(menuKey);
+        else row.menuKeys.add(menuKey);
+    }
+}
+
 function saveRow(user) {
     const row = edits[user.id];
     if (!row || row.saving) return;
@@ -168,7 +197,12 @@ function roleSeverity(role) {
                 <thead>
                     <tr>
                         <th class="sticky-col">ผู้ใช้</th>
-                        <th v-for="menu in GRANTABLE_MENUS" :key="menu.key">{{ menu.label }}</th>
+                        <th v-for="menu in GRANTABLE_MENUS" :key="menu.key" class="text-center">
+                            <div class="flex flex-col items-center gap-1">
+                                <span>{{ menu.label }}</span>
+                                <Button label="เลือกทั้งหมด" link size="small" class="column-check-all" @click="toggleAllForMenu(menu.key)" />
+                            </div>
+                        </th>
                         <th>ขอบเขตเอกสาร</th>
                         <th></th>
                     </tr>
@@ -176,12 +210,24 @@ function roleSeverity(role) {
                 <tbody>
                     <tr v-for="user in filteredUsers" :key="user.id" :class="{ unconfigured: !edits[user.id]?.configured }">
                         <td class="sticky-col">
-                            <div class="font-medium">{{ user.displayName }}</div>
-                            <div class="flex items-center gap-2">
-                                <span class="text-sm text-muted-color">@{{ user.username }}</span>
-                                <Tag :value="user.role" :severity="roleSeverity(user.role)" />
+                            <div class="flex items-start gap-2">
+                                <Checkbox
+                                    :modelValue="isAllChecked(user.id)"
+                                    binary
+                                    :disabled="edits[user.id]?.saving"
+                                    aria-label="เลือกทั้งหมด"
+                                    title="เลือกทั้งหมด/ไม่เลือกเลย"
+                                    @update:modelValue="toggleAllForUser(user.id)"
+                                />
+                                <div>
+                                    <div class="font-medium">{{ user.displayName }}</div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-sm text-muted-color">@{{ user.username }}</span>
+                                        <Tag :value="user.role" :severity="roleSeverity(user.role)" />
+                                    </div>
+                                    <small v-if="!edits[user.id]?.configured" class="text-muted-color">ยังไม่เคยกำหนด (สิทธิ์เต็มตามค่าเริ่มต้น)</small>
+                                </div>
                             </div>
-                            <small v-if="!edits[user.id]?.configured" class="text-muted-color">ยังไม่เคยกำหนด (สิทธิ์เต็มตามค่าเริ่มต้น)</small>
                         </td>
                         <td v-for="menu in GRANTABLE_MENUS" :key="menu.key" class="text-center">
                             <Checkbox
@@ -234,6 +280,11 @@ function roleSeverity(role) {
     text-align: left;
     vertical-align: middle;
     white-space: nowrap;
+}
+
+.column-check-all {
+    font-size: 0.75rem;
+    padding: 0;
 }
 
 .permission-matrix th {
