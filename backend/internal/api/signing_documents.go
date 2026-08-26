@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -196,28 +197,47 @@ func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 	queue := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("queue")))
 	createdByUserID := ""
 	signerUsername := ""
-	if queue == "draft" {
-		createdByUserID = actor.ID
-	} else if actor.Role != "superadmin" {
-		// document_scope="own" narrows the "all documents" browse views
-		// (active/history) to documents where the user is a signer, rather
-		// than blocking the screen outright - the menu is shown whenever
-		// the user has the menu-key permission, regardless of scope, and
-		// the list itself is what's filtered (same approach as the admin
-		// dashboard). A user's own drafts are never subject to this, since
-		// they were never "someone else's document" to begin with. Checked
-		// here (queue-aware) rather than in the route middleware, since
-		// GET /api/signing-documents is one shared endpoint for all three
-		// queues and the middleware has no queue context at registration time.
+	if actor.Role != "superadmin" {
+		// Checked here (queue-aware), rather than at route registration,
+		// since GET /api/signing-documents is one shared endpoint for all
+		// three queues and route middleware has no query-param context at
+		// registration time - the same reason document_scope is checked
+		// here instead of in requireMenuPermission. draft/active/history
+		// are three separate checkboxes in the permission matrix
+		// (SIGNING_DOCUMENT_MENU_KEYS on the frontend), so each queue must
+		// be checked against its own key, not a single shared one.
+		requiredMenuKey := "signing-documents"
+		switch queue {
+		case "draft":
+			requiredMenuKey = "signing-document-drafts"
+		case "history":
+			requiredMenuKey = "signing-document-history"
+		}
 		perm, err := s.store.GetUserMenuPermissions(r.Context(), actor.ID)
 		if err != nil {
-			s.logger.Error("check document scope failed", "error", err, "userID", actor.ID)
+			s.logger.Error("check menu permission failed", "error", err, "userID", actor.ID)
 			writeError(w, http.StatusInternalServerError, "permission_check_failed", "Cannot verify permission right now.")
 			return
 		}
-		if perm.DocumentScope == "own" {
+		if !slices.Contains(perm.MenuKeys, requiredMenuKey) {
+			writeError(w, http.StatusForbidden, "menu_permission_denied", "You do not have access to this screen.")
+			return
+		}
+		if queue == "draft" {
+			createdByUserID = actor.ID
+		} else if perm.DocumentScope == "own" {
+			// document_scope="own" narrows the "all documents" browse views
+			// (active/history) to documents where the user is a signer,
+			// rather than blocking the screen outright - the menu is shown
+			// whenever the user has the menu-key permission, regardless of
+			// scope, and the list itself is what's filtered (same approach
+			// as the admin dashboard). A user's own drafts are never
+			// subject to this, since they were never "someone else's
+			// document" to begin with.
 			signerUsername = actor.Username
 		}
+	} else if queue == "draft" {
+		createdByUserID = actor.ID
 	}
 	result, err := s.store.ListSigningDocuments(r.Context(), store.SigningDocumentListQuery{
 		Queue:           queue,

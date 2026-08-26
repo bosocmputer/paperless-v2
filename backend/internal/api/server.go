@@ -106,7 +106,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/admin/dashboard", s.requireAdmin(http.HandlerFunc(s.getAdminDashboard)))
 	mux.Handle("GET /api/admin/document-flow", s.requireAdmin(http.HandlerFunc(s.getAdminDocumentFlow)))
 	mux.Handle("POST /api/admin/document-flow/events", s.requireAdmin(http.HandlerFunc(s.recordDocumentFlowEvent)))
-	mux.Handle("GET /api/signing-documents", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.listSigningDocuments)))
+	mux.Handle("GET /api/signing-documents", s.requireAdmin(http.HandlerFunc(s.listSigningDocuments)))
 	mux.Handle("GET /api/signing-documents/duplicate-check", s.requireMenuPermission("signing-document-drafts")(http.HandlerFunc(s.checkSigningDocumentDuplicate)))
 	mux.Handle("POST /api/signing-documents/uploads", s.requireMenuPermission("signing-document-drafts")(http.HandlerFunc(s.uploadSigningDocumentPDF)))
 	mux.Handle("GET /api/signing-documents/uploads/{fileId}/pdf", s.requireMenuPermission("signing-document-drafts")(http.HandlerFunc(s.getSigningDocumentUploadPDF)))
