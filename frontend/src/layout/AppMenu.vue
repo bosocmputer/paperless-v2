@@ -69,7 +69,7 @@ const model = computed(() => {
                           }
                       ]
                     : []),
-                ...(authStore.hasMenuPermission(SIGNING_DOCUMENT_MENU_KEYS.history)
+                ...(authStore.hasMenuPermission(SIGNING_DOCUMENT_MENU_KEYS.history) && authStore.canSeeAllDocuments()
                     ? [
                           {
                               label: 'ประวัติเอกสาร',

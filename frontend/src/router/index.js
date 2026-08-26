@@ -302,7 +302,7 @@ router.beforeEach(async (to) => {
         return defaultRouteForRole(authStore.user?.role);
     }
 
-    if (to.name === 'signing-documents' && !authStore.canSeeAllDocuments()) {
+    if ((to.name === 'signing-documents' || to.name === 'signing-document-history') && !authStore.canSeeAllDocuments()) {
         return { name: 'admin-my-signing-history' };
     }
 
