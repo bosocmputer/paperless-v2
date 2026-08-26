@@ -39,6 +39,25 @@ This is an `api`-only change - `paperless-web`/`sml-api-bybos`/`db` untouched, s
 
 Customer to retest: user `01020` (or any account with `document_scope=own`) should now see their own drafts and be able to open/finish preparing them normally; re-attempt importing `2RIO2608-00038`/`2OF2608-00001` if still needed, or confirm the existing draft rows are now visible and usable as-is.
 
+## Current Customer Status - 2026-08-26 (all five shops, web only): "ประวัติเอกสาร" sidebar item and direct-URL navigation now respect document_scope=own
+
+Follow-up from the `445faed` fix above: after fixing the API so `document_scope=own` correctly stopped blocking a user's own drafts, the customer reported that navigating directly to `/signing/documents/history` on Damrong still returned `403 document_scope_own_only` for user `01020`, and asked whether the user should even be able to see the "ประวัติเอกสาร" menu at all given their current config.
+
+Root cause: `AppMenu.vue`'s "ประวัติเอกสาร" sidebar item was missing the `authStore.canSeeAllDocuments()` gate that its sibling "เอกสารรอเซ็น" item already had from the original menu-permission rollout - so a `document_scope=own` user still saw a clickable "ประวัติเอกสาร" link that would immediately 403 on click. `router/index.js`'s post-navigation redirect guard had the same asymmetry: it checked the `signing-documents` route name but not `signing-document-history`, so typing the history URL directly also wasn't redirected. This surfaced a real config finding along the way: 86 of Damrong's admin accounts have `document_scope='own'` set simultaneously (identical `updated_at` second and `updated_by`), consistent with the standard "select-all column header + bulk save" feature working as designed - left as-is, not reverted, per the customer's own confirmation that this reflects their intended config.
+
+**Fixed in `paperless-web:224a0bb`** (was `c3fd1df`): added the missing `&& authStore.canSeeAllDocuments()` condition to the "ประวัติเอกสาร" sidebar item in `AppMenu.vue`, matching the existing "เอกสารรอเซ็น" pattern exactly; extended the router guard's route-name check to include `signing-document-history` alongside `signing-documents`. This is a `web`-only change - no backend behavior changed, only what the UI shows/redirects, consistent with the `document_scope` restriction already being correctly enforced server-side since the `445faed` fix.
+
+This is a `web`-only change - `api`/`sml-api-bybos`/`db` untouched, so only `web` was redeployed on each shop.
+
+- **Damrong Homeplus**: deployed first (the affected shop), public URL smoke HTTP 200. Release evidence `/data/paperless/releases/20260826134935-fix-history-menu-scope-224a0bb/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session - all five shops carry the same menu-permission code, so any shop where a superadmin sets `document_scope=own` for someone would show the same inconsistent sidebar/redirect behavior. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260826135355-fix-history-menu-scope-224a0bb/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260826135422-fix-history-menu-scope-224a0bb/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260826135453-fix-history-menu-scope-224a0bb/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260826135523-fix-history-menu-scope-224a0bb/postdeploy-checks.txt`
+
+Customer to retest: user `01020` (and any other `document_scope=own` account) should no longer see "ประวัติเอกสาร" in the sidebar, and direct navigation to `/signing/documents/history` should redirect to their own "ประวัติการเซ็นของฉัน" screen instead of showing a 403.
+
 ## Current Customer Status - 2026-08-24 (all five shops, api+web): per-user menu permission overlay
 
 New superadmin-only screen (`/admin/users/menu-permissions`) letting a superadmin grant/revoke, per individual admin/user account: which menu screens they can open, and whether they see all signing documents or only ones where they are the signer. Additive overlay on the existing 3-role system (superadmin/admin/user) - `requireAuth`/`requireAdmin`/`requireSuperAdmin` middleware and every existing route's role gate are unchanged; superadmin is always fully unrestricted. New `user_menu_permissions` table (one row per user, `TEXT[]` of granted menu keys + `document_scope` enum), enforced by a new `requireMenuPermission` middleware wrapping `requireAdmin`, wired onto the `signing-documents`/`signing-document-drafts`/`internal-document-create` route families.
