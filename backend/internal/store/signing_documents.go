@@ -1080,16 +1080,21 @@ WHERE document_id = $1 AND status IN ('active', 'verified')
 	return s.FindSigningDocumentByID(ctx, documentID)
 }
 
-func (s *Store) GetAdminDashboard(ctx context.Context) (models.AdminDashboard, error) {
+func (s *Store) GetAdminDashboard(ctx context.Context, ownerUsername string) (models.AdminDashboard, error) {
 	var dashboard models.AdminDashboard
 	sourceAttentionCount := 0
 	tenant := tenantFilterValue(ctx)
+	ownerUsername = strings.TrimSpace(ownerUsername)
 	rows, err := s.pool.Query(ctx, `
 SELECT status, COUNT(*)::int
 FROM signing_documents
 WHERE ($1 = '' OR sml_tenant = $1)
+  AND ($2 = '' OR EXISTS (
+        SELECT 1 FROM signing_document_signers sg
+        WHERE sg.document_id = signing_documents.id AND lower(sg.signer_user) = lower($2)
+      ))
 GROUP BY status
-`, tenant)
+`, tenant, ownerUsername)
 	if err != nil {
 		return dashboard, err
 	}
@@ -1134,32 +1139,35 @@ GROUP BY status
 	dashboard.WorkflowSummary.LockFailed = dashboard.Totals.CompletedLockFailed
 	dashboard.WorkflowSummary.AttentionDocuments = dashboard.Totals.PendingConfirm + dashboard.Totals.CompletedEvidenceFailed + dashboard.Totals.CompletedImageFailed + dashboard.Totals.CompletedLockFailed + sourceAttentionCount
 
+	ownerPredicate := ownerSignerSQLPredicate("d", 2)
 	needsAttention, err := s.listSigningDocumentsByQuery(ctx, `
 WHERE (`+tenantSQLPredicate("d", tenant, 1)+`)
+  AND (`+ownerPredicate+`)
   AND d.status IN ('pending_confirm', 'auto_confirming', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'sml_source_changed', 'sml_source_missing')
 ORDER BY d.updated_at DESC, d.created_at DESC
 LIMIT 5
-`, tenant)
+`, tenant, ownerUsername)
 	if err != nil {
 		return dashboard, err
 	}
 	recent, err := s.listSigningDocumentsByQuery(ctx, `
 WHERE (`+tenantSQLPredicate("d", tenant, 1)+`)
+  AND (`+ownerPredicate+`)
 ORDER BY d.updated_at DESC, d.created_at DESC
 LIMIT 6
-`, tenant)
+`, tenant, ownerUsername)
 	if err != nil {
 		return dashboard, err
 	}
-	pendingSummary, err := s.getDashboardPendingSummary(ctx)
+	pendingSummary, err := s.getDashboardPendingSummary(ctx, ownerUsername)
 	if err != nil {
 		return dashboard, err
 	}
-	pendingByPosition, err := s.listDashboardPendingByPosition(ctx)
+	pendingByPosition, err := s.listDashboardPendingByPosition(ctx, ownerUsername)
 	if err != nil {
 		return dashboard, err
 	}
-	pendingDocuments, err := s.listDashboardPendingDocuments(ctx)
+	pendingDocuments, err := s.listDashboardPendingDocuments(ctx, ownerUsername)
 	if err != nil {
 		return dashboard, err
 	}
@@ -1172,9 +1180,10 @@ LIMIT 6
 	return dashboard, nil
 }
 
-func (s *Store) getDashboardPendingSummary(ctx context.Context) (models.AdminDashboardWorkflowSummary, error) {
+func (s *Store) getDashboardPendingSummary(ctx context.Context, ownerUsername string) (models.AdminDashboardWorkflowSummary, error) {
 	var summary models.AdminDashboardWorkflowSummary
 	tenant := tenantFilterValue(ctx)
+	ownerUsername = strings.TrimSpace(ownerUsername)
 	err := s.pool.QueryRow(ctx, `
 SELECT COUNT(DISTINCT d.id)::int, COUNT(sg.id)::int
 FROM signing_documents d
@@ -1182,12 +1191,14 @@ JOIN signing_document_signers sg ON sg.document_id = d.id
 WHERE d.status = 'in_progress'
   AND sg.status = 'pending'
   AND ($1 = '' OR d.sml_tenant = $1)
-`, tenant).Scan(&summary.PendingDocuments, &summary.PendingSigners)
+  AND ($2 = '' OR lower(sg.signer_user) = lower($2))
+`, tenant, ownerUsername).Scan(&summary.PendingDocuments, &summary.PendingSigners)
 	return summary, err
 }
 
-func (s *Store) listDashboardPendingByPosition(ctx context.Context) ([]models.AdminDashboardPendingByPosition, error) {
+func (s *Store) listDashboardPendingByPosition(ctx context.Context, ownerUsername string) ([]models.AdminDashboardPendingByPosition, error) {
 	tenant := tenantFilterValue(ctx)
+	ownerUsername = strings.TrimSpace(ownerUsername)
 	rows, err := s.pool.Query(ctx, `
 SELECT sg.position_code,
        sg.position_name,
@@ -1199,10 +1210,11 @@ JOIN signing_document_signers sg ON sg.document_id = d.id
 WHERE d.status = 'in_progress'
   AND sg.status = 'pending'
   AND ($1 = '' OR d.sml_tenant = $1)
+  AND ($2 = '' OR lower(sg.signer_user) = lower($2))
 GROUP BY sg.position_code, sg.position_name, sg.condition_type
 ORDER BY MIN(sg.sequence_no), signer_count DESC, sg.position_code
 LIMIT 8
-`, tenant)
+`, tenant, ownerUsername)
 	if err != nil {
 		return nil, err
 	}
@@ -1218,8 +1230,9 @@ LIMIT 8
 	return items, rows.Err()
 }
 
-func (s *Store) listDashboardPendingDocuments(ctx context.Context) ([]models.AdminDashboardPendingDocument, error) {
+func (s *Store) listDashboardPendingDocuments(ctx context.Context, ownerUsername string) ([]models.AdminDashboardPendingDocument, error) {
 	tenant := tenantFilterValue(ctx)
+	ownerUsername = strings.TrimSpace(ownerUsername)
 	rows, err := s.pool.Query(ctx, `
 SELECT d.id::text,
        d.doc_no,
@@ -1234,10 +1247,11 @@ JOIN signing_document_signers sg ON sg.document_id = d.id
 WHERE d.status = 'in_progress'
   AND sg.status = 'pending'
   AND ($1 = '' OR d.sml_tenant = $1)
+  AND ($2 = '' OR lower(sg.signer_user) = lower($2))
 GROUP BY d.id, d.doc_no, d.doc_format_code, d.party_name, d.party_code, d.updated_at, d.created_at
 ORDER BY d.updated_at DESC, d.created_at DESC
 LIMIT 8
-`, tenant)
+`, tenant, ownerUsername)
 	if err != nil {
 		return nil, err
 	}
@@ -1263,6 +1277,17 @@ func (s *Store) listSigningDocumentsByQuery(ctx context.Context, suffix string, 
 
 func tenantSQLPredicate(alias string, _ string, placeholder int) string {
 	return fmt.Sprintf("$%d = '' OR %s.sml_tenant = $%d", placeholder, alias, placeholder)
+}
+
+// ownerSignerSQLPredicate restricts to documents where the given placeholder
+// username appears as a signer, matching the same "own" scope semantics as
+// ListMySigningHistory/ListMySigningTaskQueue. An empty placeholder value
+// (superadmin, or document_scope="all") leaves the result unrestricted.
+func ownerSignerSQLPredicate(documentAlias string, placeholder int) string {
+	return fmt.Sprintf(`$%d = '' OR EXISTS (
+        SELECT 1 FROM signing_document_signers sg
+        WHERE sg.document_id = %s.id AND lower(sg.signer_user) = lower($%d)
+      )`, placeholder, documentAlias, placeholder)
 }
 
 func scanSigningDocumentRows(rows pgx.Rows) ([]models.SigningDocument, error) {

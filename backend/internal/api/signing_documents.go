@@ -250,7 +250,20 @@ func (s *Server) checkSigningDocumentDuplicate(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) getAdminDashboard(w http.ResponseWriter, r *http.Request) {
-	dashboard, err := s.store.GetAdminDashboard(r.Context())
+	actor, _ := currentUser(r)
+	ownerUsername := ""
+	if actor.Role != "superadmin" {
+		perm, err := s.store.GetUserMenuPermissions(r.Context(), actor.ID)
+		if err != nil {
+			s.logger.Error("check document scope failed", "error", err, "userID", actor.ID)
+			writeError(w, http.StatusInternalServerError, "permission_check_failed", "Cannot verify permission right now.")
+			return
+		}
+		if perm.DocumentScope == "own" {
+			ownerUsername = actor.Username
+		}
+	}
+	dashboard, err := s.store.GetAdminDashboard(r.Context(), ownerUsername)
 	if err != nil {
 		s.logger.Error("admin dashboard failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "admin_dashboard_failed", "Cannot load admin dashboard right now.")
