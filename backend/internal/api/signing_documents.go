@@ -252,6 +252,7 @@ func (s *Server) checkSigningDocumentDuplicate(w http.ResponseWriter, r *http.Re
 func (s *Server) getAdminDashboard(w http.ResponseWriter, r *http.Request) {
 	actor, _ := currentUser(r)
 	ownerUsername := ""
+	ownerUserID := ""
 	if actor.Role != "superadmin" {
 		perm, err := s.store.GetUserMenuPermissions(r.Context(), actor.ID)
 		if err != nil {
@@ -261,9 +262,10 @@ func (s *Server) getAdminDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		if perm.DocumentScope == "own" {
 			ownerUsername = actor.Username
+			ownerUserID = actor.ID
 		}
 	}
-	dashboard, err := s.store.GetAdminDashboard(r.Context(), ownerUsername)
+	dashboard, err := s.store.GetAdminDashboard(r.Context(), ownerUsername, ownerUserID)
 	if err != nil {
 		s.logger.Error("admin dashboard failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "admin_dashboard_failed", "Cannot load admin dashboard right now.")

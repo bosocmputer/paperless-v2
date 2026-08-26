@@ -1080,21 +1080,25 @@ WHERE document_id = $1 AND status IN ('active', 'verified')
 	return s.FindSigningDocumentByID(ctx, documentID)
 }
 
-func (s *Store) GetAdminDashboard(ctx context.Context, ownerUsername string) (models.AdminDashboard, error) {
+func (s *Store) GetAdminDashboard(ctx context.Context, ownerUsername, ownerUserID string) (models.AdminDashboard, error) {
 	var dashboard models.AdminDashboard
 	sourceAttentionCount := 0
 	tenant := tenantFilterValue(ctx)
 	ownerUsername = strings.TrimSpace(ownerUsername)
+	ownerUserID = strings.TrimSpace(ownerUserID)
 	rows, err := s.pool.Query(ctx, `
 SELECT status, COUNT(*)::int
 FROM signing_documents
 WHERE ($1 = '' OR sml_tenant = $1)
-  AND ($2 = '' OR EXISTS (
-        SELECT 1 FROM signing_document_signers sg
-        WHERE sg.document_id = signing_documents.id AND lower(sg.signer_user) = lower($2)
+  AND ($2 = '' OR (
+        CASE WHEN status = 'draft' THEN created_by = NULLIF($3, '')::uuid
+        ELSE EXISTS (
+          SELECT 1 FROM signing_document_signers sg
+          WHERE sg.document_id = signing_documents.id AND lower(sg.signer_user) = lower($2)
+        ) END
       ))
 GROUP BY status
-`, tenant, ownerUsername)
+`, tenant, ownerUsername, ownerUserID)
 	if err != nil {
 		return dashboard, err
 	}
@@ -1139,14 +1143,14 @@ GROUP BY status
 	dashboard.WorkflowSummary.LockFailed = dashboard.Totals.CompletedLockFailed
 	dashboard.WorkflowSummary.AttentionDocuments = dashboard.Totals.PendingConfirm + dashboard.Totals.CompletedEvidenceFailed + dashboard.Totals.CompletedImageFailed + dashboard.Totals.CompletedLockFailed + sourceAttentionCount
 
-	ownerPredicate := ownerSignerSQLPredicate("d", 2)
+	ownerPredicate := ownerSignerSQLPredicate("d", 2, 3)
 	needsAttention, err := s.listSigningDocumentsByQuery(ctx, `
 WHERE (`+tenantSQLPredicate("d", tenant, 1)+`)
   AND (`+ownerPredicate+`)
   AND d.status IN ('pending_confirm', 'auto_confirming', 'completed_evidence_failed', 'completed_image_failed', 'completed_lock_failed', 'sml_source_changed', 'sml_source_missing')
 ORDER BY d.updated_at DESC, d.created_at DESC
 LIMIT 5
-`, tenant, ownerUsername)
+`, tenant, ownerUsername, ownerUserID)
 	if err != nil {
 		return dashboard, err
 	}
@@ -1155,7 +1159,7 @@ WHERE (`+tenantSQLPredicate("d", tenant, 1)+`)
   AND (`+ownerPredicate+`)
 ORDER BY d.updated_at DESC, d.created_at DESC
 LIMIT 6
-`, tenant, ownerUsername)
+`, tenant, ownerUsername, ownerUserID)
 	if err != nil {
 		return dashboard, err
 	}
@@ -1283,11 +1287,23 @@ func tenantSQLPredicate(alias string, _ string, placeholder int) string {
 // username appears as a signer, matching the same "own" scope semantics as
 // ListMySigningHistory/ListMySigningTaskQueue. An empty placeholder value
 // (superadmin, or document_scope="all") leaves the result unrestricted.
-func ownerSignerSQLPredicate(documentAlias string, placeholder int) string {
-	return fmt.Sprintf(`$%d = '' OR EXISTS (
-        SELECT 1 FROM signing_document_signers sg
-        WHERE sg.document_id = %s.id AND lower(sg.signer_user) = lower($%d)
-      )`, placeholder, documentAlias, placeholder)
+//
+// Draft documents are the one exception: a draft has no active signer
+// workflow yet, so "own" instead means "I created it" - the same created_by
+// scoping listSigningDocuments already applies to queue=draft. Without this
+// case, a draft where the user is merely a planned future signer (but not
+// the creator) would incorrectly count as theirs before the document is
+// even sent, producing a mismatch against "เอกสารเตรียมส่ง" (which is
+// created_by-scoped) - the userIDPlaceholder argument supplies the uuid
+// literal for that branch.
+func ownerSignerSQLPredicate(documentAlias string, usernamePlaceholder, userIDPlaceholder int) string {
+	return fmt.Sprintf(`$%d = '' OR (
+        CASE WHEN %s.status = 'draft' THEN %s.created_by = NULLIF($%d, '')::uuid
+        ELSE EXISTS (
+          SELECT 1 FROM signing_document_signers sg
+          WHERE sg.document_id = %s.id AND lower(sg.signer_user) = lower($%d)
+        ) END
+      )`, usernamePlaceholder, documentAlias, documentAlias, userIDPlaceholder, documentAlias, usernamePlaceholder)
 }
 
 func scanSigningDocumentRows(rows pgx.Rows) ([]models.SigningDocument, error) {
