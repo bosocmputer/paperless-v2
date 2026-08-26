@@ -20,6 +20,32 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-26 (all five shops, api only): dashboard draft count used signer scope instead of created_by, mismatching "เอกสารเตรียมส่ง"
+
+Follow-up from the `7c3b037` dashboard-scoping fix above: the customer caught a direct mismatch - the Dashboard's "เตรียมส่ง" card showed 4, but clicking "เอกสารเตรียมส่ง" only listed 2 documents.
+
+Root cause was in the `7c3b037` fix itself: it applied "is a signer" scoping uniformly to every document status, including `draft`. A draft document has no active signer workflow yet - `signing_document_signers` rows exist as a planned future signer list, so a user can appear there without having created the document. `listSigningDocuments` (the `445faed` fix) has always scoped `queue=draft` by `created_by`, not signer - "own" for a still-unsent draft means "I made it," not "I'm scheduled to sign it once it's sent." The dashboard's status-count query didn't make that distinction, so a user who was a *future* signer on someone else's draft got counted in their own "เตรียมส่ง" total, while the actual drafts list (correctly `created_by`-scoped) did not include it.
+
+Confirmed directly against Damrong: of user `01020`'s 4 draft-status documents by signer scope, only 2 were actually created by `01020` - the other 2 were created by different users who had listed `01020` as a future signer.
+
+**Fixed in `paperless-api:7ac7451`**: added an `ownerUserID` parameter alongside `ownerUsername`, and branch on `status = 'draft'` in both the dashboard's totals query and the shared `ownerSignerSQLPredicate` helper (used by `needsAttention`/`recent`) - draft rows now match by `created_by = ownerUserID`, every other status still matches by signer as before. `needsAttention` never queries draft status so was unaffected in practice; `recent` (no status filter) had the same silent mismatch and is now corrected too.
+
+Verified against Damrong's real production data before deploying:
+
+- Rolled-back SQL transaction: draft count for `01020` corrected from 4 to 2.
+- Live end-to-end: logged in as the real `01020` account, `GET /api/admin/dashboard` now returns `totals.draft: 2`, and `GET /api/signing-documents?queue=draft` returns exactly 2 documents - matching.
+
+This is an `api`-only change - `paperless-web`/`sml-api-bybos`/`db` untouched, so only `api` was redeployed on each shop.
+
+- **Damrong Homeplus**: deployed first, verified live against the real `01020` account as described above. Release evidence `/data/paperless/releases/20260826141715-fix-dashboard-draft-scope-7ac7451/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session - all five shops carry the same dashboard code, so any shop where a superadmin sets `document_scope=own` for someone had the identical draft-count mismatch. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260826141801-fix-dashboard-draft-scope-7ac7451/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260826141818-fix-dashboard-draft-scope-7ac7451/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260826141836-fix-dashboard-draft-scope-7ac7451/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260826141855-fix-dashboard-draft-scope-7ac7451/postdeploy-checks.txt`
+
+Customer to retest: user `01020`'s Dashboard "เตรียมส่ง" card should now show 2, matching "เอกสารเตรียมส่ง" exactly.
+
 ## Current Customer Status - 2026-08-26 (all five shops, api only): admin dashboard "เอกสารที่ต้องติดตาม" was not scoped by document_scope=own
 
 Follow-up from the two fixes above: the customer noticed that the Dashboard's "เอกสารที่ต้องติดตาม" table lets a user click "เปิด" and open any company-wide document's detail page directly - a second, unguarded entry point separate from `/signing/documents` (already correctly blocked for `document_scope=own` since the `445faed` fix), and asked whether that page also needed fixing.
