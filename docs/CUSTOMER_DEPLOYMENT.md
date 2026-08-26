@@ -20,6 +20,30 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-26 (all five shops, api only): admin dashboard "เอกสารที่ต้องติดตาม" was not scoped by document_scope=own
+
+Follow-up from the two fixes above: the customer noticed that the Dashboard's "เอกสารที่ต้องติดตาม" table lets a user click "เปิด" and open any company-wide document's detail page directly - a second, unguarded entry point separate from `/signing/documents` (already correctly blocked for `document_scope=own` since the `445faed` fix), and asked whether that page also needed fixing.
+
+Root cause confirmed by reading `GetAdminDashboard`: the dashboard's totals, "เอกสารที่ต้องติดตาม" table (`needsAttention` + `pendingDocuments`), "recent documents" list, and pending-by-position breakdown were all built from company-wide queries with no per-user filter at all - unlike `/signing-documents`, which the `445faed` fix already scopes. `/api/admin/dashboard` is intentionally left without a `requireMenuPermission` gate (dashboard is meant to always be reachable, per an earlier product decision), but that only ever meant "always reachable," not "always shows the whole company" - the *data* still needed to respect `document_scope`.
+
+**Fixed in `paperless-api:7c3b037`**: threaded an `ownerUsername` parameter through `GetAdminDashboard` and its five sub-queries (totals, needs-attention, recent, pending-summary, pending-by-position, pending-documents), filtering by `EXISTS (... signing_document_signers sg WHERE sg.signer_user = ownerUsername)` whenever the caller has `document_scope=own` - the same "signer" semantics `ListMySigningHistory`/`ListMySigningTaskQueue` already use for the self-scoped "งานของฉัน" screens. Superadmin and `document_scope=all` accounts pass an empty `ownerUsername`, which every added clause treats as unrestricted - identical to today's behavior, default-permissive preserved.
+
+Verified against Damrong's real production data before deploying:
+
+- Rolled-back SQL transaction: company-wide unscoped pending-document count is 44; the same query scoped to user `01020` (`document_scope=own`) correctly returns 0 (not currently a signer on any in-progress document).
+- Live end-to-end: logged in as the real `01020` account via `/api/auth/login`, called `GET /api/admin/dashboard` with the real JWT. `totals.total` dropped from company-wide to 9, and every document returned in `recentDocuments` was confirmed (via direct DB query) to genuinely list `01020` as a `signing_document_signers.signer_user` row - including documents *created by* other users, which is correct: `document_scope=own` has always meant "documents where you are a signer," not "documents you created."
+
+This is an `api`-only change - `paperless-web`/`sml-api-bybos`/`db` untouched, so only `api` was redeployed on each shop.
+
+- **Damrong Homeplus**: deployed first (verified live against the real `01020` account as described above). Release evidence `/data/paperless/releases/20260826140502-fix-dashboard-scope-7c3b037/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session - all five shops carry the same menu-permission code, so any shop where a superadmin sets `document_scope=own` for someone had the identical dashboard leak. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260826140721-fix-dashboard-scope-7c3b037/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260826140743-fix-dashboard-scope-7c3b037/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260826140807-fix-dashboard-scope-7c3b037/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260826140837-fix-dashboard-scope-7c3b037/postdeploy-checks.txt`
+
+Customer to retest: user `01020` (and any other `document_scope=own` account) should now see only their own signer-scoped documents in the Dashboard's totals, "เอกสารที่ต้องติดตาม" table, and recent-documents list - not company-wide data.
+
 ## Current Customer Status - 2026-08-26 (all five shops, api only): document_scope=own was blocking a user's own drafts and all document actions
 
 Customer report (Damrong Homeplus, user `01020`): after importing PDFs via "นำเข้าหลายไฟล์", the request errored with the duplicate-conflict message ("เอกสารนี้มีอยู่ใน PaperLess แล้วและอยู่ระหว่างเตรียมส่ง"), yet the pending-document count visibly went up, and neither "เอกสารเตรียมส่ง" nor "ประวัติเอกสาร" (checked as superadmin too) showed the document at all.
