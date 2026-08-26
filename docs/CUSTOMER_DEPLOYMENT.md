@@ -20,6 +20,31 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-26 (all five shops, api only): "ประวัติเอกสาร" was reachable with only the "เอกสารรอเซ็น" grant - a proactive audit finding
+
+Auditing the permission chain after the menu-vs-scope fix above - the customer asked whether the frontend fully matched the permission matrix everywhere, and separately reported the dashboard "รอลายเซ็น" card briefly disagreeing with `/admin/signing/tasks` (this second point turned out to be normal: confirmed via audit log that multiple real users were actively signing documents during the ~30-minute gap between the two checks, so the pending count legitimately dropped to 0 on both by the time it was re-checked - not a bug).
+
+The audit itself surfaced a real, if not-yet-triggered, gap: the permission matrix has three separate checkboxes (`signing-document-drafts`, `signing-documents`, `signing-document-history`), but `GET /api/signing-documents` - the one shared endpoint behind all three queues - was gated with a single `requireMenuPermission("signing-documents")` at route registration, covering `queue=active` **and** `queue=history` under the same key. No real account was affected today (every configured account on every shop grants all three keys together), but a superadmin granting "เอกสารรอเซ็น" without "ประวัติเอกสาร" (or vice versa) would have had the sidebar correctly hide the ungranted item while the backend still served it if the URL was opened directly - the same class of bug as the original `document_scope` gap that started this entire fix chain (`445faed`).
+
+**Fixed in `paperless-api:f1b59fe`**: moved `GET /api/signing-documents`'s route registration to plain `requireAdmin`, and check the queue-specific key inside `listSigningDocuments` itself - `queue=draft` requires `signing-document-drafts`, `queue=history` requires `signing-document-history`, everything else requires `signing-documents` - the same pattern already used for `document_scope` in this same handler, since the middleware has no query-param visibility at route-registration time either way. `queue=draft`'s existing `created_by` scoping (applies to every role, including superadmin, unchanged) is preserved exactly as before.
+
+Verified before deploying with a scratch admin test account (`zz_test_asym`, deactivated immediately after) minted a menu-permission row with only `signing-document-drafts` + `signing-documents` (deliberately missing `signing-document-history`), authenticated with a JWT signed using the real server secret (fetched in-memory via SSH, never written to disk):
+
+- `queue=draft` -> `200` (has the key)
+- `queue=active` -> `200` (has the key)
+- `queue=history` -> `403 menu_permission_denied` (correctly blocked - this was `200` before the fix)
+
+This is an `api`-only change - `paperless-web`/`sml-api-bybos`/`db` untouched, so only `api` was redeployed on each shop.
+
+- **Damrong Homeplus**: deployed first, verified live with the scratch test account as described above. Release evidence `/data/paperless/releases/20260826152601-fix-perqueue-menukey-f1b59fe/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session - all five shops carry the same route registration, so any shop's superadmin granting an asymmetric active/history permission would have hit the identical gap. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260826153726-fix-perqueue-menukey-f1b59fe/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260826153751-fix-perqueue-menukey-f1b59fe/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260826153827-fix-perqueue-menukey-f1b59fe/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260826153908-fix-perqueue-menukey-f1b59fe/postdeploy-checks.txt`
+
+No customer-facing retest needed - no real account was ever affected by this gap, since every account's menu grant is currently symmetric across active/history on all five shops. This closes the gap for whenever a superadmin does configure an asymmetric grant in the future.
+
 ## Current Customer Status - 2026-08-26 (all five shops, api+web): document_scope no longer hides "เอกสารรอเซ็น"/"ประวัติเอกสาร" - it only filters what's inside
 
 After the stale-permissions fix above, the customer's sidebar correctly matched the permission matrix - except "เอกสารรอเซ็น" and "ประวัติเอกสาร" still didn't appear for `01020` despite both being checked in the matrix. This was intended behavior at the time (from the very first fix in this chain, `445faed`): those two menu items were deliberately hidden whenever `document_scope=own`, on the reasoning that the screen behind them is a company-wide browse view a scoped user shouldn't see at all.
