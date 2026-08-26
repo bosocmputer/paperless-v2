@@ -20,6 +20,33 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-26 (all five shops, api+web): document_scope no longer hides "เอกสารรอเซ็น"/"ประวัติเอกสาร" - it only filters what's inside
+
+After the stale-permissions fix above, the customer's sidebar correctly matched the permission matrix - except "เอกสารรอเซ็น" and "ประวัติเอกสาร" still didn't appear for `01020` despite both being checked in the matrix. This was intended behavior at the time (from the very first fix in this chain, `445faed`): those two menu items were deliberately hidden whenever `document_scope=own`, on the reasoning that the screen behind them is a company-wide browse view a scoped user shouldn't see at all.
+
+The customer explicitly overturned that reasoning: a checked menu-permission box should mean the menu is reachable, full stop - `document_scope` should only ever affect *what documents appear once you're on the screen*, never whether the screen exists in your sidebar. This also had to keep working correctly: a `document_scope=own` user opening "เอกสารรอเซ็น" must still see only documents where they're a signer, not the whole company - confirmed explicitly by the customer before implementing.
+
+**Fixed in `paperless-api:bb7d44e` + `paperless-web:bb7d44e`** - separates two concerns that the original design had conflated together (menu reachability vs. document filtering), bringing `/signing/documents` in line with how the admin dashboard already worked (`7c3b037`/`7ac7451`):
+
+- **Backend**: `listSigningDocuments` (queue=active/history) no longer returns `403 document_scope_own_only` for a `document_scope=own` caller. Instead it adds a new `SignerUsername` filter to the list query (`EXISTS (... signing_document_signers ...)`, the same predicate shape used by the dashboard), narrowing the result set instead of blocking the endpoint. `requireMenuPermission`'s now-unused `requireAllDocumentScope` parameter and the dead `document_scope_own_only` error code are removed - after this change, menu-key grant is the only thing that gates whether a route is reachable at all.
+- **Frontend**: `AppMenu.vue`'s "เอกสารรอเซ็น"/"ประวัติเอกสาร" items drop their `canSeeAllDocuments()` condition, matching every other menu item's `hasMenuPermission()`-only pattern. The matching router redirect guard and the now-unused `authStore.canSeeAllDocuments()` helper are removed.
+
+Note this leaves document detail/PDF/related-documents/attachments (`0c3917e`, the previous fix) untouched and still independently scope-enforced - opening a specific document a user isn't entitled to still 404s regardless of how they got the id, only the *list screens'* reachability changed here.
+
+Verified before deploying:
+
+- Rolled-back SQL transaction against Damrong: the new list-scoping query for user `01020` correctly narrows from 51 company-wide `queue=active` documents down to 3 where `01020` is a signer.
+- Live Playwright login against Damrong after deploying: `01020`'s sidebar now shows "เอกสารรอเซ็น"/"ประวัติเอกสาร" (previously hidden); clicking through loads `/signing/documents` with no `403`; the list correctly shows exactly the 3 documents matching the SQL check above, not all 51.
+
+- **Damrong Homeplus**: deployed first, verified live with Playwright as `01020` as described above. Release evidence `/data/paperless/releases/20260826150908-fix-menu-vs-scope-bb7d44e/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session - all five shops carry the same menu-permission code, so any shop's `document_scope=own` accounts had the identical hidden-menu behavior. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260826151313-fix-menu-vs-scope-bb7d44e/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260826151353-fix-menu-vs-scope-bb7d44e/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260826151429-fix-menu-vs-scope-bb7d44e/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260826151503-fix-menu-vs-scope-bb7d44e/postdeploy-checks.txt`
+
+Customer to retest: user `01020` should now see "เอกสารรอเซ็น"/"ประวัติเอกสาร" in the sidebar (matching the permission matrix exactly), and opening either screen should show only documents where `01020` is a signer - not the full company list, and not a 403.
+
 ## Current Customer Status - 2026-08-26 (all five shops, web only): stale in-memory permissions - sidebar didn't match the permission matrix until refresh/relogin
 
 The customer compared user `01020`'s actual sidebar against what the permission-matrix screen showed configured for that account (8 menu keys granted) and asked whether this was a bug - the sidebar was only showing 3 items ("ภาพรวม", "เอกสารเตรียมส่ง", "สร้างเอกสารภายใน"), missing "งานรอเซ็นของฉัน", "ประวัติการเซ็นของฉัน", "คู่มือการใช้งาน", and "คู่มือผู้เซ็น" entirely (separately from "เอกสารรอเซ็น"/"ประวัติเอกสาร", which are correctly hidden by `document_scope=own` - not part of this bug).
