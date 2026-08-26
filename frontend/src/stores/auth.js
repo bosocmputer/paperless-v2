@@ -20,11 +20,6 @@ export const authStore = reactive({
         return Array.isArray(this.permissions?.menuKeys) && this.permissions.menuKeys.includes(menuKey);
     },
 
-    canSeeAllDocuments() {
-        if (this.user?.role === 'superadmin') return true;
-        return this.permissions?.documentScope !== 'own';
-    },
-
     async login(username, password, databaseName = '', authSource = '') {
         const result = await api.login(username, password, databaseName, authSource);
         if (result.databaseRequired) return result;

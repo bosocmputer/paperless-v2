@@ -59,7 +59,7 @@ const model = computed(() => {
                           }
                       ]
                     : []),
-                ...(authStore.hasMenuPermission(SIGNING_DOCUMENT_MENU_KEYS.active) && authStore.canSeeAllDocuments()
+                ...(authStore.hasMenuPermission(SIGNING_DOCUMENT_MENU_KEYS.active)
                     ? [
                           {
                               label: 'เอกสารรอเซ็น',
@@ -69,7 +69,7 @@ const model = computed(() => {
                           }
                       ]
                     : []),
-                ...(authStore.hasMenuPermission(SIGNING_DOCUMENT_MENU_KEYS.history) && authStore.canSeeAllDocuments()
+                ...(authStore.hasMenuPermission(SIGNING_DOCUMENT_MENU_KEYS.history)
                     ? [
                           {
                               label: 'ประวัติเอกสาร',

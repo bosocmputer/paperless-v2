@@ -88,6 +88,7 @@ type SigningDocumentListQuery struct {
 	Page            int
 	Size            int
 	CreatedByUserID string
+	SignerUsername  string
 }
 
 type SigningDocumentListResult struct {
@@ -690,6 +691,14 @@ func signingDocumentListWhere(ctx context.Context, query SigningDocumentListQuer
 	if strings.TrimSpace(query.CreatedByUserID) != "" {
 		args = append(args, strings.TrimSpace(query.CreatedByUserID))
 		clauses = append(clauses, fmt.Sprintf("d.created_by = $%d", len(args)))
+	}
+	if strings.TrimSpace(query.SignerUsername) != "" {
+		args = append(args, strings.TrimSpace(query.SignerUsername))
+		placeholder := fmt.Sprintf("$%d", len(args))
+		clauses = append(clauses, `EXISTS (
+			SELECT 1 FROM signing_document_signers sg
+			WHERE sg.document_id = d.id AND lower(sg.signer_user) = lower(`+placeholder+`)
+		)`)
 	}
 
 	if len(clauses) == 0 {

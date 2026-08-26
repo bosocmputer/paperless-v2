@@ -107,11 +107,12 @@ func isAdminRole(role string) bool {
 // requireMenuPermission gates a route on the caller's per-user menu grant,
 // wrapping requireAdmin so the existing role gate still runs first - a
 // user-role account still gets today's 403 from requireAdmin, unaffected
-// by this check. Superadmin always bypasses. When requireAllDocumentScope
-// is true, also denies admin-role callers whose document_scope is "own" -
-// evaluated against the same fetched permission row so this never costs a
-// second query on top of the menu-key check.
-func (s *Server) requireMenuPermission(menuKey string, requireAllDocumentScope bool) func(http.Handler) http.Handler {
+// by this check. Superadmin always bypasses. document_scope is deliberately
+// not checked here: it narrows which documents a route's list/detail query
+// returns (see ownerSignerSQLPredicate and listSigningDocuments' queue-aware
+// scoping), not whether the screen itself is reachable - a menu grant alone
+// decides that.
+func (s *Server) requireMenuPermission(menuKey string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return s.requireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user, _ := currentUser(r)
@@ -127,10 +128,6 @@ func (s *Server) requireMenuPermission(menuKey string, requireAllDocumentScope b
 			}
 			if !slices.Contains(perm.MenuKeys, menuKey) {
 				writeError(w, http.StatusForbidden, "menu_permission_denied", "You do not have access to this screen.")
-				return
-			}
-			if requireAllDocumentScope && perm.DocumentScope == "own" {
-				writeError(w, http.StatusForbidden, "document_scope_own_only", "You can only view documents where you are the signer. Use your own task/history screens.")
 				return
 			}
 			next.ServeHTTP(w, r)

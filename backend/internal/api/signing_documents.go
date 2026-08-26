@@ -195,16 +195,20 @@ func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 	}
 	queue := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("queue")))
 	createdByUserID := ""
+	signerUsername := ""
 	if queue == "draft" {
 		createdByUserID = actor.ID
 	} else if actor.Role != "superadmin" {
-		// document_scope="own" only restricts the "all documents" browse
-		// views (active/history) - a user's own drafts are never subject
-		// to it, since they were never "someone else's document" to begin
-		// with. Checked here (queue-aware) rather than in the route
-		// middleware, since GET /api/signing-documents is one shared
-		// endpoint for all three queues and the middleware has no queue
-		// context at registration time.
+		// document_scope="own" narrows the "all documents" browse views
+		// (active/history) to documents where the user is a signer, rather
+		// than blocking the screen outright - the menu is shown whenever
+		// the user has the menu-key permission, regardless of scope, and
+		// the list itself is what's filtered (same approach as the admin
+		// dashboard). A user's own drafts are never subject to this, since
+		// they were never "someone else's document" to begin with. Checked
+		// here (queue-aware) rather than in the route middleware, since
+		// GET /api/signing-documents is one shared endpoint for all three
+		// queues and the middleware has no queue context at registration time.
 		perm, err := s.store.GetUserMenuPermissions(r.Context(), actor.ID)
 		if err != nil {
 			s.logger.Error("check document scope failed", "error", err, "userID", actor.ID)
@@ -212,8 +216,7 @@ func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if perm.DocumentScope == "own" {
-			writeError(w, http.StatusForbidden, "document_scope_own_only", "You can only view documents where you are the signer. Use your own task/history screens.")
-			return
+			signerUsername = actor.Username
 		}
 	}
 	result, err := s.store.ListSigningDocuments(r.Context(), store.SigningDocumentListQuery{
@@ -222,6 +225,7 @@ func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 		Page:            parsePositiveQueryInt(r, "page", 1),
 		Size:            size,
 		CreatedByUserID: createdByUserID,
+		SignerUsername:  signerUsername,
 	})
 	if err != nil {
 		s.logger.Error("list signing documents failed", "error", err)
