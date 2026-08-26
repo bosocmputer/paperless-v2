@@ -20,6 +20,31 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-26 (all five shops, api only): document_scope=own now enforced on document detail/PDF/related-documents/attachments, not just list views
+
+The customer asked directly whether the Dashboard timeline dialog's "เปิดเอกสาร" button needed a permission check, since dashboard rows are scoped but the button opens the full document detail page. Investigating traced this back to an explicit decision made earlier in this chain (the `445faed` fix): `document_scope=own` was deliberately scoped to list views only, leaving `GET /api/signing-documents/{id}` and its related endpoints (`related-documents`, `reference-check`, `attachments`, PDF download) open to any admin who knew or could guess a document's id - "no action coverage" was the explicit call at the time. The customer's question prompted revisiting that decision specifically for read/detail access (action endpoints - send/confirm/cancel/retry/print - remain out of scope, unchanged).
+
+In practice this was a real (if narrow) gap even before the dashboard existed: the plain `signing-document-detail` page has always taken a document id in the URL, and a `document_scope=own` user who knew or enumerated another document's id could open it directly - list-view blocking alone doesn't stop a direct link or a guessed id.
+
+**Fixed in `paperless-api:0c3917e`**: `canAccessSigningDocumentAsAdmin` (the existing draft-ownership gate, previously a pure function that only checked `created_by` for drafts) now also checks `document_scope` after that first pass: non-draft documents further require the actor to be a `signing_document_signers.signer_user` on the document (same rule as the dashboard/list scoping); drafts stay `created_by`-scoped, since drafts have no live signer workflow yet, same as every earlier fix in this chain. Superadmin remains fully unrestricted, and `document_scope=all` accounts see no change. Threaded through every call site that used the old check: `getSigningDocument`, `getSigningDocumentPDF`, `getSigningDocumentRelatedDocuments`, `getSigningDocumentReferenceCheck`, and the shared attachment-access helper (covers both the attachments list and file download).
+
+Verified against Damrong's real production data before deploying: logged in as the real `01020` account (`document_scope=own`).
+
+- A document `01020` is neither creator nor signer of: `GET /api/signing-documents/{id}` now returns `404` (was `200` before this fix).
+- A document `01020` genuinely signs: still `200`, unaffected.
+- `01020`'s own document: still `200`, unaffected.
+
+This is an `api`-only change - `paperless-web`/`sml-api-bybos`/`db` untouched, so only `api` was redeployed on each shop. `go build`/`go vet`/`go test ./...` all pass; the existing `canAccessSigningDocumentAsAdmin` unit test was split off as `draftOwnershipAllowsAdminAccess` (the still-pure, DB-free half) since the new scope-check half needs a live store lookup - this codebase has no DB-backed Go test harness, so that half is verified via rolled-back SQL and live production requests as above, consistent with every other fix in this chain.
+
+- **Damrong Homeplus**: deployed first, verified live against the real `01020` account as described above. Release evidence `/data/paperless/releases/20260826143029-fix-document-detail-scope-0c3917e/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session - all five shops carry the same menu-permission code, so any shop where a superadmin sets `document_scope=own` for someone had the identical detail-access gap. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260826143135-fix-document-detail-scope-0c3917e/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260826143153-fix-document-detail-scope-0c3917e/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260826143219-fix-document-detail-scope-0c3917e/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260826143235-fix-document-detail-scope-0c3917e/postdeploy-checks.txt`
+
+Customer to retest: user `01020` (and any other `document_scope=own` account) should now get "not found" when opening a document they neither created nor sign, from any entry point (dashboard, direct link, or guessed id) - not just from the blocked list views.
+
 ## Current Customer Status - 2026-08-26 (all five shops, api only): dashboard draft count used signer scope instead of created_by, mismatching "เอกสารเตรียมส่ง"
 
 Follow-up from the `7c3b037` dashboard-scoping fix above: the customer caught a direct mismatch - the Dashboard's "เตรียมส่ง" card showed 4, but clicking "เอกสารเตรียมส่ง" only listed 2 documents.
