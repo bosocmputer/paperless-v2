@@ -1978,7 +1978,13 @@ func (s *Server) getSigningDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor, _ := currentUser(r)
-	if !canAccessSigningDocumentAsAdmin(document, actor) {
+	allowed, err := s.canAccessSigningDocumentAsAdmin(r.Context(), document, actor)
+	if err != nil {
+		s.logger.Error("check document access failed", "error", err, "userID", actor.ID, "documentID", document.ID)
+		writeError(w, http.StatusInternalServerError, "permission_check_failed", "Cannot verify permission right now.")
+		return
+	}
+	if !allowed {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
 		return
 	}
@@ -1997,7 +2003,13 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isAdminRole(user.Role) {
-		if !canAccessSigningDocumentAsAdmin(document, user) {
+		allowed, err := s.canAccessSigningDocumentAsAdmin(r.Context(), document, user)
+		if err != nil {
+			s.logger.Error("check document access failed", "error", err, "userID", user.ID, "documentID", document.ID)
+			writeError(w, http.StatusInternalServerError, "permission_check_failed", "Cannot verify permission right now.")
+			return
+		}
+		if !allowed {
 			writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
 			return
 		}
@@ -2039,16 +2051,43 @@ func (s *Server) getSigningDocumentPDF(w http.ResponseWriter, r *http.Request) {
 	serveInlinePDF(w, r, *file)
 }
 
-func canAccessSigningDocumentAsAdmin(document models.SigningDocument, actor models.User) bool {
+// draftOwnershipAllowsAdminAccess is the pre-existing, DB-free draft-ownership
+// rule: any non-draft document is visible tenant-wide to admins, but a draft
+// is only visible to the admin who created it (or, for an internal-document
+// draft, to a superadmin recovering the layout).
+func draftOwnershipAllowsAdminAccess(document models.SigningDocument, actor models.User) bool {
 	if !strings.EqualFold(strings.TrimSpace(document.Status), "draft") {
 		return true
 	}
-	// Draft ownership remains strict for SML documents. Internal drafts are a
-	// PaperLess-only exception: a superadmin may recover their layout safely.
 	if strings.EqualFold(strings.TrimSpace(document.DocumentSource), "internal") && strings.EqualFold(strings.TrimSpace(actor.Role), "superadmin") {
 		return true
 	}
 	return strings.TrimSpace(document.CreatedBy) != "" && strings.TrimSpace(document.CreatedBy) == strings.TrimSpace(actor.ID)
+}
+
+// canAccessSigningDocumentAsAdmin checks draftOwnershipAllowsAdminAccess,
+// then layers the document_scope=own restriction on top: a scoped user may
+// only reach documents they created (while still a draft) or where they
+// appear as a signer (once sent) - mirroring the same draft-vs-signer split
+// used for the dashboard and list scoping (see ownerSignerSQLPredicate).
+func (s *Server) canAccessSigningDocumentAsAdmin(ctx context.Context, document models.SigningDocument, actor models.User) (bool, error) {
+	if !draftOwnershipAllowsAdminAccess(document, actor) {
+		return false, nil
+	}
+	if actor.Role == "superadmin" {
+		return true, nil
+	}
+	perm, err := s.store.GetUserMenuPermissions(ctx, actor.ID)
+	if err != nil {
+		return false, err
+	}
+	if perm.DocumentScope != "own" {
+		return true, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(document.Status), "draft") {
+		return strings.TrimSpace(document.CreatedBy) != "" && strings.TrimSpace(document.CreatedBy) == strings.TrimSpace(actor.ID), nil
+	}
+	return documentHasSigner(document, actor.Username), nil
 }
 
 func (s *Server) retrySigningDocumentLock(w http.ResponseWriter, r *http.Request) {
@@ -2791,7 +2830,13 @@ func (s *Server) authorizeSigningDocumentAttachmentAccess(w http.ResponseWriter,
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return user, models.SigningDocument{}, false
 	}
-	if !canAccessSigningDocumentAsAdmin(document, user) {
+	allowed, err := s.canAccessSigningDocumentAsAdmin(r.Context(), document, user)
+	if err != nil {
+		s.logger.Error("check document access failed", "error", err, "userID", user.ID, "documentID", document.ID)
+		writeError(w, http.StatusInternalServerError, "permission_check_failed", "Cannot verify permission right now.")
+		return user, document, false
+	}
+	if !allowed {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
 		return user, document, false
 	}

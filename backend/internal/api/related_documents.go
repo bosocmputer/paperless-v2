@@ -97,7 +97,13 @@ func (s *Server) getSigningDocumentRelatedDocuments(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
-	if !canAccessSigningDocumentAsAdmin(document, actor) {
+	allowed, err := s.canAccessSigningDocumentAsAdmin(r.Context(), document, actor)
+	if err != nil {
+		s.logger.Error("check document access failed", "error", err, "userID", actor.ID, "documentID", document.ID)
+		writeError(w, http.StatusInternalServerError, "permission_check_failed", "Cannot verify permission right now.")
+		return
+	}
+	if !allowed {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
 		return
 	}
@@ -123,7 +129,13 @@ func (s *Server) getSigningDocumentReferenceCheck(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "signing_document_failed", "Cannot load signing document right now.")
 		return
 	}
-	if !canAccessSigningDocumentAsAdmin(document, actor) {
+	allowed, err := s.canAccessSigningDocumentAsAdmin(r.Context(), document, actor)
+	if err != nil {
+		s.logger.Error("check document access failed", "error", err, "userID", actor.ID, "documentID", document.ID)
+		writeError(w, http.StatusInternalServerError, "permission_check_failed", "Cannot verify permission right now.")
+		return
+	}
+	if !allowed {
 		writeError(w, http.StatusNotFound, "signing_document_not_found", "Signing document was not found.")
 		return
 	}

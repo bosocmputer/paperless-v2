@@ -440,15 +440,15 @@ func TestPrepareSigningDocumentDuplicateResponseKeepsOwnDraftOpenable(t *testing
 	}
 }
 
-func TestCanAccessSigningDocumentAsAdminRestrictsDraftOwner(t *testing.T) {
+func TestDraftOwnershipAllowsAdminAccessRestrictsDraftOwner(t *testing.T) {
 	actor := models.User{ID: "actor-user", Role: "admin"}
-	if !canAccessSigningDocumentAsAdmin(models.SigningDocument{Status: "draft", CreatedBy: "actor-user"}, actor) {
+	if !draftOwnershipAllowsAdminAccess(models.SigningDocument{Status: "draft", CreatedBy: "actor-user"}, actor) {
 		t.Fatal("owner should access own draft")
 	}
-	if canAccessSigningDocumentAsAdmin(models.SigningDocument{Status: "draft", CreatedBy: "other-user"}, actor) {
+	if draftOwnershipAllowsAdminAccess(models.SigningDocument{Status: "draft", CreatedBy: "other-user"}, actor) {
 		t.Fatal("admin should not access another user's draft")
 	}
-	if !canAccessSigningDocumentAsAdmin(models.SigningDocument{Status: "in_progress", CreatedBy: "other-user"}, actor) {
+	if !draftOwnershipAllowsAdminAccess(models.SigningDocument{Status: "in_progress", CreatedBy: "other-user"}, actor) {
 		t.Fatal("active document should keep admin tenant-wide visibility")
 	}
 }
