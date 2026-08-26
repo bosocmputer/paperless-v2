@@ -20,6 +20,27 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-26 (all five shops, web only): stale in-memory permissions - sidebar didn't match the permission matrix until refresh/relogin
+
+The customer compared user `01020`'s actual sidebar against what the permission-matrix screen showed configured for that account (8 menu keys granted) and asked whether this was a bug - the sidebar was only showing 3 items ("ภาพรวม", "เอกสารเตรียมส่ง", "สร้างเอกสารภายใน"), missing "งานรอเซ็นของฉัน", "ประวัติการเซ็นของฉัน", "คู่มือการใช้งาน", and "คู่มือผู้เซ็น" entirely (separately from "เอกสารรอเซ็น"/"ประวัติเอกสาร", which are correctly hidden by `document_scope=own` - not part of this bug).
+
+Investigated before concluding anything: called `GET /api/auth/me` directly with a real JWT for `01020` and confirmed the backend correctly returned all 8 `menuKeys` exactly as configured in the matrix. Diffed the deployed frontend commit (`224a0bb`) against the current source - byte-identical, no drift. The backend and code were both correct; the gap was a stale in-memory session: `router/index.js`'s `validateSession()` only called `authStore.loadMe()` once per page-load (gated by `sessionChecked`), so if `01020` was already logged in before the superadmin saved new permissions, the browser kept using the `permissions` object loaded at login time until a manual refresh or relogin - the sidebar was rendering correctly, just from stale data already sitting in memory.
+
+**Fixed in `paperless-web:868623b`**: removed the `sessionChecked` short-circuit so every route navigation re-fetches `/api/auth/me`, refreshing `user`/`features`/`permissions` in the store. A superadmin's menu-permission or document_scope change now takes effect on the affected user's very next click, not just after they happen to refresh. `GET /api/auth/me` is cheap (JWT-derived user/session, config-derived features, single-row PK permission lookup, no joins - see the endpoint's own comment), proportionate for an admin console's page-count navigation volume.
+
+Verified with a fresh Playwright login against Damrong after deploying (not just an API check): `01020` logs in, sidebar shows exactly the 7 items the matrix configured for a `document_scope=own` account - matches expected output exactly, no missing items.
+
+This is a `web`-only change - `paperless-api`/`sml-api-bybos`/`db` untouched, so only `web` was redeployed on each shop.
+
+- **Damrong Homeplus**: deployed first, verified live with a fresh Playwright login as `01020` as described above. Release evidence `/data/paperless/releases/20260826145125-fix-stale-permissions-868623b/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session - all five shops carry the same menu-permission code, so any shop's superadmin narrowing an already-logged-in user's access had the identical stale-sidebar symptom. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260826145414-fix-stale-permissions-868623b/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260826145446-fix-stale-permissions-868623b/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260826145508-fix-stale-permissions-868623b/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260826145538-fix-stale-permissions-868623b/postdeploy-checks.txt`
+
+Customer to retest: user `01020`'s sidebar should now show all 7 configured items without needing to log out/in. Any user whose permissions a superadmin changes while they're actively logged in should see the effect on their next navigation, not require a manual refresh.
+
 ## Current Customer Status - 2026-08-26 (all five shops, api only): document_scope=own now enforced on document detail/PDF/related-documents/attachments, not just list views
 
 The customer asked directly whether the Dashboard timeline dialog's "เปิดเอกสาร" button needed a permission check, since dashboard rows are scoped but the button opens the full document detail page. Investigating traced this back to an explicit decision made earlier in this chain (the `445faed` fix): `document_scope=own` was deliberately scoped to list views only, leaving `GET /api/signing-documents/{id}` and its related endpoints (`related-documents`, `reference-check`, `attachments`, PDF download) open to any admin who knew or could guess a document's id - "no action coverage" was the explicit call at the time. The customer's question prompted revisiting that decision specifically for read/detail access (action endpoints - send/confirm/cancel/retry/print - remain out of scope, unchanged).
