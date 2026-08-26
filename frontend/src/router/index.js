@@ -256,8 +256,11 @@ const router = createRouter({
 
 async function validateSession() {
     if (!authStore.isAuthenticated()) return false;
-    if (authStore.sessionChecked) return true;
     try {
+        // Reloaded on every navigation (not just once per page-load) so a
+        // superadmin narrowing this user's menu-permissions/document_scope
+        // while they're already logged in takes effect on their very next
+        // click, instead of staying stale until they manually refresh/relogin.
         await authStore.loadMe();
         return true;
     } catch {
