@@ -20,6 +20,29 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-27 (all five shops, web only): Workflow save button silently stayed disabled after adding a 4th+ signer
+
+Insee Construction and Wirat Home Mart both reported the same symptom independently within minutes of each other: editing a Workflow step to add a 4th signer via the "แก้ไขขั้นตอน" dialog worked fine (the table updated, the new signer appeared), but clicking "บันทึก Workflow" (top-right) afterward did nothing - no error, no toast, just unresponsive.
+
+Root-caused before touching any code, per instruction. First ruled out the backend entirely: replayed the exact save payload the customer would have sent (the same PO workflow, step 1 with a 4th signer `6004:เพชรรดา` added) directly against `PUT /api/document-config-workflows/PO` on Wirat, bypassing the UI - it saved successfully with `200`, no validation error, no SML issue. `docker logs` on the API container showed zero workflow-related requests during the reported time window, confirming the browser never even sent a request - this was a pure frontend bug where the save button never fired its click handler in the first place.
+
+Traced to `DocumentConfigWorkflow.vue`'s `snapshotSteps()` - the function that decides whether the workflow has unsaved changes (`dirty`), which gates the save button. It only included `user01`/`user02`/`user03` in the comparison it snapshots and diffs - a holdover from `f15b534` ("raise max Workflow signers from 3 to 10", 2026-08-10), which added signer slots 4 through 10 everywhere else in the app but missed updating this one dirty-check function. That same commit's message explicitly notes it fixed two *other* user01-03-only gaps found while widening (the revision hash and the signature-box-redraw check) - this was a third, identical class of gap that slipped through until a customer actually used a 4th signer for the first time on production data.
+
+Effect: adding a signer to slot 4 or later never flipped `dirty` to `true`, so `saveDisabledReason` stayed `'ยังไม่มีการเปลี่ยนแปลง'` and the save button was silently disabled - indistinguishable from "nothing to save" even though the step editor showed the change as applied.
+
+**Fixed in `paperless-web:f7f018f`**: `snapshotSteps()` now spreads the existing `userFieldsFrom()` helper (already used elsewhere in the same file to read all 10 signer slots) instead of the hardcoded 3-field object literal - one line changed. Verified the fix in isolation before deploying: replayed the old vs. new snapshot logic against a step with a signer added to slot 4, confirming the old logic produced `dirty = false` (reproducing the reported bug exactly) and the new logic produces `dirty = true`.
+
+This is a `web`-only change - `paperless-api`/`sml-api-bybos`/`db` untouched, so only `web` was redeployed on each shop.
+
+- **Wirat Home Mart**: deployed first (one of the two shops that reported it). Release evidence `/data/paperless/releases/20260827094335-fix-workflow-save-dirty-check-f7f018f/postdeploy-checks.txt`.
+- **Insee Construction, Damrong Homeplus, Pui, Amata**: deployed same-session - the bug affects any workflow step with 4+ signers on any shop, not just the two that happened to hit it first. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Insee Construction: `/data/paperless/releases/20260827095940-fix-workflow-save-dirty-check-f7f018f/postdeploy-checks.txt`
+  - Damrong Homeplus: `/data/paperless/releases/20260827100005-fix-workflow-save-dirty-check-f7f018f/postdeploy-checks.txt`
+  - Pui: `/data/paperless/releases/20260827100032-fix-workflow-save-dirty-check-f7f018f/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260827100107-fix-workflow-save-dirty-check-f7f018f/postdeploy-checks.txt`
+
+Customer to retest: on both Insee and Wirat, re-open the PO workflow, add the 4th signer again (or any signer in slot 4+), and confirm "บันทึก Workflow" is now clickable and saves successfully.
+
 ## Current Customer Status - 2026-08-26 (all five shops, api only): "ประวัติเอกสาร" was reachable with only the "เอกสารรอเซ็น" grant - a proactive audit finding
 
 Auditing the permission chain after the menu-vs-scope fix above - the customer asked whether the frontend fully matched the permission matrix everywhere, and separately reported the dashboard "รอลายเซ็น" card briefly disagreeing with `/admin/signing/tasks` (this second point turned out to be normal: confirmed via audit log that multiple real users were actively signing documents during the ~30-minute gap between the two checks, so the pending count legitimately dropped to 0 on both by the time it was re-checked - not a bug).
