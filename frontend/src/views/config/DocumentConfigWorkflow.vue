@@ -547,9 +547,7 @@ function snapshotSteps(list) {
         list.map((step, index) => ({
             positionCode: String(step.positionCode || '').trim(),
             positionName: String(step.positionName || '').trim(),
-            user01: String(step.user01 || '').trim(),
-            user02: String(step.user02 || '').trim(),
-            user03: String(step.user03 || '').trim(),
+            ...userFieldsFrom(step),
             sequenceNo: index + 1,
             conditionType: Number(step.conditionType || 0),
             attachmentRequirements: normalizeAttachmentRequirements(step)
