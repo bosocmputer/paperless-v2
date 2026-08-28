@@ -673,13 +673,13 @@ function selectInput(event) {
 
 <template>
     <div class="card">
-        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4">
             <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <div class="font-semibold text-xl whitespace-nowrap truncate">{{ pageConfig.title }}</div>
                 <p class="text-muted-color m-0 min-w-0 truncate">{{ pageConfig.subtitle }}</p>
                 <Tag :value="`${documents.length} รายการ`" :severity="pageConfig.countSeverity" />
             </div>
-            <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
+            <div class="flex flex-wrap gap-2 sm:items-center">
                 <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
                 <Button v-if="pageConfig.showCreate" label="นำเข้าหลายไฟล์" icon="pi pi-upload" severity="secondary" outlined @click="openBatchImport" />
                 <Button v-if="pageConfig.showCreate && internalDocumentsEnabled" label="สร้างเอกสารภายใน" icon="pi pi-file-edit" severity="secondary" outlined @click="openInternalCreate" />
@@ -687,28 +687,20 @@ function selectInput(event) {
             </div>
         </div>
 
-        <IconField class="w-full mb-6">
-            <InputIcon><i class="pi pi-search" /></InputIcon>
-            <InputText v-model="searchQuery" type="search" :placeholder="pageConfig.searchPlaceholder" class="w-full" />
-        </IconField>
+        <div class="border border-surface rounded-lg bg-surface-50 dark:bg-surface-900 p-3 mb-6 flex flex-col gap-3">
+            <IconField class="w-full">
+                <InputIcon><i class="pi pi-search" /></InputIcon>
+                <InputText v-model="searchQuery" type="search" :placeholder="pageConfig.searchPlaceholder" class="w-full" />
+            </IconField>
 
-        <div v-if="queue !== 'draft'" class="flex flex-wrap items-end gap-3 mb-4">
-            <div class="flex flex-col gap-1">
-                <label class="text-sm text-muted-color">ช่วงวันที่</label>
-                <div class="flex gap-2">
-                    <Select v-model="dateField" :options="dateFieldOptions" optionLabel="label" optionValue="value" class="w-44" />
-                    <DatePicker v-model="dateRange" selectionMode="range" :manualInput="false" showIcon iconDisplay="input" dateFormat="dd/mm/yy" placeholder="เลือกช่วงวันที่" showButtonBar class="w-64" />
-                </div>
+            <div v-if="queue !== 'draft'" class="flex flex-wrap items-center gap-2">
+                <Select v-model="dateField" :options="dateFieldOptions" optionLabel="label" optionValue="value" class="w-44 shrink-0" />
+                <DatePicker v-model="dateRange" selectionMode="range" :manualInput="false" showIcon iconDisplay="input" dateFormat="dd/mm/yy" placeholder="เลือกช่วงวันที่" showButtonBar class="w-56 shrink-0" />
+                <div class="w-px self-stretch bg-surface-300 dark:bg-surface-600 mx-1 hidden sm:block"></div>
+                <MultiSelect v-model="statusFilter" :options="statusFilterOptions" optionLabel="label" optionValue="value" placeholder="ทุกสถานะ" display="chip" class="w-56 shrink-0" />
+                <Select v-model="docFormatCodeFilter" :options="docFormatCodeOptions" optionLabel="label" optionValue="value" placeholder="ทุกประเภท" showClear class="w-44 shrink-0" />
+                <Button v-if="hasActiveFilters" label="ล้างตัวกรอง" icon="pi pi-filter-slash" severity="secondary" text @click="clearFilters" />
             </div>
-            <div class="flex flex-col gap-1">
-                <label class="text-sm text-muted-color">สถานะ</label>
-                <MultiSelect v-model="statusFilter" :options="statusFilterOptions" optionLabel="label" optionValue="value" placeholder="ทุกสถานะ" display="chip" class="w-64" />
-            </div>
-            <div class="flex flex-col gap-1">
-                <label class="text-sm text-muted-color">ประเภทเอกสาร</label>
-                <Select v-model="docFormatCodeFilter" :options="docFormatCodeOptions" optionLabel="label" optionValue="value" placeholder="ทุกประเภท" showClear class="w-44" />
-            </div>
-            <Button v-if="hasActiveFilters" label="ล้างตัวกรอง" icon="pi pi-filter-slash" severity="secondary" text @click="clearFilters" />
         </div>
 
         <DataTable :value="filteredDocuments" :loading="loading" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows>
