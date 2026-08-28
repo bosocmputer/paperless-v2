@@ -20,6 +20,23 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-28 (all five shops, web only): unified search box and filter row into one framed toolbar
+
+Second round of layout feedback on the same filter row: "ตรวจสอบแล้วดูไม่ลงตัวเลย วาง layout ส่วนของ header การค้นหา และ filter ใหม่ทั้งหมด" (still not right - please redesign the header/search/filter layout entirely). The full-bleed search row from the previous fix, sitting above a separate label-above-each-filter row with ad-hoc widths, left four visually disconnected rows with a jagged right edge and no sense that search and filters were one control panel.
+
+Redesigned as a single framed toolbar - a bordered panel with a subtle surface background - containing both the search box and the filter row, so they read as one unit instead of unrelated rows. Dropped the per-filter labels (ช่วงวันที่/สถานะ/ประเภทเอกสาร) in favor of descriptive placeholders already visible on each control (เลือกช่วงวันที่, ทุกสถานะ, ทุกประเภท), removing an extra vertical layer that wasn't earning its space. Added a thin vertical divider between the date-range group and the status/type/clear group to signal they're two different kinds of filter without needing a label to say so.
+
+Verified with live Playwright screenshots and interaction against Damrong before deploying further: toolbar renders as one coherent bordered panel at both narrow and wide viewports; selecting a status still correctly narrows the list (49→30 for ยกเลิก) with the chip and ล้างตัวกรอง button rendering inside the same frame.
+
+This is a `web`-only change - `paperless-api`/`sml-api-bybos`/`db` untouched, so only `web` was redeployed on each shop.
+
+- **Damrong Homeplus**: deployed first, verified live via screenshot and interaction as described above. Release evidence `/data/paperless/releases/20260828131258-fix-toolbar-layout-e43ea05/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260828131517-fix-toolbar-layout-e43ea05/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260828131538-fix-toolbar-layout-e43ea05/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260828131603-fix-toolbar-layout-e43ea05/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260828131625-fix-toolbar-layout-e43ea05/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-28 (all five shops, web only): search box now spans full width on its own row
 
 Follow-up from the filter row above: the customer noted the search box was cramped at a fixed `w-80` (320px), sharing a row with the refresh/import/create buttons, now that a full-width filter row sits right below it. Moved the search box to its own full-width row between the header/buttons row and the date/status/document-type filter row - matching the filter row's own full-width feel and giving it much more room. Layout-only change, no logic touched.
