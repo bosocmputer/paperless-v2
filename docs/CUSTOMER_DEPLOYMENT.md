@@ -20,6 +20,21 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-28 (all five shops, web only): search box now spans full width on its own row
+
+Follow-up from the filter row above: the customer noted the search box was cramped at a fixed `w-80` (320px), sharing a row with the refresh/import/create buttons, now that a full-width filter row sits right below it. Moved the search box to its own full-width row between the header/buttons row and the date/status/document-type filter row - matching the filter row's own full-width feel and giving it much more room. Layout-only change, no logic touched.
+
+Verified with a live Playwright screenshot against Damrong (superadmin session) before deploying further: search box spans the full card width on its own row.
+
+This is a `web`-only change - `paperless-api`/`sml-api-bybos`/`db` untouched, so only `web` was redeployed on each shop.
+
+- **Damrong Homeplus**: deployed first, verified live via screenshot as described above. Release evidence `/data/paperless/releases/20260828125958-fix-search-width-9902b7d/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260828130239-fix-search-width-9902b7d/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260828130302-fix-search-width-9902b7d/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260828130332-fix-search-width-9902b7d/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260828130351-fix-search-width-9902b7d/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-28 (all five shops, api+web): date range, status, and document-type filters on เอกสารรอเซ็น/ประวัติเอกสาร
 
 Customer feedback via ประวัติเอกสาร: "คนตรวจถามว่าเพิ่มช่วงวันที่ให้หน่อยได้ไหมครับ เวลาเอกสารเยอะๆ มันตรวจยาก" (a document reviewer asked for a date-range filter, since a long list is hard to audit). Discussed scope with the customer before building anything - agreed to add status and document-type filters alongside the date range, since all three attack the same "too many documents to scan" problem, and confirmed the date range needed to support both "วันที่เอกสาร" (doc_date) and "วันที่อัปเดตล่าสุด" (updated_at), since a reviewer might think in either.
