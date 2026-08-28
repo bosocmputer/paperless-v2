@@ -693,13 +693,14 @@ function selectInput(event) {
                 <InputText v-model="searchQuery" type="search" :placeholder="pageConfig.searchPlaceholder" class="w-full" />
             </IconField>
 
-            <div v-if="queue !== 'draft'" class="flex flex-wrap items-center gap-2">
-                <Select v-model="dateField" :options="dateFieldOptions" optionLabel="label" optionValue="value" class="w-44 shrink-0" />
-                <DatePicker v-model="dateRange" selectionMode="range" :manualInput="false" showIcon iconDisplay="input" dateFormat="dd/mm/yy" placeholder="เลือกช่วงวันที่" showButtonBar class="w-56 shrink-0" />
-                <div class="w-px self-stretch bg-surface-300 dark:bg-surface-600 mx-1 hidden sm:block"></div>
-                <MultiSelect v-model="statusFilter" :options="statusFilterOptions" optionLabel="label" optionValue="value" placeholder="ทุกสถานะ" display="chip" class="w-56 shrink-0" />
-                <Select v-model="docFormatCodeFilter" :options="docFormatCodeOptions" optionLabel="label" optionValue="value" placeholder="ทุกประเภท" showClear class="w-44 shrink-0" />
-                <Button v-if="hasActiveFilters" label="ล้างตัวกรอง" icon="pi pi-filter-slash" severity="secondary" text @click="clearFilters" />
+            <div v-if="queue !== 'draft'" class="flex flex-col sm:flex-row sm:items-center gap-2">
+                <div class="grid grid-cols-1 sm:grid-cols-[minmax(9rem,0.8fr)_minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.8fr)] gap-2 flex-1 min-w-0">
+                    <Select v-model="dateField" :options="dateFieldOptions" optionLabel="label" optionValue="value" class="w-full" />
+                    <DatePicker v-model="dateRange" selectionMode="range" :manualInput="false" showIcon iconDisplay="input" dateFormat="dd/mm/yy" placeholder="เลือกช่วงวันที่" showButtonBar class="w-full" />
+                    <MultiSelect v-model="statusFilter" :options="statusFilterOptions" optionLabel="label" optionValue="value" placeholder="ทุกสถานะ" display="chip" class="w-full" />
+                    <Select v-model="docFormatCodeFilter" :options="docFormatCodeOptions" optionLabel="label" optionValue="value" placeholder="ทุกประเภท" showClear class="w-full" />
+                </div>
+                <Button v-if="hasActiveFilters" label="ล้างตัวกรอง" icon="pi pi-filter-slash" severity="secondary" text class="shrink-0" @click="clearFilters" />
             </div>
         </div>
 
