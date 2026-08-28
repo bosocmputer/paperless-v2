@@ -19,6 +19,23 @@ export const INTERNAL_DOCUMENT_MENU_KEYS = Object.freeze({
     create: 'internal-document-create'
 });
 
+// Mirrors StatusesForSigningDocumentQueue in backend/internal/store/signing_documents.go -
+// keep both lists in sync if a status is ever added/removed from a queue.
+export const STATUSES_BY_QUEUE = Object.freeze({
+    draft: Object.freeze(['draft']),
+    active: Object.freeze([
+        'in_progress',
+        'pending_confirm',
+        'auto_confirming',
+        'completed_evidence_failed',
+        'completed_image_failed',
+        'completed_lock_failed',
+        'sml_source_changed',
+        'sml_source_missing'
+    ]),
+    history: Object.freeze(['completed', 'rejected', 'cancelled'])
+});
+
 export function normalizeSigningDocumentQueue(value) {
     const queue = String(value || '').trim().toLowerCase();
     return Object.prototype.hasOwnProperty.call(SIGNING_DOCUMENT_QUEUES, queue) ? queue : '';

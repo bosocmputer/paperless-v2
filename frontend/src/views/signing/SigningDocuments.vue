@@ -2,6 +2,7 @@
 import { api } from '@/services/api';
 import { authStore } from '@/stores/auth';
 import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity, smlImageFailureDetail } from '@/utils/signingFormatters';
+import { STATUSES_BY_QUEUE } from '@/utils/signingQueue';
 import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
 import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
@@ -21,6 +22,11 @@ const toast = useToast();
 const documents = ref([]);
 const loading = ref(false);
 const searchQuery = ref('');
+const statusFilter = ref([]);
+const docFormatCodeFilter = ref('');
+const dateField = ref('updatedAt');
+const dateRange = ref(null);
+const docFormatCodeOptions = ref([]);
 const transitioningIds = ref(new Set());
 const flowDialog = ref(false);
 const flowDocument = ref(null);
@@ -75,6 +81,12 @@ const pageConfig = computed(() => {
     };
 });
 const filteredDocuments = computed(() => documents.value);
+const statusFilterOptions = computed(() => (STATUSES_BY_QUEUE[queue.value] || []).map((status) => ({ label: signingStatusLabel(status), value: status })));
+const dateFieldOptions = [
+    { label: 'วันที่อัปเดตล่าสุด', value: 'updatedAt' },
+    { label: 'วันที่เอกสาร', value: 'docDate' }
+];
+const hasActiveFilters = computed(() => statusFilter.value.length > 0 || Boolean(docFormatCodeFilter.value) || Boolean(dateRange.value?.[0]));
 const referenceDialogTitle = computed(() => {
     const doc = referenceDocument.value || {};
     const docNo = doc.docNo || doc.doc_no || '';
@@ -98,12 +110,20 @@ const attachmentsDialogSubtitle = computed(() => {
 });
 const attachmentsDialogKey = computed(() => attachmentsDocument.value?.id || '');
 
-onMounted(loadPage);
+onMounted(() => {
+    void loadFormatCodeOptions();
+    void loadPage();
+});
 
 watch(
     () => route.name,
     () => {
         documents.value = [];
+        statusFilter.value = [];
+        docFormatCodeFilter.value = '';
+        dateField.value = 'updatedAt';
+        dateRange.value = null;
+        void loadFormatCodeOptions();
         void loadPage();
     }
 );
@@ -112,6 +132,22 @@ watch(searchQuery, () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => void loadPage(), 300);
 });
+
+watch([statusFilter, docFormatCodeFilter, dateField], () => void loadPage());
+
+watch(
+    () => (dateRange.value ? [dateRange.value[0], dateRange.value[1]] : [null, null]),
+    ([start, end], [prevStart, prevEnd]) => {
+        // A DatePicker in range mode fires this watcher on every click while
+        // the user is still picking the second date (start set, end still
+        // null) - only reload once both ends have actually changed, or the
+        // range was cleared entirely, so a half-made selection doesn't spam
+        // the API with a from-only filter.
+        const cleared = !start && !end && (prevStart || prevEnd);
+        const completed = start && end;
+        if (cleared || completed) void loadPage();
+    }
+);
 
 watch(
     () => [route.query.flow_doc_no, route.query.flow_doc_format_code],
@@ -135,13 +171,47 @@ onBeforeUnmount(() => {
 async function loadPage() {
     loading.value = true;
     try {
-        const result = await api.listSigningDocuments({ queue: queue.value, search: searchQuery.value, page: 1, size: 100 });
+        const result = await api.listSigningDocuments({
+            queue: queue.value,
+            search: searchQuery.value,
+            page: 1,
+            size: 100,
+            status: statusFilter.value,
+            docFormatCode: docFormatCodeFilter.value,
+            dateField: dateField.value,
+            dateFrom: formatDateForApi(dateRange.value?.[0]),
+            dateTo: formatDateForApi(dateRange.value?.[1])
+        });
         documents.value = result.documents || [];
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลดเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         loading.value = false;
     }
+}
+
+async function loadFormatCodeOptions() {
+    try {
+        const result = await api.listSigningDocumentFormatCodes({ queue: queue.value });
+        docFormatCodeOptions.value = (result.docFormatCodes || []).map((code) => ({ label: code, value: code }));
+    } catch {
+        // Non-critical: the document-type filter just stays empty if this fails.
+        docFormatCodeOptions.value = [];
+    }
+}
+
+function formatDateForApi(date) {
+    if (!date) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function clearFilters() {
+    statusFilter.value = [];
+    docFormatCodeFilter.value = '';
+    dateRange.value = null;
 }
 
 function openCreate() {
@@ -619,6 +689,25 @@ function selectInput(event) {
                 <Button v-if="pageConfig.showCreate && internalDocumentsEnabled" label="สร้างเอกสารภายใน" icon="pi pi-file-edit" severity="secondary" outlined @click="openInternalCreate" />
                 <Button v-if="pageConfig.showCreate" label="สร้างจาก SML" icon="pi pi-plus" @click="openCreate" />
             </div>
+        </div>
+
+        <div v-if="queue !== 'draft'" class="flex flex-wrap items-end gap-3 mb-4">
+            <div class="flex flex-col gap-1">
+                <label class="text-sm text-muted-color">ช่วงวันที่</label>
+                <div class="flex gap-2">
+                    <Select v-model="dateField" :options="dateFieldOptions" optionLabel="label" optionValue="value" class="w-44" />
+                    <DatePicker v-model="dateRange" selectionMode="range" :manualInput="false" showIcon iconDisplay="input" dateFormat="dd/mm/yy" placeholder="เลือกช่วงวันที่" showButtonBar class="w-64" />
+                </div>
+            </div>
+            <div class="flex flex-col gap-1">
+                <label class="text-sm text-muted-color">สถานะ</label>
+                <MultiSelect v-model="statusFilter" :options="statusFilterOptions" optionLabel="label" optionValue="value" placeholder="ทุกสถานะ" display="chip" class="w-64" />
+            </div>
+            <div class="flex flex-col gap-1">
+                <label class="text-sm text-muted-color">ประเภทเอกสาร</label>
+                <Select v-model="docFormatCodeFilter" :options="docFormatCodeOptions" optionLabel="label" optionValue="value" placeholder="ทุกประเภท" showClear class="w-44" />
+            </div>
+            <Button v-if="hasActiveFilters" label="ล้างตัวกรอง" icon="pi pi-filter-slash" severity="secondary" text @click="clearFilters" />
         </div>
 
         <DataTable :value="filteredDocuments" :loading="loading" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows>

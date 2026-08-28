@@ -750,6 +750,15 @@ ON signing_documents (sml_tenant, lower(doc_format_code), doc_no, updated_at DES
 CREATE INDEX IF NOT EXISTS signing_documents_status_idx
 ON signing_documents (status, updated_at DESC);
 
+CREATE INDEX IF NOT EXISTS signing_documents_tenant_status_updated_idx
+ON signing_documents (sml_tenant, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS signing_documents_tenant_status_docdate_idx
+ON signing_documents (sml_tenant, status, doc_date DESC);
+
+CREATE INDEX IF NOT EXISTS signing_documents_tenant_docformat_idx
+ON signing_documents (sml_tenant, doc_format_code);
+
 CREATE TABLE IF NOT EXISTS signing_document_versions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id UUID NOT NULL REFERENCES signing_documents(id) ON DELETE CASCADE,

@@ -70,9 +70,14 @@ function shouldSkipUnauthorizedRedirect(path) {
 function withQuery(path, params = {}) {
     const query = new URLSearchParams();
     Object.entries(params).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && value !== '') {
-            query.set(key, value);
+        if (value === undefined || value === null || value === '') return;
+        if (Array.isArray(value)) {
+            value.forEach((item) => {
+                if (item !== undefined && item !== null && item !== '') query.append(key, item);
+            });
+            return;
         }
+        query.set(key, value);
     });
     const qs = query.toString();
     return qs ? `${path}?${qs}` : path;
@@ -332,9 +337,17 @@ export const api = {
                 queue: params.queue,
                 search: params.search,
                 page: params.page,
-                size: params.size
+                size: params.size,
+                status: params.status,
+                docFormatCode: params.docFormatCode,
+                dateField: params.dateField,
+                dateFrom: params.dateFrom,
+                dateTo: params.dateTo
             })
         );
+    },
+    listSigningDocumentFormatCodes(params = {}) {
+        return request(withQuery('/api/signing-documents/format-codes', { queue: params.queue }));
     },
     checkSigningDocumentDuplicate(params = {}) {
         return request(

@@ -453,6 +453,71 @@ func TestDraftOwnershipAllowsAdminAccessRestrictsDraftOwner(t *testing.T) {
 	}
 }
 
+func TestParseSigningDocumentDateRangeRejectsInvalidInput(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{"bad dateField", "dateField=bogus&dateFrom=2026-08-01"},
+		{"malformed dateFrom", "dateFrom=08/01/2026"},
+		{"malformed dateTo", "dateTo=not-a-date"},
+		{"dateFrom after dateTo", "dateFrom=2026-08-31&dateTo=2026-08-01"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/api/signing-documents?"+tc.query, nil)
+			if _, err := parseSigningDocumentDateRange(r); err == nil {
+				t.Fatalf("expected an error for query %q", tc.query)
+			}
+		})
+	}
+}
+
+func TestParseSigningDocumentDateRangeDefaultsToUpdatedAt(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/api/signing-documents?dateFrom=2026-08-01&dateTo=2026-08-31", nil)
+	result, err := parseSigningDocumentDateRange(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Field != "updatedAt" {
+		t.Fatalf("expected default field updatedAt, got %q", result.Field)
+	}
+	// A Bangkok (UTC+7) day boundary should land at 17:00 UTC the day before.
+	if result.From != "2026-07-31T17:00:00Z" {
+		t.Fatalf("unexpected From: %q", result.From)
+	}
+	// dateTo is inclusive as seen by the caller, so the exclusive upper bound
+	// is the start of the day *after* dateTo, in Bangkok time.
+	if result.To != "2026-08-31T17:00:00Z" {
+		t.Fatalf("unexpected To: %q", result.To)
+	}
+}
+
+func TestParseSigningDocumentDateRangeDocDatePassesThroughCalendarDates(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/api/signing-documents?dateField=docDate&dateFrom=2026-08-01&dateTo=2026-08-31", nil)
+	result, err := parseSigningDocumentDateRange(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.From != "2026-08-01" {
+		t.Fatalf("unexpected From: %q", result.From)
+	}
+	if result.To != "2026-09-01" {
+		t.Fatalf("unexpected To (should be day after dateTo): %q", result.To)
+	}
+}
+
+func TestParseSigningDocumentDateRangeEmptyWhenNoParams(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/api/signing-documents", nil)
+	result, err := parseSigningDocumentDateRange(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.From != "" || result.To != "" {
+		t.Fatalf("expected empty range, got %+v", result)
+	}
+}
+
 func TestCanRetrySigningDocumentImagesStatusIncludesCompletedRepair(t *testing.T) {
 	for _, status := range []string{"completed_image_failed", "completed"} {
 		if !canRetrySigningDocumentImagesStatus(status) {

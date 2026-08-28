@@ -89,6 +89,18 @@ type SigningDocumentListQuery struct {
 	Size            int
 	CreatedByUserID string
 	SignerUsername  string
+	Statuses        []string
+	DocFormatCode   string
+	// DateField selects which column DateFrom/DateTo compare against:
+	// "docDate" (d.doc_date, a plain DATE, compared as YYYY-MM-DD) or
+	// "updatedAt" (d.updated_at, a TIMESTAMPTZ - the caller must pass
+	// DateFrom/DateTo as RFC3339 timestamps already converted to UTC from
+	// the intended local calendar day, e.g. via bangkokDayRangeUTC).
+	// DateFrom is inclusive (>=), DateTo is exclusive (<) - the caller
+	// passes the start of the day *after* the last included day.
+	DateField string
+	DateFrom  string
+	DateTo    string
 }
 
 type SigningDocumentListResult struct {
@@ -541,6 +553,44 @@ LIMIT $%d OFFSET $%d
 	}, nil
 }
 
+// ListSigningDocumentFormatCodes returns the distinct doc_format_code values
+// actually present for the given queue, for populating the document-type
+// filter dropdown with only codes a user could realistically find - not the
+// full SML master list, most of which would return zero results.
+func (s *Store) ListSigningDocumentFormatCodes(ctx context.Context, queue string) ([]string, error) {
+	tenant := tenantFilterValue(ctx)
+	statuses := StatusesForSigningDocumentQueue(strings.ToLower(strings.TrimSpace(queue)))
+	args := []any{tenant}
+	where := "WHERE ($1 = '' OR sml_tenant = $1) AND doc_format_code <> ''"
+	if len(statuses) > 0 {
+		placeholders := make([]string, 0, len(statuses))
+		for _, status := range statuses {
+			args = append(args, status)
+			placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+		}
+		where += " AND status IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT DISTINCT doc_format_code
+FROM signing_documents
+`+where+`
+ORDER BY doc_format_code
+`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	codes := []string{}
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, err
+		}
+		codes = append(codes, code)
+	}
+	return codes, rows.Err()
+}
+
 func (s *Store) attachPendingSignersToDocuments(ctx context.Context, documents []models.SigningDocument) error {
 	if len(documents) == 0 {
 		return nil
@@ -673,7 +723,7 @@ func signingDocumentListWhere(ctx context.Context, query SigningDocumentListQuer
 		clauses = append(clauses, fmt.Sprintf("d.sml_tenant = $%d", len(args)))
 	}
 
-	statuses := statusesForSigningDocumentQueue(query.Queue)
+	statuses := StatusesForSigningDocumentQueue(query.Queue)
 	if len(statuses) > 0 {
 		placeholders := make([]string, 0, len(statuses))
 		for _, status := range statuses {
@@ -700,6 +750,30 @@ func signingDocumentListWhere(ctx context.Context, query SigningDocumentListQuer
 			WHERE sg.document_id = d.id AND lower(sg.signer_user) = lower(`+placeholder+`)
 		)`)
 	}
+	if len(query.Statuses) > 0 {
+		placeholders := make([]string, 0, len(query.Statuses))
+		for _, status := range query.Statuses {
+			args = append(args, status)
+			placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+		}
+		clauses = append(clauses, "d.status IN ("+strings.Join(placeholders, ",")+")")
+	}
+	if strings.TrimSpace(query.DocFormatCode) != "" {
+		args = append(args, strings.ToLower(strings.TrimSpace(query.DocFormatCode)))
+		clauses = append(clauses, fmt.Sprintf("lower(d.doc_format_code) = $%d", len(args)))
+	}
+	dateColumn := "d.updated_at"
+	if query.DateField == "docDate" {
+		dateColumn = "d.doc_date"
+	}
+	if query.DateFrom != "" {
+		args = append(args, query.DateFrom)
+		clauses = append(clauses, fmt.Sprintf("%s >= $%d", dateColumn, len(args)))
+	}
+	if query.DateTo != "" {
+		args = append(args, query.DateTo)
+		clauses = append(clauses, fmt.Sprintf("%s < $%d", dateColumn, len(args)))
+	}
 
 	if len(clauses) == 0 {
 		return "", args
@@ -707,7 +781,7 @@ func signingDocumentListWhere(ctx context.Context, query SigningDocumentListQuer
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }
 
-func statusesForSigningDocumentQueue(queue string) []string {
+func StatusesForSigningDocumentQueue(queue string) []string {
 	switch queue {
 	case "draft":
 		return []string{"draft"}

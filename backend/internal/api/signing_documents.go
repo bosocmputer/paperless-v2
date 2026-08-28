@@ -239,6 +239,31 @@ func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 	} else if queue == "draft" {
 		createdByUserID = actor.ID
 	}
+
+	allowedStatuses := store.StatusesForSigningDocumentQueue(queue)
+	requestedStatuses := r.URL.Query()["status"]
+	statuses := []string{}
+	if len(requestedStatuses) > 0 {
+		allowedSet := make(map[string]bool, len(allowedStatuses))
+		for _, s := range allowedStatuses {
+			allowedSet[s] = true
+		}
+		for _, requested := range requestedStatuses {
+			requested = strings.TrimSpace(requested)
+			if !allowedSet[requested] {
+				writeError(w, http.StatusBadRequest, "invalid_status_filter", fmt.Sprintf("status %q is not valid for this queue.", requested))
+				return
+			}
+			statuses = append(statuses, requested)
+		}
+	}
+
+	dateRange, err := parseSigningDocumentDateRange(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_date_range", err.Error())
+		return
+	}
+
 	result, err := s.store.ListSigningDocuments(r.Context(), store.SigningDocumentListQuery{
 		Queue:           queue,
 		Search:          r.URL.Query().Get("search"),
@@ -246,6 +271,11 @@ func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 		Size:            size,
 		CreatedByUserID: createdByUserID,
 		SignerUsername:  signerUsername,
+		Statuses:        statuses,
+		DocFormatCode:   r.URL.Query().Get("docFormatCode"),
+		DateField:       dateRange.Field,
+		DateFrom:        dateRange.From,
+		DateTo:          dateRange.To,
 	})
 	if err != nil {
 		s.logger.Error("list signing documents failed", "error", err)
@@ -253,6 +283,23 @@ func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// listSigningDocumentFormatCodes powers the document-type filter dropdown on
+// the list screens (active/history/drafts) - it deliberately does not run
+// the same menu-permission/document_scope gate as listSigningDocuments,
+// since this only exposes a list of format code strings (e.g. "PO", "AP"),
+// not any document content, and is only ever used to populate a dropdown on
+// a screen the caller already reached through those checks.
+func (s *Server) listSigningDocumentFormatCodes(w http.ResponseWriter, r *http.Request) {
+	queue := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("queue")))
+	codes, err := s.store.ListSigningDocumentFormatCodes(r.Context(), queue)
+	if err != nil {
+		s.logger.Error("list signing document format codes failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "signing_document_format_codes_failed", "Cannot load document types right now.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"docFormatCodes": codes})
 }
 
 func (s *Server) checkSigningDocumentDuplicate(w http.ResponseWriter, r *http.Request) {
@@ -3792,6 +3839,81 @@ func parsePositiveQueryInt(r *http.Request, key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+// signingDocumentDateRangeQuery holds the store-ready DateField/DateFrom/DateTo
+// values derived from a request's dateField/dateFrom/dateTo query params, or
+// an error describing why the request was rejected.
+type signingDocumentDateRangeQuery struct {
+	Field string
+	From  string
+	To    string
+}
+
+// parseSigningDocumentDateRange validates and converts dateFrom/dateTo query
+// params (YYYY-MM-DD, inclusive on both ends as the caller sees it) into the
+// store's expected shape. For dateField=docDate (a plain DATE column) the
+// values pass through as-is. For dateField=updatedAt (a TIMESTAMPTZ column)
+// each calendar day is anchored to the Asia/Bangkok timezone - the same one
+// used for PDF/audit timestamps elsewhere in this codebase - and DateTo is
+// shifted to the start of the *following* day so the store's exclusive "<"
+// comparison still includes every moment of the requested last day.
+func parseSigningDocumentDateRange(r *http.Request) (signingDocumentDateRangeQuery, error) {
+	field := strings.TrimSpace(r.URL.Query().Get("dateField"))
+	if field == "" {
+		field = "updatedAt"
+	}
+	if field != "updatedAt" && field != "docDate" {
+		return signingDocumentDateRangeQuery{}, fmt.Errorf("dateField must be \"updatedAt\" or \"docDate\"")
+	}
+	fromRaw := strings.TrimSpace(r.URL.Query().Get("dateFrom"))
+	toRaw := strings.TrimSpace(r.URL.Query().Get("dateTo"))
+	if fromRaw == "" && toRaw == "" {
+		return signingDocumentDateRangeQuery{}, nil
+	}
+
+	var fromDay, toDay time.Time
+	var err error
+	if fromRaw != "" {
+		fromDay, err = time.Parse("2006-01-02", fromRaw)
+		if err != nil {
+			return signingDocumentDateRangeQuery{}, fmt.Errorf("dateFrom must be in YYYY-MM-DD format")
+		}
+	}
+	if toRaw != "" {
+		toDay, err = time.Parse("2006-01-02", toRaw)
+		if err != nil {
+			return signingDocumentDateRangeQuery{}, fmt.Errorf("dateTo must be in YYYY-MM-DD format")
+		}
+	}
+	if fromRaw != "" && toRaw != "" && toDay.Before(fromDay) {
+		return signingDocumentDateRangeQuery{}, fmt.Errorf("dateFrom must not be after dateTo")
+	}
+
+	if field == "docDate" {
+		result := signingDocumentDateRangeQuery{Field: field}
+		if fromRaw != "" {
+			result.From = fromDay.Format("2006-01-02")
+		}
+		if toRaw != "" {
+			// doc_date is compared with "<", so include the requested day itself.
+			result.To = toDay.AddDate(0, 0, 1).Format("2006-01-02")
+		}
+		return result, nil
+	}
+
+	loc, err := time.LoadLocation("Asia/Bangkok")
+	if err != nil {
+		return signingDocumentDateRangeQuery{}, fmt.Errorf("cannot resolve timezone: %w", err)
+	}
+	result := signingDocumentDateRangeQuery{Field: field}
+	if fromRaw != "" {
+		result.From = time.Date(fromDay.Year(), fromDay.Month(), fromDay.Day(), 0, 0, 0, 0, loc).UTC().Format(time.RFC3339)
+	}
+	if toRaw != "" {
+		result.To = time.Date(toDay.Year(), toDay.Month(), toDay.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, 1).UTC().Format(time.RFC3339)
+	}
+	return result, nil
 }
 
 func decodeSigningTaskEventPayload(reader io.Reader, maxBytes int64) (models.SigningTaskEventRequest, error) {
