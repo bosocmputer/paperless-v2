@@ -20,6 +20,23 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-28 (all five shops, web only): filter controls now stretch to fill the toolbar's full width
+
+Third round of feedback on the same filter row, with a screenshot: the date field, date range, status, and document-type controls were all fixed-width and left-clustered, leaving a large empty gap on the right that didn't match the full-width search box above them.
+
+Switched the fixed widths (`w-44`/`w-56`) to a CSS grid with proportional columns (date-field:date-range:status:doc-type roughly 0.8:1.2:1:0.8 - the date range and status controls typically hold more content than the other two) so all four stretch to fill the available width together. Dropped the vertical divider from the previous fix, since the grid's own column proportions already read as two loose groups without needing a literal line. ล้างตัวกรอง stays fixed-width alongside the grid rather than stretching with it - a button growing to fill space would look odd.
+
+Verified with live Playwright screenshots against Damrong at two viewport widths (1920px and 1400px) before deploying further, plus a real filter interaction (selecting ยกเลิก still correctly narrows 49→30) to confirm the layout change didn't touch any behavior.
+
+This is a `web`-only change - `paperless-api`/`sml-api-bybos`/`db` untouched, so only `web` was redeployed on each shop.
+
+- **Damrong Homeplus**: deployed first, verified live via screenshots and interaction as described above. Release evidence `/data/paperless/releases/20260828132406-fix-filter-widths-bd7375d/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260828132625-fix-filter-widths-bd7375d/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260828132645-fix-filter-widths-bd7375d/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260828132712-fix-filter-widths-bd7375d/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260828132730-fix-filter-widths-bd7375d/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-08-28 (all five shops, web only): unified search box and filter row into one framed toolbar
 
 Second round of layout feedback on the same filter row: "ตรวจสอบแล้วดูไม่ลงตัวเลย วาง layout ส่วนของ header การค้นหา และ filter ใหม่ทั้งหมด" (still not right - please redesign the header/search/filter layout entirely). The full-bleed search row from the previous fix, sitting above a separate label-above-each-filter row with ad-hoc widths, left four visually disconnected rows with a jagged right edge and no sense that search and filters were one control panel.
