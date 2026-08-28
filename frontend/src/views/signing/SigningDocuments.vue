@@ -673,23 +673,24 @@ function selectInput(event) {
 
 <template>
     <div class="card">
-        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
             <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <div class="font-semibold text-xl whitespace-nowrap truncate">{{ pageConfig.title }}</div>
                 <p class="text-muted-color m-0 min-w-0 truncate">{{ pageConfig.subtitle }}</p>
                 <Tag :value="`${documents.length} รายการ`" :severity="pageConfig.countSeverity" />
             </div>
             <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
-                <IconField class="w-full sm:w-80">
-                    <InputIcon><i class="pi pi-search" /></InputIcon>
-                    <InputText v-model="searchQuery" type="search" :placeholder="pageConfig.searchPlaceholder" class="w-full" />
-                </IconField>
                 <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
                 <Button v-if="pageConfig.showCreate" label="นำเข้าหลายไฟล์" icon="pi pi-upload" severity="secondary" outlined @click="openBatchImport" />
                 <Button v-if="pageConfig.showCreate && internalDocumentsEnabled" label="สร้างเอกสารภายใน" icon="pi pi-file-edit" severity="secondary" outlined @click="openInternalCreate" />
                 <Button v-if="pageConfig.showCreate" label="สร้างจาก SML" icon="pi pi-plus" @click="openCreate" />
             </div>
         </div>
+
+        <IconField class="w-full mb-6">
+            <InputIcon><i class="pi pi-search" /></InputIcon>
+            <InputText v-model="searchQuery" type="search" :placeholder="pageConfig.searchPlaceholder" class="w-full" />
+        </IconField>
 
         <div v-if="queue !== 'draft'" class="flex flex-wrap items-end gap-3 mb-4">
             <div class="flex flex-col gap-1">
