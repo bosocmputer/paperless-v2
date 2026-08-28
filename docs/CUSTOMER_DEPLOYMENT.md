@@ -20,6 +20,35 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-08-28 (all five shops, api+web): date range, status, and document-type filters on เอกสารรอเซ็น/ประวัติเอกสาร
+
+Customer feedback via ประวัติเอกสาร: "คนตรวจถามว่าเพิ่มช่วงวันที่ให้หน่อยได้ไหมครับ เวลาเอกสารเยอะๆ มันตรวจยาก" (a document reviewer asked for a date-range filter, since a long list is hard to audit). Discussed scope with the customer before building anything - agreed to add status and document-type filters alongside the date range, since all three attack the same "too many documents to scan" problem, and confirmed the date range needed to support both "วันที่เอกสาร" (doc_date) and "วันที่อัปเดตล่าสุด" (updated_at), since a reviewer might think in either.
+
+**Filters added** (on เอกสารรอเซ็น and ประวัติเอกสาร - not เอกสารเตรียมส่ง, which doesn't have the status variety or typical volume to need this):
+
+- **ช่วงวันที่**: a date-range picker with a field selector (วันที่เอกสาร / วันที่อัปเดตล่าสุด)
+- **สถานะ**: multi-select, scoped to only the statuses that can actually appear in the current queue (e.g. ประวัติเอกสาร only offers เสร็จสมบูรณ์/ถูกปฏิเสธ/ยกเลิก)
+- **ประเภทเอกสาร**: dropdown populated from the document types that actually exist in that queue's data (not the full SML master list, which would offer codes with zero matching documents)
+
+All three default to unfiltered, so nobody's existing workflow changes unless they use the new controls.
+
+**Backend** (`GET /api/signing-documents` gains `status[]`, `docFormatCode`, `dateField`/`dateFrom`/`dateTo`; new `GET /api/signing-documents/format-codes`): `dateField=updatedAt` anchors each requested calendar day to Asia/Bangkok before converting to the UTC range the TIMESTAMPTZ column is compared against - the same timezone already used for every other user-facing timestamp in this codebase - so a document from early or late in the Bangkok day is never silently dropped from a "today" filter. `dateField=docDate` compares the plain DATE column directly. A backwards date range or a status not valid for the current queue is rejected with `400`, not silently ignored or cross-queue leaked. Three new composite indexes (`sml_tenant, status, updated_at`/`doc_date`; `sml_tenant, doc_format_code`) were added even though every shop's `signing_documents` table is currently only in the low hundreds of rows (a sequential scan would be just as fast at this size) - added now while the migration is cheap and additive, rather than revisiting once volume grows.
+
+Verified before deploying:
+
+- `go build`/`vet`/`test` pass, including new unit tests for the date-range parser's Bangkok day-boundary math and its rejection of malformed/backwards ranges.
+- Rolled-back transaction + live API calls against Damrong's real data: `status=completed` (19) + `status=cancelled` (30) = the unfiltered total (49) exactly; `docFormatCode=2RIO` correctly narrows to 5; `dateField=docDate` vs `dateField=updatedAt` over the same range produce different (correct) counts; `dateFrom>dateTo` and an out-of-queue status both `400`; the old request shape with no new params still returns all 49 (backward compatible).
+- Live Playwright session against Damrong (superadmin): status dropdown shows exactly the 3 real ประวัติเอกสาร statuses; selecting ยกเลิก narrows 49→30 with a removable chip; document-type filter narrows to 5 for `2RIO`; ล้างตัวกรอง resets back to 49.
+
+- **Damrong Homeplus**: deployed first, verified live as described above. Release evidence `/data/paperless/releases/20260828120107-feat-document-list-filters-800f649/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session, all confirmed with the three new indexes present after a real boot. Healthy on each, public URL smoke HTTP 200. Release evidence:
+  - Pui: `/data/paperless/releases/20260828121215-feat-document-list-filters-800f649/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260828121305-feat-document-list-filters-800f649/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260828123600-feat-document-list-filters-800f649/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260828123652-feat-document-list-filters-800f649/postdeploy-checks.txt`
+
+Customer to retest: open ประวัติเอกสาร (or เอกสารรอเซ็น), confirm the new ช่วงวันที่/สถานะ/ประเภทเอกสาร filters appear above the table and narrow the list as expected.
+
 ## Current Customer Status - 2026-08-27 (all five shops, web only): Workflow save button silently stayed disabled after adding a 4th+ signer
 
 Insee Construction and Wirat Home Mart both reported the same symptom independently within minutes of each other: editing a Workflow step to add a 4th signer via the "แก้ไขขั้นตอน" dialog worked fine (the table updated, the new signer appeared), but clicking "บันทึก Workflow" (top-right) afterward did nothing - no error, no toast, just unresponsive.
