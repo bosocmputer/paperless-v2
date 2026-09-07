@@ -30,6 +30,25 @@ The exact mechanism behind the earlier silent failure was not conclusively ident
 
 **Takeaway for future multi-shop rollouts**: a deploy command completing without a visible error is not sufficient confirmation on its own - the practice going forward is to check the actual running container's image tag via `docker ps` (or an equivalent independent signal, like a feature-specific API call) on *every* shop after a rollout, not just the shops where something was spot-checked with a live UI/API test at the time.
 
+## Current Customer Status - 2026-09-07 (all five shops, web only): fix filter-persistence not surviving document navigation
+
+Customer reported on Pui (`http://45.122.49.250:8095/signing/documents/history`) that the just-shipped search/filter persistence (`ab01567`) still did not restore after searching "IA" and opening a matching document. Reproduced with a live Playwright click-through against Pui and inspected the customer's own browser Network tab log they shared, which showed `search=IA` present on the list call before opening the document, then missing (`signing-documents?queue=history&page=1&size=100&dateField=updatedAt`, no `search` param) on the reload right after returning.
+
+Root cause: `openDetail`/`openInternalLayout`/`referenceDocumentUrl` in `SigningDocuments.vue` built the navigation query as `{ from_queue: queue.value }` only, discarding whatever `q`/`status`/`docFormatCode`/`dateField`/`dateFrom`/`dateTo` were already in the URL - so the moment a document was opened from a filtered list, the filter state was gone from the browser's history entry before any back-navigation even happened. `SigningDocumentDetail.vue`'s own in-app back arrow (◀, not the browser back button) had the identical bug, pushing to the list route with no query at all. My original verification of `ab01567` had used Playwright's `page.goto()` directly to the detail URL rather than clicking the actual row link and back arrow, which bypassed this exact code path and let the bug ship.
+
+Fix: both list-side functions now spread `...route.query` before setting `from_queue`; the detail page's back arrow now calls a new `goBackToList()` that forwards `route.query` minus the detail-only `from_queue`/`open_layout` keys. The post-cancel redirect (`cancelDocument()`) got the same treatment for consistency. Detail-to-detail navigations (lineage, document-flow, SML-correction) were left alone since they don't originate from the filtered list and already handle their own `from_queue`.
+
+Verified live on Damrong with a real click-through Playwright test (not `page.goto`) matching the customer's exact report: searched `2RIO` on ประวัติเอกสาร, clicked an actual result row, detail URL correctly carried `q=2RIO&from_queue=history`, clicked the in-app back arrow, returned to `?q=2RIO` with the search box and 5-row result list correctly restored.
+
+This is a `web`-only change - `paperless-api`/`sml-api-bybos`/`db` untouched, so only `web` was redeployed on each shop.
+
+- **Damrong Homeplus**: deployed first, verified live via real click-through Playwright as described above. Release evidence `/data/paperless/releases/20260907064738-fix-preserve-filters-on-navigate-4bc3478/postdeploy-checks.txt`.
+- **Pui, Wirat Home Mart, Insee Construction, Amata**: deployed same-session. All confirmed via `docker inspect` image tag directly on the running container, public URL smoke HTTP 200 on each. Release evidence:
+  - Pui: `/data/paperless/releases/20260907064847-fix-preserve-filters-on-navigate-4bc3478/postdeploy-checks.txt`
+  - Wirat Home Mart: `/data/paperless/releases/20260907064912-fix-preserve-filters-on-navigate-4bc3478/postdeploy-checks.txt`
+  - Insee Construction: `/data/paperless/releases/20260907064950-fix-preserve-filters-on-navigate-4bc3478/postdeploy-checks.txt`
+  - Amata: `/data/paperless-amata/releases/20260907065019-fix-preserve-filters-on-navigate-4bc3478/postdeploy-checks.txt`
+
 ## Current Customer Status - 2026-09-07 (all five shops): search/filter persistence, ลำดับ+แผนก columns, rows-per-page selector
 
 Three feedback items in one release: (1) ประวัติเอกสาร/เอกสารรอเซ็น/แบบร่าง now sync search+filter state (search text, status, doc-type, date field/range) to the URL query string, so navigating to a document and back restores the prior view instead of resetting to blank - new query params (`q`, `status`, `docFormatCode`, `dateField`, `dateFrom`, `dateTo`) were chosen to avoid colliding with the existing `flow_doc_no`/`flow_doc_format_code` params used by the unrelated document-flow deep-link feature; (2) added ลำดับ (row number) and แผนก (department) columns to the document table, ลำดับ before เลขที่เอกสาร and แผนก before วันที่เอกสาร; (3) added a shared rows-per-page selector (`useTableRowsPerPage` composable, localStorage-backed per table) to the document, my-tasks, and my-history tables - scope confirmed with the customer to stop at document-facing tables, not admin/config screens.
