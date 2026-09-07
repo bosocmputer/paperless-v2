@@ -299,7 +299,7 @@ function openInternalEdit(doc) {
 
 function openInternalLayout(doc) {
     if (!doc?.id) return;
-    router.push({ name: 'signing-document-detail', params: { id: doc.id }, query: { from_queue: queue.value, open_layout: '1' } });
+    router.push({ name: 'signing-document-detail', params: { id: doc.id }, query: { ...route.query, from_queue: queue.value, open_layout: '1' } });
 }
 
 function openBatchImport() {
@@ -318,11 +318,11 @@ async function onBatchImportCompleted(result = {}) {
 
 function openDetail(doc) {
     if (!doc?.id) return;
-    router.push({ name: 'signing-document-detail', params: { id: doc.id }, query: { from_queue: queue.value } });
+    router.push({ name: 'signing-document-detail', params: { id: doc.id }, query: { ...route.query, from_queue: queue.value } });
 }
 
 function referenceDocumentUrl(documentId) {
-    return router.resolve({ name: 'signing-document-detail', params: { id: documentId }, query: { from_queue: queue.value } }).href;
+    return router.resolve({ name: 'signing-document-detail', params: { id: documentId }, query: { ...route.query, from_queue: queue.value } }).href;
 }
 
 function openDocumentFlow(doc, options = {}) {

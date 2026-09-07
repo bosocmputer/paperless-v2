@@ -101,6 +101,11 @@ const backRouteName = computed(() => {
     return 'signing-documents';
 });
 
+function goBackToList() {
+    const { from_queue: _fromQueue, open_layout: _openLayout, ...listQuery } = route.query;
+    router.push({ name: backRouteName.value, query: listQuery });
+}
+
 function currentDetailQueue() {
     if (document.value?.status) return signingDocumentQueueForStatus(document.value.status);
     return normalizeSigningDocumentQueue(route.query.from_queue) || 'active';
@@ -423,7 +428,8 @@ async function cancelDocument() {
         toast.add({ severity: 'success', summary: cancellationActionLabel.value + 'แล้ว', life: 2500 });
         cancelDialog.value = false;
         cancelRequestKey.value = '';
-        router.push({ name: document.value?.status === 'draft' ? 'signing-document-drafts' : 'signing-document-history' });
+        const { from_queue: _fromQueue, open_layout: _openLayout, ...listQuery } = route.query;
+        router.push({ name: document.value?.status === 'draft' ? 'signing-document-drafts' : 'signing-document-history', query: listQuery });
     } catch (err) {
         toast.add({ severity: 'error', summary: 'ยกเลิกเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
@@ -801,7 +807,7 @@ function movementEventView(event) {
 <template>
     <div class="signing-detail">
         <div class="editor-bar">
-            <Button icon="pi pi-arrow-left" text rounded aria-label="กลับ" @click="router.push({ name: backRouteName })" />
+            <Button icon="pi pi-arrow-left" text rounded aria-label="กลับ" @click="goBackToList" />
             <div class="bar-title">
                 <strong>{{ documentHeaderLine }}</strong>
             </div>
