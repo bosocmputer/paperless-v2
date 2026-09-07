@@ -316,7 +316,7 @@ func (s *Server) createInternalDocument(w http.ResponseWriter, r *http.Request) 
 	}
 	session, _ := currentSession(r)
 	format := models.SMLDocFormat{Code: master.Code, Name1: master.Name, ScreenCode: internalDocumentScreenCode}
-	candidate := models.SMLDocumentCandidate{DocNo: document.DocumentNo, DocDate: document.DocumentDate, TotalAmount: float64(totalCents) / 100, PartyName: document.RequesterName}
+	candidate := models.SMLDocumentCandidate{DocNo: document.DocumentNo, DocDate: document.DocumentDate, TotalAmount: float64(totalCents) / 100, PartyName: document.RequesterName, DepartmentName: document.DepartmentName}
 	legalNoticeSnapshot := models.LegalNoticeSnapshot{}
 	if len(legalNotices) > 0 {
 		legalNoticeSnapshot = legalNotices[0]

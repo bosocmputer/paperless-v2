@@ -759,6 +759,12 @@ ON signing_documents (sml_tenant, status, doc_date DESC);
 CREATE INDEX IF NOT EXISTS signing_documents_tenant_docformat_idx
 ON signing_documents (sml_tenant, doc_format_code);
 
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS department_code TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS department_name TEXT NOT NULL DEFAULT '';
+
 CREATE TABLE IF NOT EXISTS signing_document_versions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id UUID NOT NULL REFERENCES signing_documents(id) ON DELETE CASCADE,

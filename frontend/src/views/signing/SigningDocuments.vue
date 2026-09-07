@@ -3,6 +3,7 @@ import { api } from '@/services/api';
 import { authStore } from '@/stores/auth';
 import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity, smlImageFailureDetail } from '@/utils/signingFormatters';
 import { STATUSES_BY_QUEUE } from '@/utils/signingQueue';
+import { useTableRowsPerPage } from '@/composables/useTableRowsPerPage';
 import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
 import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
@@ -50,6 +51,7 @@ let searchTimer = null;
 
 const queue = computed(() => route.meta.queue || 'active');
 const internalDocumentsEnabled = computed(() => authStore.features?.internalDocuments === true);
+const { rowsPerPage, rowsPerPageOptions, onRowsPerPageChange } = useTableRowsPerPage('signing-documents');
 const pageConfig = computed(() => {
     if (queue.value === 'draft') {
         return {
@@ -110,7 +112,61 @@ const attachmentsDialogSubtitle = computed(() => {
 });
 const attachmentsDialogKey = computed(() => attachmentsDocument.value?.id || '');
 
+let restoringFromQuery = false;
+let queueAtLastRestore = null;
+
+// Restores search/filter state from this route's own query params - used on
+// first mount and whenever navigating between เอกสารรอเซ็น/ประวัติเอกสาร/
+// เอกสารเตรียมส่ง, so leaving a document's detail page and coming back (or
+// using the browser back button) lands on the same filtered view instead of
+// resetting to blank. Guarded with restoringFromQuery so the syncFiltersToQuery
+// watcher below doesn't immediately overwrite the very query it just read.
+function restoreFiltersFromQuery() {
+    restoringFromQuery = true;
+    searchQuery.value = String(route.query.q || '');
+    const statusParam = route.query.status;
+    statusFilter.value = statusParam ? (Array.isArray(statusParam) ? statusParam : [statusParam]) : [];
+    docFormatCodeFilter.value = String(route.query.docFormatCode || '');
+    dateField.value = route.query.dateField === 'docDate' ? 'docDate' : 'updatedAt';
+    const dateFrom = route.query.dateFrom ? parseApiDate(route.query.dateFrom) : null;
+    const dateTo = route.query.dateTo ? parseApiDate(route.query.dateTo) : null;
+    dateRange.value = dateFrom || dateTo ? [dateFrom, dateTo] : null;
+    requestAnimationFrame(() => {
+        restoringFromQuery = false;
+    });
+}
+
+// Mirrors the current search/filter state into this route's query string
+// (replace, not push, so every keystroke/filter change doesn't pile up
+// browser-history entries) - this is what makes state survive a "เปิด" then
+// back navigation, since the URL itself now carries it.
+function syncFiltersToQuery() {
+    if (restoringFromQuery) return;
+    const query = { ...route.query };
+    setOrDeleteQueryParam(query, 'q', searchQuery.value);
+    if (statusFilter.value.length > 0) query.status = statusFilter.value;
+    else delete query.status;
+    setOrDeleteQueryParam(query, 'docFormatCode', docFormatCodeFilter.value);
+    setOrDeleteQueryParam(query, 'dateField', dateField.value !== 'updatedAt' ? dateField.value : '');
+    setOrDeleteQueryParam(query, 'dateFrom', formatDateForApi(dateRange.value?.[0]));
+    setOrDeleteQueryParam(query, 'dateTo', formatDateForApi(dateRange.value?.[1]));
+    router.replace({ query });
+}
+
+function setOrDeleteQueryParam(query, key, value) {
+    if (value) query[key] = value;
+    else delete query[key];
+}
+
+function parseApiDate(value) {
+    const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
 onMounted(() => {
+    queueAtLastRestore = queue.value;
+    restoreFiltersFromQuery();
     void loadFormatCodeOptions();
     void loadPage();
 });
@@ -118,11 +174,16 @@ onMounted(() => {
 watch(
     () => route.name,
     () => {
+        // Switching between drafts/active/history queues (not just re-entering
+        // the same one via back navigation) should still start from a clean
+        // slate, since a status/doc-type filter from one queue is meaningless
+        // in another - only restore from the query when landing back on the
+        // same queue this component instance was already showing.
         documents.value = [];
-        statusFilter.value = [];
-        docFormatCodeFilter.value = '';
-        dateField.value = 'updatedAt';
-        dateRange.value = null;
+        if (queue.value !== queueAtLastRestore) {
+            queueAtLastRestore = queue.value;
+            restoreFiltersFromQuery();
+        }
         void loadFormatCodeOptions();
         void loadPage();
     }
@@ -130,10 +191,16 @@ watch(
 
 watch(searchQuery, () => {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => void loadPage(), 300);
+    searchTimer = setTimeout(() => {
+        syncFiltersToQuery();
+        void loadPage();
+    }, 300);
 });
 
-watch([statusFilter, docFormatCodeFilter, dateField], () => void loadPage());
+watch([statusFilter, docFormatCodeFilter, dateField], () => {
+    syncFiltersToQuery();
+    void loadPage();
+});
 
 watch(
     () => (dateRange.value ? [dateRange.value[0], dateRange.value[1]] : [null, null]),
@@ -145,7 +212,10 @@ watch(
         // the API with a from-only filter.
         const cleared = !start && !end && (prevStart || prevEnd);
         const completed = start && end;
-        if (cleared || completed) void loadPage();
+        if (cleared || completed) {
+            syncFiltersToQuery();
+            void loadPage();
+        }
     }
 );
 
@@ -704,13 +774,26 @@ function selectInput(event) {
             </div>
         </div>
 
-        <DataTable :value="filteredDocuments" :loading="loading" dataKey="id" paginator :rows="10" responsiveLayout="scroll" stripedRows>
+        <DataTable
+            :value="filteredDocuments"
+            :loading="loading"
+            dataKey="id"
+            paginator
+            :rows="rowsPerPage"
+            :rowsPerPageOptions="rowsPerPageOptions"
+            responsiveLayout="scroll"
+            stripedRows
+            @update:rows="onRowsPerPageChange"
+        >
             <template #empty>
                 <div class="py-8 text-center text-muted-color">
                     {{ searchQuery ? 'ไม่พบเอกสารที่ค้นหา' : pageConfig.empty }}
                 </div>
             </template>
 
+            <Column header="ลำดับ" style="min-width: 4rem">
+                <template #body="{ index }">{{ index + 1 }}</template>
+            </Column>
             <Column field="docNo" header="เลขที่เอกสาร" sortable style="min-width: 16rem">
                 <template #body="{ data }">
                     <Button link class="p-0 font-bold text-left" @click="openDetail(data)">
@@ -719,6 +802,9 @@ function selectInput(event) {
                     <Tag v-if="isInternalDocument(data)" value="เอกสารภายใน" severity="info" class="ml-2" />
                     <Tag v-if="data.attemptNo > 1" :value="`ฉบับที่ ${data.attemptNo}`" severity="secondary" class="ml-2" />
                 </template>
+            </Column>
+            <Column field="departmentName" header="แผนก" sortable style="min-width: 10rem">
+                <template #body="{ data }">{{ data.departmentName || '-' }}</template>
             </Column>
             <Column field="docDate" header="วันที่เอกสาร" sortable style="min-width: 10rem">
                 <template #body="{ data }">{{ formatDocumentDate(data.docDate) }}</template>

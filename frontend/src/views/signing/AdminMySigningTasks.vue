@@ -3,6 +3,7 @@ import { api } from '@/services/api';
 import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
 import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
 import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
+import { useTableRowsPerPage } from '@/composables/useTableRowsPerPage';
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -10,6 +11,12 @@ import { useToast } from 'primevue/usetoast';
 const router = useRouter();
 const toast = useToast();
 
+const { rowsPerPage: readyRowsPerPage, rowsPerPageOptions: readyRowsPerPageOptions, onRowsPerPageChange: onReadyRowsPerPageChange } = useTableRowsPerPage(
+    'admin-my-signing-tasks-ready'
+);
+const { rowsPerPage: waitingRowsPerPage, rowsPerPageOptions: waitingRowsPerPageOptions, onRowsPerPageChange: onWaitingRowsPerPageChange } = useTableRowsPerPage(
+    'admin-my-signing-tasks-waiting'
+);
 const readyDocuments = ref([]);
 const waitingDocuments = ref([]);
 const counts = ref({ ready: 0, waiting: 0 });
@@ -212,7 +219,17 @@ function normalizeSearch(value) {
             </TabList>
             <TabPanels>
                 <TabPanel value="ready">
-                    <DataTable :value="filteredReadyRows" :loading="loading" dataKey="rowKey" paginator :rows="10" responsiveLayout="scroll" stripedRows>
+                    <DataTable
+                        :value="filteredReadyRows"
+                        :loading="loading"
+                        dataKey="rowKey"
+                        paginator
+                        :rows="readyRowsPerPage"
+                        :rowsPerPageOptions="readyRowsPerPageOptions"
+                        responsiveLayout="scroll"
+                        stripedRows
+                        @update:rows="onReadyRowsPerPageChange"
+                    >
                         <template #empty>
                             <div class="py-8 text-center text-muted-color">
                                 {{ searchQuery ? 'ไม่พบงานที่เซ็นได้จากคำค้นนี้' : 'ยังไม่มีงานที่ต้องเซ็นในฐานข้อมูลนี้' }}
@@ -256,7 +273,17 @@ function normalizeSearch(value) {
                 </TabPanel>
 
                 <TabPanel value="waiting">
-                    <DataTable :value="filteredWaitingRows" :loading="loading" dataKey="rowKey" paginator :rows="10" responsiveLayout="scroll" stripedRows>
+                    <DataTable
+                        :value="filteredWaitingRows"
+                        :loading="loading"
+                        dataKey="rowKey"
+                        paginator
+                        :rows="waitingRowsPerPage"
+                        :rowsPerPageOptions="waitingRowsPerPageOptions"
+                        responsiveLayout="scroll"
+                        stripedRows
+                        @update:rows="onWaitingRowsPerPageChange"
+                    >
                         <template #empty>
                             <div class="py-8 text-center text-muted-color">
                                 {{ searchQuery ? 'ไม่พบเอกสารรอคิวจากคำค้นนี้' : 'ไม่มีเอกสารที่รอคิวของคุณ' }}

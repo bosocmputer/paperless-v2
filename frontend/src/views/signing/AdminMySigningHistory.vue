@@ -3,6 +3,7 @@ import { api } from '@/services/api';
 import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStatusSeverity } from '@/utils/signingFormatters';
 import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
 import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
+import { useTableRowsPerPage } from '@/composables/useTableRowsPerPage';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
@@ -10,9 +11,9 @@ import { useToast } from 'primevue/usetoast';
 const router = useRouter();
 const toast = useToast();
 
+const { rowsPerPage: size, rowsPerPageOptions } = useTableRowsPerPage('admin-my-signing-history');
 const documents = ref([]);
 const page = ref(1);
-const size = ref(10);
 const total = ref(0);
 const loading = ref(false);
 const searchQuery = ref('');
@@ -151,7 +152,7 @@ function rejectReason(row) {
             :rows="size"
             :first="firstRow"
             :totalRecords="total"
-            :rowsPerPageOptions="[10, 20, 50]"
+            :rowsPerPageOptions="rowsPerPageOptions"
             responsiveLayout="scroll"
             stripedRows
             @page="onPage"

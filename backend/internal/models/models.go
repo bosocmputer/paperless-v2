@@ -580,6 +580,8 @@ type SMLDocumentCandidate struct {
 	PartyCode      string  `json:"party_code"`
 	PartyName      string  `json:"party_name"`
 	PartyType      string  `json:"party_type"`
+	DepartmentCode string  `json:"department_code"`
+	DepartmentName string  `json:"department_name"`
 	TotalAmount    float64 `json:"total_amount"`
 	IsLockRecord   int     `json:"is_lock_record"`
 	SourceRevision string  `json:"source_revision,omitempty"`
@@ -729,6 +731,8 @@ type SigningDocument struct {
 	PartyCode           string                       `json:"partyCode"`
 	PartyName           string                       `json:"partyName"`
 	PartyType           string                       `json:"partyType"`
+	DepartmentCode      string                       `json:"departmentCode"`
+	DepartmentName      string                       `json:"departmentName"`
 	DocDate             string                       `json:"docDate"`
 	TotalAmount         float64                      `json:"totalAmount"`
 	SMLIsLockRecord     int                          `json:"smlIsLockRecord"`

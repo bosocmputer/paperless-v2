@@ -227,14 +227,16 @@ LIMIT 1
 INSERT INTO signing_documents (
     document_source, internal_document_id, sml_tenant, sml_data_group, sml_data_code,
     screen_code, doc_format_code, doc_no, sml_table, trans_flag, party_code, party_name, party_type,
+    department_code, department_name,
     doc_date, total_amount, sml_is_lock_record, status, attempt_no, previous_document_id, sml_source_revision, sml_source_checked_at, current_version,
     original_file_id, current_file_id, signature_template_id, config_snapshot, template_snapshot, legal_notice_snapshot,
 	    signature_placement_snapshot, legal_notice_boxes_snapshot, sign_note_placement_snapshot, layout_ready, created_by
 )
-VALUES ($1,NULLIF($2,'')::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NULLIF($14,'')::date,$15,$16,'draft',$17,NULLIF($18,'')::uuid,$19,CASE WHEN $19='' THEN NULL ELSE now() END,1,$20,$21,NULLIF($22,'')::uuid,$23::jsonb,$24::jsonb,$25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,$29,NULLIF($30,'')::uuid)
+VALUES ($1,NULLIF($2,'')::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,'')::date,$17,$18,'draft',$19,NULLIF($20,'')::uuid,$21,CASE WHEN $21='' THEN NULL ELSE now() END,1,$22,$23,NULLIF($24,'')::uuid,$25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,$29::jsonb,$30::jsonb,$31,NULLIF($32,'')::uuid)
 RETURNING id::text
 	`, documentSource, input.InternalDocumentID, tenant, dataGroup, dataCode, input.ScreenCode, input.Format.Code, input.Candidate.DocNo, input.Candidate.Table, input.Candidate.TransFlag,
-		input.Candidate.PartyCode, input.Candidate.PartyName, input.Candidate.PartyType, input.Candidate.DocDate,
+		input.Candidate.PartyCode, input.Candidate.PartyName, input.Candidate.PartyType,
+		input.Candidate.DepartmentCode, input.Candidate.DepartmentName, input.Candidate.DocDate,
 		input.Candidate.TotalAmount, input.Candidate.IsLockRecord, attemptNo, previousDocumentID, sourceRevision, input.File.ID, currentFileID, input.SignatureTemplateID,
 		string(configSnapshot), string(templateSnapshot), string(legalNoticeSnapshot), string(signaturePlacementSnapshot), string(legalNoticeBoxesSnapshot), string(signNotePlacementSnapshot), !input.AllowEmptyDraftLayout, input.ActorID).Scan(&documentID)
 	if err != nil {
@@ -3082,7 +3084,7 @@ func signingDocumentSelect() string {
 SELECT d.id::text, d.attempt_no, COALESCE(d.previous_document_id::text,''), COALESCE(nd.id::text,''), COALESCE(d.sml_source_revision,''), d.sml_source_checked_at,
        d.document_source, COALESCE(d.internal_document_id::text,''), d.sml_tenant, d.sml_data_group, d.sml_data_code,
        d.screen_code, d.doc_format_code, d.doc_no, d.sml_table, d.trans_flag,
-       d.party_code, d.party_name, d.party_type, COALESCE(d.doc_date::text,''), d.total_amount,
+       d.party_code, d.party_name, d.party_type, d.department_code, d.department_name, COALESCE(d.doc_date::text,''), d.total_amount,
        d.sml_is_lock_record, d.status, d.current_version,
        COALESCE(d.original_file_id::text,''), COALESCE(d.current_file_id::text,''), COALESCE(d.final_file_id::text,''),
        COALESCE(d.signature_template_id::text,''), COALESCE(d.created_by::text,''),
@@ -3141,7 +3143,7 @@ func scanSigningDocument(row rowScanner) (models.SigningDocument, error) {
 		&doc.ID, &doc.AttemptNo, &doc.PreviousDocumentID, &doc.NextDocumentID, &doc.SMLSourceRevision, &sourceCheckedAt,
 		&doc.DocumentSource, &doc.InternalDocumentID, &doc.SMLTenant, &doc.SMLDataGroup, &doc.SMLDataCode,
 		&doc.ScreenCode, &doc.DocFormatCode, &doc.DocNo, &doc.SMLTable, &doc.TransFlag,
-		&doc.PartyCode, &doc.PartyName, &doc.PartyType, &doc.DocDate, &doc.TotalAmount,
+		&doc.PartyCode, &doc.PartyName, &doc.PartyType, &doc.DepartmentCode, &doc.DepartmentName, &doc.DocDate, &doc.TotalAmount,
 		&doc.SMLIsLockRecord, &doc.Status, &doc.CurrentVersion,
 		&doc.OriginalFileID, &doc.CurrentFileID, &doc.FinalFileID, &doc.SignatureTemplateID, &doc.CreatedBy,
 		&doc.CreatedAt, &doc.UpdatedAt, &completedAt, &lockedAt, &configSnapshotRaw, &legalNoticeRaw, &signaturePlacementsRaw, &legalNoticeBoxesRaw, &signNotePlacementsRaw, &doc.LayoutReady,
