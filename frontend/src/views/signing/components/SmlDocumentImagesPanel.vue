@@ -18,7 +18,6 @@ const loading = ref(false);
 const errorCode = ref('');
 const images = ref([]);
 const activeIndex = ref(0);
-const loadedCount = ref(0);
 
 // Blob URLs are revoked on teardown; keeping them keyed by page number means a
 // page already fetched is never fetched twice while the panel stays open.
@@ -36,15 +35,25 @@ const imageCount = computed(() => images.value.length);
 const hasImages = computed(() => imageCount.value > 0);
 const activeImage = computed(() => images.value[activeIndex.value] || null);
 
+// Each state gets the message that tells the viewer what to do next, rather than
+// a bare "no images" that leaves them calling support.
 const emptyMessage = computed(() => {
-    const status = String(props.documentStatus || '').trim();
-    if (status === 'completed_image_failed') {
-        return 'ส่งรูปเข้า SML ไม่สำเร็จ — กดปุ่ม "ส่งรูป SML อีกครั้ง" ด้านบนเพื่อลองใหม่';
+    switch (String(props.documentStatus || '').trim()) {
+        case 'completed_image_failed':
+            return 'ส่งรูปเข้า SML ไม่สำเร็จ — กดปุ่ม "ส่งรูป SML อีกครั้ง" ด้านบนเพื่อลองใหม่';
+        case 'completed_evidence_failed':
+            return 'ยังสร้าง PDF หลักฐานไม่สำเร็จ จึงยังไม่ได้ส่งรูปเข้า SML — กดปุ่ม "สร้าง PDF อีกครั้ง" ด้านบน';
+        case 'completed_lock_failed':
+            // The images were pushed before the lock step, so an empty gallery here
+            // means something else went wrong and a reload is the useful action.
+            return 'ยังไม่พบรูปในระบบ SML สำหรับเอกสารนี้ — ลองโหลดใหม่อีกครั้ง';
+        case 'completed':
+            return 'ยังไม่มีรูปในระบบ SML สำหรับเอกสารนี้';
+        case '':
+            return 'ยังไม่มีรูปในระบบ SML สำหรับเอกสารนี้';
+        default:
+            return 'เอกสารต้องลงนามให้เสร็จก่อน จึงจะมีรูปในระบบ SML';
     }
-    if (status && status !== 'completed' && !status.startsWith('completed')) {
-        return 'เอกสารต้องลงนามให้เสร็จก่อน จึงจะมีรูปในระบบ SML';
-    }
-    return 'ยังไม่มีรูปในระบบ SML สำหรับเอกสารนี้';
 });
 
 const errorMessage = computed(() => {
@@ -81,7 +90,6 @@ function resetState() {
     failedPages.value = new Set();
     images.value = [];
     activeIndex.value = 0;
-    loadedCount.value = 0;
     errorCode.value = '';
     emit('update:count', 0);
 }
@@ -137,7 +145,6 @@ async function loadPage(index) {
         const next = new Map(objectUrls.value);
         next.set(pageNo, URL.createObjectURL(blob));
         objectUrls.value = next;
-        loadedCount.value = next.size;
         const stillFailed = new Set(failedPages.value);
         stillFailed.delete(pageNo);
         failedPages.value = stillFailed;
@@ -183,8 +190,11 @@ function formatBytes(bytes) {
     return `${value} B`;
 }
 
+// Watching a string key rather than an array literal: an array getter allocates
+// a fresh array on every parent re-render, which Vue reads as a change and would
+// re-run the whole listing each time.
 watch(
-    () => [props.documentId, props.enabled],
+    () => `${props.enabled ? '1' : '0'}:${props.documentId}`,
     () => {
         loadList();
     },
