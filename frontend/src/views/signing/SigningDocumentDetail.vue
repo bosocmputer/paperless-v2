@@ -74,6 +74,9 @@ const isInternalDocument = computed(() => document.value?.documentSource === 'in
 // The SML gallery is the only place every image can be seen, because SML ERP's
 // own screen stops at 8 - but internal documents never reach SML at all.
 const showSMLImagesTab = computed(() => !isInternalDocument.value && !!document.value?.docNo);
+// The panel needs the id before the document resolves too, so it falls back to
+// the route the same way the attachment URL helper already does.
+const smlImagesDocumentId = computed(() => document.value?.id || route.params.id || '');
 const smlImagesTabOpened = ref(false);
 const smlImageCount = ref(0);
 const smlImageCountLabel = computed(() => (smlImageCount.value > 0 ? ` (${smlImageCount.value})` : ''));
@@ -940,8 +943,7 @@ function movementEventView(event) {
                         </TabPanel>
                         <TabPanel v-if="showSMLImagesTab" value="sml-images">
                             <SmlDocumentImagesPanel
-                                ref="smlImagesPanel"
-                                :document-id="documentId"
+                                :document-id="smlImagesDocumentId"
                                 :enabled="smlImagesTabOpened"
                                 :document-status="document?.status || ''"
                                 @update:count="onSMLImageCount"
