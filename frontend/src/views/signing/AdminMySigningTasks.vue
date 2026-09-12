@@ -243,6 +243,9 @@ function normalizeSearch(value) {
                         <Column header="คู่ค้า" style="min-width: 14rem">
                             <template #body="{ data }">{{ partyLine(data.doc) }}</template>
                         </Column>
+                        <Column header="แผนก" style="min-width: 10rem">
+                            <template #body="{ data }">{{ data.doc.departmentName || '-' }}</template>
+                        </Column>
                         <Column header="วันที่เอกสาร" style="min-width: 10rem">
                             <template #body="{ data }">{{ formatDocumentDate(data.doc.docDate) }}</template>
                         </Column>
@@ -296,6 +299,9 @@ function normalizeSearch(value) {
                         </Column>
                         <Column header="คู่ค้า" style="min-width: 14rem">
                             <template #body="{ data }">{{ partyLine(data.doc) }}</template>
+                        </Column>
+                        <Column header="แผนก" style="min-width: 10rem">
+                            <template #body="{ data }">{{ data.doc.departmentName || '-' }}</template>
                         </Column>
                         <Column header="วันที่เอกสาร" style="min-width: 10rem">
                             <template #body="{ data }">{{ formatDocumentDate(data.doc.docDate) }}</template>
