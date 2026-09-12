@@ -34,13 +34,31 @@ watch(
 </script>
 
 <template>
-    <Dialog v-model:visible="open" :header="title" modal dismissableMask :style="{ width: '76rem' }" :breakpoints="{ '1280px': '92vw', '768px': '96vw' }" contentClass="sml-images-dialog-content">
+    <Dialog
+        v-model:visible="open"
+        :header="title"
+        modal
+        dismissableMask
+        class="sml-images-dialog"
+        :style="{ width: '76rem', height: '88dvh' }"
+        :breakpoints="{ '1280px': '92vw', '768px': '96vw' }"
+        contentClass="sml-images-dialog-content"
+    >
         <SmlDocumentImagesPanel :document-id="documentId" :enabled="visible" :document-status="documentStatus" @update:count="imageCount = $event" />
     </Dialog>
 </template>
 
 <style scoped>
-:deep(.sml-images-dialog-content) {
+/* Dialog is teleported out of this component's tree, so its internals are only
+   reachable with :global - the same approach ReadOnlyPdfDialog already uses.
+   Pinning the content height is what lets the gallery size to the space left
+   over; without it the content grows past the dialog and the whole dialog
+   scrolls, which is wrong for a viewer you page through. */
+:global(.sml-images-dialog .p-dialog-content) {
+    height: calc(88dvh - 5rem);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     padding-top: 0.5rem;
 }
 </style>
