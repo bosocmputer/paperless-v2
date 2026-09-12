@@ -11,6 +11,7 @@ import DocumentLayoutDesigner from '@/views/signing/components/DocumentLayoutDes
 import DocumentReferenceCheck from '@/views/signing/components/DocumentReferenceCheck.vue';
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
+import SmlDocumentImagesPanel from '@/views/signing/components/SmlDocumentImagesPanel.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
@@ -69,6 +70,33 @@ const documentHeaderLine = computed(() => {
 });
 const canViewEvidencePDF = computed(() => document.value?.status === 'completed' && Boolean(document.value?.finalFileId || document.value?.finalFile));
 const isInternalDocument = computed(() => document.value?.documentSource === 'internal');
+
+// The SML gallery is the only place every image can be seen, because SML ERP's
+// own screen stops at 8 - but internal documents never reach SML at all.
+const showSMLImagesTab = computed(() => !isInternalDocument.value && !!document.value?.docNo);
+const smlImagesTabOpened = ref(false);
+const smlImageCount = ref(0);
+const smlImageCountLabel = computed(() => (smlImageCount.value > 0 ? ` (${smlImageCount.value})` : ''));
+
+function onSMLImageCount(count) {
+    smlImageCount.value = Number(count) || 0;
+}
+
+// Nothing is fetched until the viewer actually opens the tab, so documents that
+// are never inspected cost no SML round-trip at all.
+watch(activeTab, (value) => {
+    if (value === 'sml-images') smlImagesTabOpened.value = true;
+});
+
+// A different document must start from scratch rather than showing the previous
+// document's count while its own images are still loading.
+watch(
+    () => document.value?.id,
+    () => {
+        smlImagesTabOpened.value = activeTab.value === 'sml-images';
+        smlImageCount.value = 0;
+    }
+);
 const internalLayoutReady = computed(() => !isInternalDocument.value || document.value?.layoutReady === true);
 const needsLegacyInternalLayout = computed(() => isInternalDocument.value && document.value?.status === 'draft' && !internalLayoutReady.value);
 const canManageLegacyInternalLayout = computed(() => needsLegacyInternalLayout.value && authStore.user?.role === 'superadmin');
@@ -846,6 +874,7 @@ function movementEventView(event) {
                         <Tab value="progress">ความคืบหน้า</Tab>
                         <Tab v-if="!isInternalDocument" value="references">ตรวจสอบเอกสาร</Tab>
                         <Tab value="attachments">ไฟล์แนบอ้างอิง ({{ documentAttachmentCount }})</Tab>
+                        <Tab v-if="showSMLImagesTab" value="sml-images">รูปใน SML{{ smlImageCountLabel }}</Tab>
                         <Tab value="print">พิมพ์</Tab>
                         <Tab value="events">เหตุการณ์</Tab>
                     </TabList>
@@ -904,6 +933,15 @@ function movementEventView(event) {
                                 :headers="api.authHeaders()"
                                 :on-reload="loadDocumentAttachments"
                                 :file-url-resolver="documentAttachmentFileUrl"
+                            />
+                        </TabPanel>
+                        <TabPanel v-if="showSMLImagesTab" value="sml-images">
+                            <SmlDocumentImagesPanel
+                                ref="smlImagesPanel"
+                                :document-id="documentId"
+                                :enabled="smlImagesTabOpened"
+                                :document-status="document?.status || ''"
+                                @update:count="onSMLImageCount"
                             />
                         </TabPanel>
                         <TabPanel value="print">
