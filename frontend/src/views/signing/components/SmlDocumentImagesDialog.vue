@@ -40,8 +40,7 @@ watch(
         modal
         dismissableMask
         class="sml-images-dialog"
-        :style="{ width: '76rem', height: '88dvh' }"
-        :breakpoints="{ '1280px': '92vw', '768px': '96vw' }"
+        :style="{ width: '98vw', height: '96dvh' }"
         contentClass="sml-images-dialog-content"
     >
         <SmlDocumentImagesPanel :document-id="documentId" :enabled="visible" :document-status="documentStatus" @update:count="imageCount = $event" />
@@ -55,7 +54,7 @@ watch(
    over; without it the content grows past the dialog and the whole dialog
    scrolls, which is wrong for a viewer you page through. */
 :global(.sml-images-dialog .p-dialog-content) {
-    height: calc(88dvh - 5rem);
+    height: calc(96dvh - 5rem);
     display: flex;
     flex-direction: column;
     overflow: hidden;

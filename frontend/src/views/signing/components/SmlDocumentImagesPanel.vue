@@ -270,8 +270,9 @@ const imageTransform = computed(() => ({
 }));
 
 const galleriaResponsiveOptions = [
-    { breakpoint: '1280px', numVisible: 6 },
-    { breakpoint: '1024px', numVisible: 5 },
+    { breakpoint: '1600px', numVisible: 10 },
+    { breakpoint: '1280px', numVisible: 8 },
+    { breakpoint: '1024px', numVisible: 6 },
     { breakpoint: '960px', numVisible: 4 },
     { breakpoint: '768px', numVisible: 3 },
     { breakpoint: '560px', numVisible: 1 }
@@ -329,7 +330,7 @@ defineExpose({ reload: loadList });
             <Galleria
                 :value="images"
                 :activeIndex="activeIndex"
-                :numVisible="8"
+                :numVisible="12"
                 :responsiveOptions="galleriaResponsiveOptions"
                 :circular="false"
                 :showItemNavigators="imageCount > 1"
