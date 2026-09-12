@@ -84,6 +84,7 @@ function abortPageRequests() {
 }
 
 function resetState() {
+    resetZoom();
     abortPageRequests();
     releaseObjectUrls();
     failedPages.value = new Set();
@@ -178,6 +179,9 @@ async function loadRemainingPages() {
 
 function onActiveIndexChange(index) {
     activeIndex.value = index;
+    // A new page starts unmagnified; carrying a zoom across pages leaves the
+    // viewer looking at an arbitrary corner of a document they just opened.
+    resetZoom();
     // Still requested directly: a page the background pass has not reached yet
     // should jump the queue when the viewer navigates straight to it.
     loadPage(index);
@@ -197,6 +201,74 @@ function urlFor(pageNo) {
 
 // Thumbnail counts follow the sakai-vue Galleria reference so the strip degrades
 // the same way the rest of the UI kit does on narrow screens.
+const SML_ZOOM_MIN = 1;
+const SML_ZOOM_MAX = 4;
+const SML_ZOOM_STEP = 0.25;
+
+// Page scans are shown fit-to-dialog, which is too small to read a bank slip or
+// a signature block - so the viewer needs to magnify and then move around.
+const zoom = ref(1);
+const panX = ref(0);
+const panY = ref(0);
+const zoomed = computed(() => zoom.value > 1);
+let panFrom = null;
+
+function clampZoom(value) {
+    return Math.min(SML_ZOOM_MAX, Math.max(SML_ZOOM_MIN, Math.round(value * 100) / 100));
+}
+
+function resetZoom() {
+    zoom.value = 1;
+    panX.value = 0;
+    panY.value = 0;
+}
+
+function setZoom(value) {
+    const next = clampZoom(value);
+    if (next === 1) {
+        resetZoom();
+        return;
+    }
+    zoom.value = next;
+}
+
+function onWheelZoom(event) {
+    // Plain scrolling is left alone; only a deliberate ctrl/⌘ + wheel zooms, the
+    // gesture browsers already use for zooming.
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    setZoom(zoom.value + (event.deltaY < 0 ? SML_ZOOM_STEP : -SML_ZOOM_STEP));
+}
+
+// While magnified, a drag pans the page - so the touch stream must not also
+// reach Galleria, which reads a swipe there as "change page".
+function onTouchGuard(event) {
+    if (zoomed.value) event.stopPropagation();
+}
+
+function onPanStart(event) {
+    if (!zoomed.value || event.button !== 0) return;
+    event.preventDefault();
+    panFrom = { x: event.clientX - panX.value, y: event.clientY - panY.value };
+    window.addEventListener('pointermove', onPanMove);
+    window.addEventListener('pointerup', onPanEnd, { once: true });
+}
+
+function onPanMove(event) {
+    if (!panFrom) return;
+    panX.value = event.clientX - panFrom.x;
+    panY.value = event.clientY - panFrom.y;
+}
+
+function onPanEnd() {
+    panFrom = null;
+    window.removeEventListener('pointermove', onPanMove);
+}
+
+const imageTransform = computed(() => ({
+    transform: `translate(${panX.value}px, ${panY.value}px) scale(${zoom.value})`
+}));
+
 const galleriaResponsiveOptions = [
     { breakpoint: '1280px', numVisible: 6 },
     { breakpoint: '1024px', numVisible: 5 },
@@ -217,6 +289,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+    onPanEnd();
     listController?.abort();
     abortPageRequests();
     releaseObjectUrls();
@@ -245,6 +318,14 @@ defineExpose({ reload: loadList });
         </div>
 
         <template v-else>
+            <div class="sml-zoom-bar">
+                <Button class="sml-zoom-step" icon="pi pi-search-minus" severity="secondary" text rounded :disabled="zoom <= 1" aria-label="ซูมออก" @click="setZoom(zoom - 0.25)" />
+                <span class="sml-zoom-value">{{ Math.round(zoom * 100) }}%</span>
+                <Button class="sml-zoom-step" icon="pi pi-search-plus" severity="secondary" text rounded :disabled="zoom >= 4" aria-label="ซูมเข้า" @click="setZoom(zoom + 0.25)" />
+                <Button label="พอดีจอ" icon="pi pi-arrows-alt" severity="secondary" text size="small" :disabled="zoom === 1" @click="resetZoom" />
+                <span class="sml-zoom-hint">ลากเพื่อเลื่อน · Ctrl/⌘ + ล้อเมาส์ เพื่อซูม</span>
+            </div>
+
             <Galleria
                 :value="images"
                 :activeIndex="activeIndex"
@@ -258,8 +339,22 @@ defineExpose({ reload: loadList });
                 @update:activeIndex="onActiveIndexChange"
             >
                 <template #item="slotProps">
-                    <div class="sml-image-frame">
-                        <img v-if="urlFor(slotProps.item.page_no)" :src="urlFor(slotProps.item.page_no)" :alt="`หน้า ${slotProps.item.page_no}`" class="sml-image" />
+                    <div
+                        class="sml-image-frame"
+                        :class="{ 'sml-image-frame-zoomed': zoomed }"
+                        @wheel="onWheelZoom"
+                        @pointerdown="onPanStart"
+                        @touchstart.capture="onTouchGuard"
+                        @touchmove.capture="onTouchGuard"
+                    >
+                        <img
+                            v-if="urlFor(slotProps.item.page_no)"
+                            :src="urlFor(slotProps.item.page_no)"
+                            :alt="`หน้า ${slotProps.item.page_no}`"
+                            class="sml-image"
+                            :style="imageTransform"
+                            draggable="false"
+                        />
                         <div v-else-if="failedPages.has(slotProps.item.page_no)" class="sml-image-failed">
                             <i class="pi pi-exclamation-triangle" />
                             <span>โหลดรูปหน้า {{ slotProps.item.page_no }} ไม่สำเร็จ</span>
@@ -284,6 +379,25 @@ defineExpose({ reload: loadList });
 </template>
 
 <style scoped>
+.sml-zoom-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.sml-zoom-value {
+    min-width: 3.25rem;
+    text-align: center;
+    font-size: 0.875rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.sml-zoom-hint {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: var(--text-color-secondary);
+}
+
 .sml-images-panel {
     display: flex;
     flex-direction: column;
@@ -327,6 +441,18 @@ defineExpose({ reload: loadList });
     width: 100%;
     background: var(--surface-100);
     border-radius: 6px;
+    /* Keeps a magnified page inside the frame instead of spilling over the
+       thumbnail strip and the dialog edges. */
+    overflow: hidden;
+    touch-action: none;
+}
+
+.sml-image-frame-zoomed {
+    cursor: grab;
+}
+
+.sml-image-frame-zoomed:active {
+    cursor: grabbing;
 }
 
 .sml-image {
@@ -334,6 +460,9 @@ defineExpose({ reload: loadList });
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
+    transform-origin: center center;
+    user-select: none;
+    -webkit-user-drag: none;
 }
 
 .sml-image-failed,
