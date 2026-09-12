@@ -33,7 +33,6 @@ let requestToken = 0;
 
 const imageCount = computed(() => images.value.length);
 const hasImages = computed(() => imageCount.value > 0);
-const activeImage = computed(() => images.value[activeIndex.value] || null);
 
 // Each state gets the message that tells the viewer what to do next, rather than
 // a bare "no images" that leaves them calling support.
@@ -116,8 +115,11 @@ async function loadList() {
         images.value = Array.isArray(response?.images) ? response.images : [];
         emit('update:count', images.value.length);
         if (hasImages.value) {
+            // The first page is awaited so the viewer sees something immediately;
+            // the rest follow in the background so every thumbnail fills in and
+            // paging never waits on a fetch.
             await loadPage(0);
-            prefetchNeighbour(0);
+            loadRemainingPages();
         }
     } catch (error) {
         if (isAbortError(error) || token !== requestToken) return;
@@ -159,16 +161,26 @@ async function loadPage(index) {
     }
 }
 
-// Fetching the next page while the viewer looks at the current one makes the
-// arrow keys feel instant without loading the whole document up front.
-function prefetchNeighbour(index) {
-    if (index + 1 < images.value.length) loadPage(index + 1);
+// Every page is fetched, a few at a time, so the thumbnail strip is complete and
+// paging is instant. Concurrency is capped because a document can hold dozens of
+// images and the browser would otherwise open a connection for each at once.
+async function loadRemainingPages() {
+    const token = requestToken;
+    const queue = images.value.map((_, index) => index).filter((index) => index !== 0);
+    const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+        while (queue.length) {
+            if (token !== requestToken) return;
+            await loadPage(queue.shift());
+        }
+    });
+    await Promise.all(workers);
 }
 
 function onActiveIndexChange(index) {
     activeIndex.value = index;
+    // Still requested directly: a page the background pass has not reached yet
+    // should jump the queue when the viewer navigates straight to it.
     loadPage(index);
-    prefetchNeighbour(index);
 }
 
 function retryPage(pageNo) {
@@ -192,13 +204,6 @@ const galleriaResponsiveOptions = [
     { breakpoint: '768px', numVisible: 3 },
     { breakpoint: '560px', numVisible: 1 }
 ];
-
-function formatBytes(bytes) {
-    const value = Number(bytes) || 0;
-    if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-    if (value >= 1024) return `${Math.round(value / 1024)} KB`;
-    return `${value} B`;
-}
 
 // Watching a string key rather than an array literal: an array getter allocates
 // a fresh array on every parent re-render, which Vue reads as a change and would
@@ -240,11 +245,6 @@ defineExpose({ reload: loadList });
         </div>
 
         <template v-else>
-            <div class="sml-images-summary">
-                <span>ทั้งหมด {{ imageCount }} รูป <span class="sml-images-note">(SML ERP แสดงได้เพียง 8 รูปแรก)</span></span>
-                <span v-if="activeImage" class="sml-images-meta"> หน้า {{ activeImage.page_no }} · {{ formatBytes(activeImage.bytes) }} </span>
-            </div>
-
             <Galleria
                 :value="images"
                 :activeIndex="activeIndex"
@@ -316,20 +316,6 @@ defineExpose({ reload: loadList });
     flex-wrap: wrap;
 }
 
-.sml-images-summary {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.5rem;
-    font-size: 0.875rem;
-    font-weight: 600;
-}
-
-.sml-images-meta {
-    font-weight: 400;
-    color: var(--text-color-secondary);
-}
-
 .sml-image-frame {
     display: flex;
     align-items: center;
@@ -366,34 +352,50 @@ defineExpose({ reload: loadList });
     color: var(--p-amber-500, #f59e0b);
 }
 
+/* Page scans are almost entirely white, so a thumbnail needs a dark ground and
+   a border to read as a separate item rather than blending into its neighbours
+   and into the strip behind them. */
 .sml-thumb {
     display: flex;
     align-items: center;
     justify-content: center;
     width: 68px;
     height: 68px;
+    padding: 3px;
+    margin: 0 3px;
     overflow: hidden;
-    background: var(--surface-200);
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(0, 0, 0, 0.45);
     border-radius: 4px;
+    transition: border-color 0.15s ease;
+}
+
+.sml-thumb:hover {
+    border-color: var(--primary-color, #10b981);
 }
 
 .sml-thumb img {
     width: 100%;
     height: 100%;
     object-fit: cover;
+    /* Sits inside the padding so the dark ground shows as a frame. */
+    border-radius: 2px;
+    background: #fff;
 }
 
 .sml-thumb-failed {
-    outline: 1px solid var(--p-amber-500, #f59e0b);
+    border-color: var(--p-amber-500, #f59e0b);
+}
+
+/* PrimeVue owns the thumbnail wrapper and the class marking the current one, so
+   the highlight is drawn on that wrapper - a fully global selector, since none
+   of these elements carry this component's scope attribute. */
+:global(.sml-galleria .p-galleria-thumbnail-item-current .sml-thumb) {
+    border-color: var(--primary-color, #10b981) !important;
+    background: rgba(0, 0, 0, 0.55) !important;
 }
 
 .sml-thumb-placeholder {
-    font-size: 0.75rem;
-    color: var(--text-color-secondary);
-}
-
-.sml-images-note {
-    font-weight: 400;
     font-size: 0.75rem;
     color: var(--text-color-secondary);
 }
