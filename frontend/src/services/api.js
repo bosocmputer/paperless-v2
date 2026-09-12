@@ -497,6 +497,14 @@ export const api = {
             body: JSON.stringify(body)
         });
     },
+    listSigningDocumentSMLImages(id, options = {}) {
+        return request(`/api/signing-documents/${id}/sml-images`, { signal: options.signal });
+    },
+
+    signingDocumentSMLImageBlob(id, pageNo, options = {}) {
+        return requestBlob(`/api/signing-documents/${id}/sml-images/${pageNo}/file`, { signal: options.signal });
+    },
+
     retrySigningDocumentImages(id, payload = {}) {
         const { body, headers } = splitIdempotencyPayload(payload);
         return request(`/api/signing-documents/${id}/retry-sml-images`, {

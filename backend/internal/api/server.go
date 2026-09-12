@@ -122,6 +122,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/signing-documents/{id}/reference-check", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.getSigningDocumentReferenceCheck)))
 	mux.Handle("GET /api/signing-documents/{id}/attachments", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.listSigningDocumentAttachments)))
 	mux.Handle("GET /api/signing-documents/{id}/attachments/{attachmentId}/file", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.getSigningDocumentAttachmentFile)))
+	mux.Handle("GET /api/signing-documents/{id}/sml-images", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.listSigningDocumentSMLImages)))
+	mux.Handle("GET /api/signing-documents/{id}/sml-images/{pageNo}/file", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.getSigningDocumentSMLImageFile)))
 	mux.Handle("GET /api/signing-documents/{id}/pdf", s.requireAuth(http.HandlerFunc(s.getSigningDocumentPDF)))
 	mux.Handle("PUT /api/signing-documents/{id}/layout", s.requireMenuPermission("signing-document-drafts")(http.HandlerFunc(s.saveInternalDraftLayout)))
 	mux.Handle("POST /api/signing-documents/{id}/send", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.sendSigningDocument)))
