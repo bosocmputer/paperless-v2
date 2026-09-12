@@ -11,7 +11,7 @@ import DocumentLayoutDesigner from '@/views/signing/components/DocumentLayoutDes
 import DocumentReferenceCheck from '@/views/signing/components/DocumentReferenceCheck.vue';
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
-import SmlDocumentImagesPanel from '@/views/signing/components/SmlDocumentImagesPanel.vue';
+import SmlDocumentImagesDialog from '@/views/signing/components/SmlDocumentImagesDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
@@ -73,34 +73,23 @@ const isInternalDocument = computed(() => document.value?.documentSource === 'in
 
 // The SML gallery is the only place every image can be seen, because SML ERP's
 // own screen stops at 8 - but internal documents never reach SML at all.
-const showSMLImagesTab = computed(() => !isInternalDocument.value && !!document.value?.docNo);
+const canViewSMLImages = computed(() => !isInternalDocument.value && !!document.value?.docNo);
 // The panel needs the id before the document resolves too, so it falls back to
 // the route the same way the attachment URL helper already does.
 const smlImagesDocumentId = computed(() => document.value?.id || route.params.id || '');
-const smlImagesTabOpened = ref(false);
-const smlImageCount = ref(0);
-const smlImageCountLabel = computed(() => (smlImageCount.value > 0 ? ` (${smlImageCount.value})` : ''));
+const smlImagesDialog = ref(false);
 
-function onSMLImageCount(count) {
-    smlImageCount.value = Number(count) || 0;
+function openSMLImages() {
+    smlImagesDialog.value = true;
 }
 
-// Nothing is fetched until the viewer actually opens the tab, so documents that
-// are never inspected cost no SML round-trip at all.
-watch(activeTab, (value) => {
-    if (value === 'sml-images') smlImagesTabOpened.value = true;
-});
-
-// A different document must start from scratch rather than showing the previous
-// document's count while its own images are still loading. This only fires when
-// one document is replaced by another - the first load goes from no document to
-// a document, which must not clear a tab the viewer has already opened.
+// Switching to another document closes a gallery left open, so its images can
+// never be mistaken for the document now on screen.
 watch(
     () => document.value?.id,
     (id, previousId) => {
         if (!previousId || id === previousId) return;
-        smlImagesTabOpened.value = activeTab.value === 'sml-images';
-        smlImageCount.value = 0;
+        smlImagesDialog.value = false;
     }
 );
 const internalLayoutReady = computed(() => !isInternalDocument.value || document.value?.layoutReady === true);
@@ -852,6 +841,7 @@ function movementEventView(event) {
             <Tag v-if="isInternalDocument" value="เอกสารภายใน" severity="info" />
             <Tag v-if="isInternalDocument && document?.status === 'draft'" :value="internalLayoutReady ? 'กรอบจาก Workflow' : 'ต้องให้ Superadmin กำหนดกรอบ'" :severity="internalLayoutReady ? 'success' : 'warn'" />
             <Button v-if="document && !isInternalDocument" label="ตรวจสอบ Flow" icon="pi pi-sitemap" severity="secondary" outlined @click="openDocumentFlow()" />
+            <Button v-if="canViewSMLImages" label="รูปใน SML" icon="pi pi-images" severity="secondary" outlined @click="openSMLImages" />
             <Button v-if="document?.status === 'draft' && isInternalDocument" label="แก้ไขแบบฟอร์ม" icon="pi pi-pencil" severity="secondary" outlined @click="openInternalEdit" />
             <Button v-if="canManageLegacyInternalLayout" label="จัดวางกรอบ" icon="pi pi-objects-column" severity="secondary" outlined @click="openInternalLayout" />
             <Button v-if="document?.status === 'draft' && isInternalDocument" label="พิมพ์ PDF" icon="pi pi-print" severity="secondary" outlined :disabled="needsLegacyInternalLayout" v-tooltip.bottom="needsLegacyInternalLayout ? 'กรุณาให้ Superadmin กำหนดกรอบก่อนพิมพ์' : 'พิมพ์ PDF revision ล่าสุด (ไม่บังคับก่อนส่ง)'" :loading="printingInternal" @click="printInternalDraft" />
@@ -880,7 +870,6 @@ function movementEventView(event) {
                         <Tab value="progress">ความคืบหน้า</Tab>
                         <Tab v-if="!isInternalDocument" value="references">ตรวจสอบเอกสาร</Tab>
                         <Tab value="attachments">ไฟล์แนบอ้างอิง ({{ documentAttachmentCount }})</Tab>
-                        <Tab v-if="showSMLImagesTab" value="sml-images">รูปใน SML{{ smlImageCountLabel }}</Tab>
                         <Tab value="print">พิมพ์</Tab>
                         <Tab value="events">เหตุการณ์</Tab>
                     </TabList>
@@ -939,14 +928,6 @@ function movementEventView(event) {
                                 :headers="api.authHeaders()"
                                 :on-reload="loadDocumentAttachments"
                                 :file-url-resolver="documentAttachmentFileUrl"
-                            />
-                        </TabPanel>
-                        <TabPanel v-if="showSMLImagesTab" value="sml-images">
-                            <SmlDocumentImagesPanel
-                                :document-id="smlImagesDocumentId"
-                                :enabled="smlImagesTabOpened"
-                                :document-status="document?.status || ''"
-                                @update:count="onSMLImageCount"
                             />
                         </TabPanel>
                         <TabPanel value="print">
@@ -1009,6 +990,13 @@ function movementEventView(event) {
     </div>
 
     <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="openFlowDocument" />
+    <SmlDocumentImagesDialog
+        :visible="smlImagesDialog"
+        :document-id="smlImagesDocumentId"
+        :doc-no="document?.docNo || ''"
+        :document-status="document?.status || ''"
+        @update:visible="smlImagesDialog = $event"
+    />
     <ReadOnlyPdfDialog v-model:visible="evidenceDialog" :url="evidencePdfUrl" :title="evidencePdfTitle" />
 
     <Dialog v-model:visible="layoutDialog" modal maximizable :style="{ width: 'min(92rem, 98vw)' }" :contentStyle="{ padding: '1rem', overflow: 'hidden' }" header="จัดวางกรอบบน PDF ฉบับจริง" :draggable="false">

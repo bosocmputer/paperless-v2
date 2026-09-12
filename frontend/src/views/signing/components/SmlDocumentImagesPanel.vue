@@ -238,7 +238,7 @@ defineExpose({ reload: loadList });
             <Galleria
                 :value="images"
                 :activeIndex="activeIndex"
-                :numVisible="5"
+                :numVisible="8"
                 :circular="false"
                 :showItemNavigators="imageCount > 1"
                 :showThumbnails="imageCount > 1"
@@ -320,7 +320,7 @@ defineExpose({ reload: loadList });
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 260px;
+    min-height: 62vh;
     background: var(--surface-100);
     border-radius: 6px;
 }
@@ -328,7 +328,7 @@ defineExpose({ reload: loadList });
 .sml-image {
     display: block;
     max-width: 100%;
-    max-height: 60vh;
+    max-height: 72vh;
     object-fit: contain;
 }
 
@@ -352,8 +352,8 @@ defineExpose({ reload: loadList });
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 54px;
-    height: 54px;
+    width: 68px;
+    height: 68px;
     overflow: hidden;
     background: var(--surface-200);
     border-radius: 4px;
