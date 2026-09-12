@@ -401,7 +401,10 @@ defineExpose({ reload: loadList });
 /* PrimeVue's Galleria is display:block with statically sized children, so each
    level from the root down to the item wrapper has to opt into flex for the
    image area to absorb the dialog's leftover height instead of overflowing. */
-.sml-galleria {
+/* Global like its children: the panel renders inside a teleported dialog, so a
+   scoped attribute never lands on this element and a scoped rule would silently
+   do nothing - which is what collapsed the navigators and thumbnail strip. */
+:global(.sml-galleria) {
     flex: 1;
     min-height: 0;
     display: flex;
@@ -434,5 +437,17 @@ defineExpose({ reload: loadList });
 /* The thumbnail strip keeps its natural height so only the image area flexes. */
 :global(.sml-galleria .p-galleria-thumbnails) {
     flex: 0 0 auto;
+}
+
+/* The item wrapper is the positioning context for the prev/next buttons, and
+   the buttons sit above the image so they stay reachable over a full-bleed page
+   scan rather than being clipped by it. */
+:global(.sml-galleria .p-galleria-items-container) {
+    position: relative;
+}
+
+:global(.sml-galleria .p-galleria-prev-button),
+:global(.sml-galleria .p-galleria-next-button) {
+    z-index: 1;
 }
 </style>
