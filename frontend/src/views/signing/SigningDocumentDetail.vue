@@ -89,10 +89,13 @@ watch(activeTab, (value) => {
 });
 
 // A different document must start from scratch rather than showing the previous
-// document's count while its own images are still loading.
+// document's count while its own images are still loading. This only fires when
+// one document is replaced by another - the first load goes from no document to
+// a document, which must not clear a tab the viewer has already opened.
 watch(
     () => document.value?.id,
-    () => {
+    (id, previousId) => {
+        if (!previousId || id === previousId) return;
         smlImagesTabOpened.value = activeTab.value === 'sml-images';
         smlImageCount.value = 0;
     }
