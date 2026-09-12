@@ -254,8 +254,7 @@ defineExpose({ reload: loadList });
                 :showItemNavigators="imageCount > 1"
                 :showThumbnails="imageCount > 1"
                 :showItemNavigatorsOnHover="false"
-                containerStyle="max-width: 100%"
-                class="sml-galleria"
+                containerClass="sml-galleria"
                 @update:activeIndex="onActiveIndexChange"
             >
                 <template #item="slotProps">
@@ -411,6 +410,7 @@ defineExpose({ reload: loadList });
 :global(.sml-galleria) {
     flex: 1;
     min-height: 0;
+    max-width: 100%;
     display: flex;
     flex-direction: column;
 }
