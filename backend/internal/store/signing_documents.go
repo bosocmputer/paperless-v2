@@ -1629,6 +1629,8 @@ SELECT d.id::text,
        d.doc_format_code,
        d.party_code,
        d.party_name,
+       COALESCE(d.department_code, ''),
+       COALESCE(d.department_name, ''),
        COALESCE(d.doc_date::text, ''),
        d.total_amount,
        d.status,
@@ -1681,7 +1683,7 @@ func scanMySigningHistoryDocument(row rowScanner) (models.MySigningHistoryDocume
 	var item models.MySigningHistoryDocument
 	var signedAt, rejectedAt sql.NullTime
 	err := row.Scan(
-		&item.ID, &item.DocNo, &item.DocFormatCode, &item.PartyCode, &item.PartyName, &item.DocDate,
+		&item.ID, &item.DocNo, &item.DocFormatCode, &item.PartyCode, &item.PartyName, &item.DepartmentCode, &item.DepartmentName, &item.DocDate,
 		&item.TotalAmount, &item.DocumentStatus, &item.UpdatedAt, &item.TaskID, &item.PositionCode,
 		&item.PositionName, &item.SignerName, &item.TaskStatus, &signedAt, &rejectedAt, &item.RejectReason,
 		&item.HasCurrentPDF, &item.HasFinalPDF, &item.AttachmentCount,
@@ -1719,6 +1721,8 @@ SELECT d.id::text,
        d.doc_format_code,
        d.party_code,
        d.party_name,
+       COALESCE(d.department_code, ''),
+       COALESCE(d.department_name, ''),
        COALESCE(d.doc_date::text, ''),
        d.total_amount,
        d.status,
@@ -1778,7 +1782,7 @@ func scanMySigningTaskDocument(row rowScanner) (models.MySigningTaskDocument, er
 	var item models.MySigningTaskDocument
 	var task models.MySigningTaskSigner
 	err := row.Scan(
-		&item.ID, &item.DocNo, &item.DocFormatCode, &item.PartyCode, &item.PartyName, &item.DocDate,
+		&item.ID, &item.DocNo, &item.DocFormatCode, &item.PartyCode, &item.PartyName, &item.DepartmentCode, &item.DepartmentName, &item.DocDate,
 		&item.TotalAmount, &item.Status, &item.UpdatedAt,
 		&task.ID, &task.StepID, &task.PositionCode, &task.PositionName, &task.SequenceNo, &task.ConditionType,
 		&task.SignerSlot, &task.SignerType, &task.SignerUser, &task.SignerName, &task.Status,

@@ -901,6 +901,8 @@ type MySigningTaskDocument struct {
 	DocFormatCode   string                 `json:"docFormatCode"`
 	PartyCode       string                 `json:"partyCode"`
 	PartyName       string                 `json:"partyName"`
+	DepartmentCode  string                 `json:"departmentCode"`
+	DepartmentName  string                 `json:"departmentName"`
 	DocDate         string                 `json:"docDate"`
 	TotalAmount     float64                `json:"totalAmount"`
 	Status          string                 `json:"status"`
@@ -953,6 +955,8 @@ type MySigningHistoryDocument struct {
 	DocFormatCode   string     `json:"docFormatCode"`
 	PartyCode       string     `json:"partyCode"`
 	PartyName       string     `json:"partyName"`
+	DepartmentCode  string     `json:"departmentCode"`
+	DepartmentName  string     `json:"departmentName"`
 	DocDate         string     `json:"docDate"`
 	TotalAmount     float64    `json:"totalAmount"`
 	DocumentStatus  string     `json:"documentStatus"`
