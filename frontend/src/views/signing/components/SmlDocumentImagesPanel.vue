@@ -269,14 +269,20 @@ const imageTransform = computed(() => ({
     transform: `translate(${panX.value}px, ${panY.value}px) scale(${zoom.value})`
 }));
 
-const galleriaResponsiveOptions = [
-    { breakpoint: '1600px', numVisible: 10 },
-    { breakpoint: '1280px', numVisible: 8 },
-    { breakpoint: '1024px', numVisible: 6 },
-    { breakpoint: '960px', numVisible: 4 },
-    { breakpoint: '768px', numVisible: 3 },
-    { breakpoint: '560px', numVisible: 1 }
-];
+// Galleria shifts the thumbnail strip by (numVisible - value.length) when that
+// is positive, which pushes the active thumbnail off screen whenever numVisible
+// exceeds the number of images - so every count is capped at what exists.
+const thumbnailCount = computed(() => Math.max(1, Math.min(12, imageCount.value)));
+const galleriaResponsiveOptions = computed(() =>
+    [
+        { breakpoint: '1600px', numVisible: 10 },
+        { breakpoint: '1280px', numVisible: 8 },
+        { breakpoint: '1024px', numVisible: 6 },
+        { breakpoint: '960px', numVisible: 4 },
+        { breakpoint: '768px', numVisible: 3 },
+        { breakpoint: '560px', numVisible: 1 }
+    ].map((option) => ({ ...option, numVisible: Math.min(option.numVisible, thumbnailCount.value) }))
+);
 
 // Watching a string key rather than an array literal: an array getter allocates
 // a fresh array on every parent re-render, which Vue reads as a change and would
@@ -330,7 +336,7 @@ defineExpose({ reload: loadList });
             <Galleria
                 :value="images"
                 :activeIndex="activeIndex"
-                :numVisible="12"
+                :numVisible="thumbnailCount"
                 :responsiveOptions="galleriaResponsiveOptions"
                 :circular="false"
                 :showItemNavigators="imageCount > 1"
