@@ -20,6 +20,28 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Feature - 2026-09-12 (all five shops): view every SML document image in PaperLess
+
+Follow-on to the 2026-09-10 fix. Removing the 8-image cap meant every image now reaches `sml_doc_images` correctly - but SML ERP's own screen still only displays the first 8 (confirmed by the product owner, who works in SML directly), so images past the 8th were stored and unviewable anywhere. PaperLess is now the place to see all of them.
+
+**What shipped**: a new `รูปใน SML (n)` tab in the document detail panel, between "ไฟล์แนบอ้างอิง" and "พิมพ์", rendering a PrimeVue Galleria over the images read back from SML.
+
+- `sml-api-bybos` ([PR #3](https://github.com/bosocmputer/sml-api-bybos/pull/3), merged as `e5113cb`) gained two read endpoints: a listing that deliberately omits `image_file` (a 9-image document totals 2.7MB, so inlining bytes would make the listing unusable) and a per-image fetch that checks size before reading so an oversized or corrupt row is rejected rather than pulled into memory. Reads target the **tenant** database, not `<tenant>_images` - verified both hold identical data, and the tenant DB needs no separate provisioning.
+- `paperless-v2` ([PR #1](https://github.com/bosocmputer/paperless-v2/pull/1) as `e2c68fb`, polish in [PR #2](https://github.com/bosocmputer/paperless-v2/pull/2) as `7f40ba8`) proxies both endpoints rather than letting the browser reach SML, so the SML API key never leaves the server. Access reuses `authorizeSigningDocumentAttachmentAccess`, so seeing images requires the same permission as seeing the document. Responses carry `no-store`, matching how signed documents are already served, and the listing writes one audit row (`signing_document.sml_images_view`) rather than one per image.
+- The panel fetches nothing until the tab is opened, loads one image at a time while prefetching the next, cancels in-flight requests when switching documents so a stale response cannot overwrite the current one, and lets a single failed image be retried on its own. It is hidden entirely for internal documents, which never reach SML.
+- Empty states name the step that failed and point at the button that recovers it - notably telling the user to press "ส่งรูป SML อีกครั้ง" when the push to SML is what failed, rather than showing a bare "no images".
+
+**Verified end to end on Damrong** against the real 9-image document `1EPO2609-00020`: the listing returned `image_count=9` / `total_bytes=2719889`, matching a direct `sml_doc_images` query exactly; page 1 came back as 214,473 bytes and **page 9 - precisely the image SML ERP cannot display** - as 830,984 bytes, both valid JPEGs (`ffd8ff`) with byte counts matching the database rows exactly, so nothing is truncated. A nonexistent page returns 404 rather than a 500. On every shop, the new routes return 401 unauthenticated (registered and auth-protected) while an unknown route under the same prefix returns 404, and the web bundle serves the `รูปใน SML` tab plus all three PR #2 recovery messages.
+
+**Not verified**: the rendered gallery inside a real browser session - creating a login token was not available in that session. Every layer beneath it (SML read API, PaperLess proxy, auth, served bundle) is confirmed.
+
+Deployed to all five shops as `sml-api-bybos:e5113cb` / `paperless-api:e2c68fb` / `paperless-web:7f40ba8`. Each shop's release directory holds a `compose.yml.bak` for rollback to `4393c84` / `ab01567` / `4bc3478`:
+- Damrong Homeplus: `/data/paperless/releases/20260912103323-sml-images-gallery/`
+- Pui: `/data/paperless/releases/20260912103840-sml-images-gallery/`
+- Wirat Home Mart: `/data/paperless/releases/20260912104012-sml-images-gallery/`
+- Insee Construction: `/data/paperless/releases/20260912104228-sml-images-gallery/`
+- Amata: `/data/paperless-amata/releases/20260912104352-sml-images-gallery/`
+
 ## Incident - 2026-09-10 (all five shops): documents with 9+ SML images permanently stuck in completed_image_failed
 
 Customer reported document `1EPO2609-00020` on Damrong Homeplus stuck in `completed_image_failed` - the signing flow itself had fully completed (all 6 steps signed, final PDF generated), but the secondary step of pushing preview images back to SML kept failing with `document_images_too_many` / `max: 8` from `sml-api-bybos`. The document had 1 doc page + 3 attachments totaling 8 attachment pages = 9 images, one over the limit. The existing "ส่งรูป SML อีกครั้ง" retry button could never have recovered this document on its own, since it resends the exact same over-the-limit image set every time.
