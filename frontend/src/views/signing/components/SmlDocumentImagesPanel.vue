@@ -339,6 +339,7 @@ defineExpose({ reload: loadList });
        frame at its natural size and the dialog scrolls. */
     min-height: 0;
     height: 100%;
+    width: 100%;
     background: var(--surface-100);
     border-radius: 6px;
 }
@@ -401,9 +402,12 @@ defineExpose({ reload: loadList });
 /* PrimeVue's Galleria is display:block with statically sized children, so each
    level from the root down to the item wrapper has to opt into flex for the
    image area to absorb the dialog's leftover height instead of overflowing. */
-/* Global like its children: the panel renders inside a teleported dialog, so a
-   scoped attribute never lands on this element and a scoped rule would silently
-   do nothing - which is what collapsed the navigators and thumbnail strip. */
+/* PrimeVue already makes .p-galleria-items a flex row with the nav buttons
+   absolutely positioned inside it, and .p-galleria-items-container a flex
+   column. All this needs to add is permission for those to shrink, so the
+   image area takes the leftover dialog height instead of the content growing
+   past it. Global, not scoped: the panel renders inside a teleported dialog,
+   so a scoped attribute never reaches a child component's elements. */
 :global(.sml-galleria) {
     flex: 1;
     min-height: 0;
@@ -423,15 +427,20 @@ defineExpose({ reload: loadList });
     min-height: 0;
 }
 
+/* min-width:0 alongside min-height:0 so a wide scan cannot push the flex row
+   wider than the dialog either. */
 :global(.sml-galleria .p-galleria-items) {
-    height: 100%;
     min-height: 0;
+    min-width: 0;
 }
 
+/* The item wraps the image; it must fill the row without becoming a flex
+   parent of its own, which is what previously squeezed the nav buttons and
+   thumbnail strip out of view. */
 :global(.sml-galleria .p-galleria-item) {
-    height: 100%;
     min-height: 0;
-    display: flex;
+    min-width: 0;
+    width: 100%;
 }
 
 /* The thumbnail strip keeps its natural height so only the image area flexes. */
@@ -439,15 +448,4 @@ defineExpose({ reload: loadList });
     flex: 0 0 auto;
 }
 
-/* The item wrapper is the positioning context for the prev/next buttons, and
-   the buttons sit above the image so they stay reachable over a full-bleed page
-   scan rather than being clipped by it. */
-:global(.sml-galleria .p-galleria-items-container) {
-    position: relative;
-}
-
-:global(.sml-galleria .p-galleria-prev-button),
-:global(.sml-galleria .p-galleria-next-button) {
-    z-index: 1;
-}
 </style>
