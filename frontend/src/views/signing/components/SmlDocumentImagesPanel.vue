@@ -359,8 +359,8 @@ defineExpose({ reload: loadList });
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 68px;
-    height: 68px;
+    width: 62px;
+    height: 84px;
     padding: 3px;
     margin: 0 3px;
     overflow: hidden;
@@ -374,10 +374,12 @@ defineExpose({ reload: loadList });
     border-color: var(--primary-color, #10b981);
 }
 
+/* contain, not cover: a page scan is portrait, so cover crops it to its middle
+   and every thumbnail ends up looking like the same grey block. */
 .sml-thumb img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
     /* Sits inside the padding so the dark ground shows as a frame. */
     border-radius: 2px;
     background: #fff;
