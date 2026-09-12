@@ -20,6 +20,32 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Feature - 2026-09-12 (all five shops): SML image gallery, and department in the admin signing views
+
+Shipped together as `sml-api-bybos:e5113cb` / `paperless-api:e3ee542` / `paperless-web:e3ee542`.
+
+**The gallery.** SML ERP's own screen displays only the first 8 images of a document (confirmed by the product owner, who works in SML). Since the 8-image cap was removed on 2026-09-10 every image reaches `sml_doc_images` correctly, but anything past the 8th could not be viewed anywhere. PaperLess now shows all of them: a `รูปใน SML` button on the document detail header and in the document-history list's action column, opening a full-screen dialog with zoom to 400%, drag-to-pan, and a thumbnail strip. Every page is fetched three at a time in the background so the strip fills in and paging is instant.
+
+**Department column.** `/admin/signing/tasks` and `/admin/signing/history` now show แผนก like the document list already did. Both queries selected party and date but not department, so this needed the column added to each SELECT and its scan plus the field on `MySigningTaskDocument` / `MySigningHistoryDocument` — not a template-only change.
+
+**Verified end to end on Damrong** against the real 9-image document `1EPO2609-00020`: the listing returns `image_count=9` / `total_bytes=2719889`, matching a direct `sml_doc_images` query, and page 9 — precisely the image SML ERP cannot display — comes back as a valid 830,984-byte JPEG with the byte count matching the database row exactly. On every shop the new route returns 401 unauthenticated (registered and auth-protected) and the served bundles carry both the gallery button and the department column.
+
+### Pitfalls worth knowing before touching this UI again
+
+Both cost several deploy rounds and neither surfaces as an error.
+
+- **PrimeVue `Galleria` ignores a plain `class`.** Its root renders as `[cx('root'), $attrs.containerClass]`, so a class must be passed as **`containerClass`** to land there. Passed as `class` it goes elsewhere and every stylesheet rule written against it silently matches nothing — `document.querySelector('.sml-galleria')` returning `null` in the browser console is what finally found this, after three rounds of correcting CSS that had never applied.
+- **A teleported dialog needs `:global`, not `:deep`.** `Dialog` renders outside the component tree, so scoped attributes never reach `.p-dialog-content` or a child component's internals; a scoped rule compiles to `.x[data-v-…]` and never matches. `ReadOnlyPdfDialog.vue` already solved this the same way — check it before writing new dialog CSS.
+- **Do not fight Galleria's own layout.** It already makes `.p-galleria-items-container` a flex column and `.p-galleria-items` a flex row with the nav buttons `position:absolute` inside. Adding `height:100%; display:flex` on `.p-galleria-item` pushed the navigators and thumbnail strip out of view. Grant permission to shrink (`min-height:0`), and leave layout to the theme.
+- **`numVisible` must not exceed the number of images.** Galleria shifts the strip by `numVisible - value.length` once the active index passes a threshold; that term is meant to be negative, and a positive value carries the active thumbnail off screen.
+
+Deployed to all five shops. Each release directory holds a `compose.yml.bak` for rollback:
+- Damrong Homeplus: `/data/paperless/releases/20260912124652-department-and-list-gallery/`
+- Pui: `/data/paperless/releases/20260912125422-sml-gallery-and-department/`
+- Wirat Home Mart: `/data/paperless/releases/20260912125502-sml-gallery-and-department/`
+- Insee Construction: `/data/paperless/releases/20260912125536-sml-gallery-and-department/`
+- Amata: `/data/paperless-amata/releases/20260912125613-sml-gallery-and-department/`
+
 ## Feature - 2026-09-12 (all five shops): view every SML document image in PaperLess
 
 Follow-on to the 2026-09-10 fix. Removing the 8-image cap meant every image now reaches `sml_doc_images` correctly - but SML ERP's own screen still only displays the first 8 (confirmed by the product owner, who works in SML directly), so images past the 8th were stored and unviewable anywhere. PaperLess is now the place to see all of them.
