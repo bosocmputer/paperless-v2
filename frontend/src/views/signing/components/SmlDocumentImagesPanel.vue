@@ -183,6 +183,16 @@ function urlFor(pageNo) {
     return objectUrls.value.get(pageNo) || '';
 }
 
+// Thumbnail counts follow the sakai-vue Galleria reference so the strip degrades
+// the same way the rest of the UI kit does on narrow screens.
+const galleriaResponsiveOptions = [
+    { breakpoint: '1280px', numVisible: 6 },
+    { breakpoint: '1024px', numVisible: 5 },
+    { breakpoint: '960px', numVisible: 4 },
+    { breakpoint: '768px', numVisible: 3 },
+    { breakpoint: '560px', numVisible: 1 }
+];
+
 function formatBytes(bytes) {
     const value = Number(bytes) || 0;
     if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
@@ -231,7 +241,7 @@ defineExpose({ reload: loadList });
 
         <template v-else>
             <div class="sml-images-summary">
-                <span>ทั้งหมด {{ imageCount }} รูป</span>
+                <span>ทั้งหมด {{ imageCount }} รูป <span class="sml-images-note">(SML ERP แสดงได้เพียง 8 รูปแรก)</span></span>
                 <span v-if="activeImage" class="sml-images-meta"> หน้า {{ activeImage.page_no }} · {{ formatBytes(activeImage.bytes) }} </span>
             </div>
 
@@ -239,11 +249,13 @@ defineExpose({ reload: loadList });
                 :value="images"
                 :activeIndex="activeIndex"
                 :numVisible="8"
+                :responsiveOptions="galleriaResponsiveOptions"
                 :circular="false"
                 :showItemNavigators="imageCount > 1"
                 :showThumbnails="imageCount > 1"
                 :showItemNavigatorsOnHover="false"
                 containerStyle="max-width: 100%"
+                class="sml-galleria"
                 @update:activeIndex="onActiveIndexChange"
             >
                 <template #item="slotProps">
@@ -268,7 +280,6 @@ defineExpose({ reload: loadList });
                 </template>
             </Galleria>
 
-            <p class="sml-images-hint">แสดงรูปทั้งหมดที่จัดเก็บในระบบ SML (หน้าจอ SML ERP แสดงได้เพียง 8 รูปแรก)</p>
         </template>
     </div>
 </template>
@@ -278,6 +289,10 @@ defineExpose({ reload: loadList });
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    /* Fills the height the dialog hands down, so the frame below can take the
+       leftover space instead of the panel overflowing into a dialog scrollbar. */
+    height: 100%;
+    min-height: 0;
 }
 
 .sml-images-state {
@@ -320,7 +335,10 @@ defineExpose({ reload: loadList });
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 62vh;
+    /* min-height:0 lets a flex child shrink; without it the image floors the
+       frame at its natural size and the dialog scrolls. */
+    min-height: 0;
+    height: 100%;
     background: var(--surface-100);
     border-radius: 6px;
 }
@@ -328,7 +346,7 @@ defineExpose({ reload: loadList });
 .sml-image {
     display: block;
     max-width: 100%;
-    max-height: 72vh;
+    max-height: 100%;
     object-fit: contain;
 }
 
@@ -374,9 +392,47 @@ defineExpose({ reload: loadList });
     color: var(--text-color-secondary);
 }
 
-.sml-images-hint {
-    margin: 0;
+.sml-images-note {
+    font-weight: 400;
     font-size: 0.75rem;
     color: var(--text-color-secondary);
+}
+
+/* PrimeVue's Galleria is display:block with statically sized children, so each
+   level from the root down to the item wrapper has to opt into flex for the
+   image area to absorb the dialog's leftover height instead of overflowing. */
+.sml-galleria {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+:global(.sml-galleria .p-galleria-content) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+:global(.sml-galleria .p-galleria-items-container) {
+    flex: 1;
+    min-height: 0;
+}
+
+:global(.sml-galleria .p-galleria-items) {
+    height: 100%;
+    min-height: 0;
+}
+
+:global(.sml-galleria .p-galleria-item) {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+}
+
+/* The thumbnail strip keeps its natural height so only the image area flexes. */
+:global(.sml-galleria .p-galleria-thumbnails) {
+    flex: 0 0 auto;
 }
 </style>
