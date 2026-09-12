@@ -7,6 +7,7 @@ import { useTableRowsPerPage } from '@/composables/useTableRowsPerPage';
 import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
 import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import DocumentFlowDialog from '@/views/signing/components/DocumentFlowDialog.vue';
+import SmlDocumentImagesDialog from '@/views/signing/components/SmlDocumentImagesDialog.vue';
 import DocumentReferenceCheck from '@/views/signing/components/DocumentReferenceCheck.vue';
 import BatchDocumentImportDialog from '@/views/signing/components/BatchDocumentImportDialog.vue';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
@@ -31,6 +32,8 @@ const docFormatCodeOptions = ref([]);
 const transitioningIds = ref(new Set());
 const flowDialog = ref(false);
 const flowDocument = ref(null);
+const smlImagesDialog = ref(false);
+const smlImagesDocument = ref(null);
 const referenceDialog = ref(false);
 const referenceDocument = ref(null);
 const readonlyPdfDialog = ref(false);
@@ -362,6 +365,24 @@ function setFlowDialogVisible(value) {
         return;
     }
     closeFlowDialog();
+}
+
+// Images only exist once a document has completed and been pushed to SML, so
+// the button stays off drafts and in-progress rows rather than opening an empty
+// gallery. Internal documents never reach SML at all.
+function canViewSMLImages(doc) {
+    if (isInternalDocument(doc) || !String(doc?.docNo || '').trim()) return false;
+    return String(doc?.status || '').startsWith('completed');
+}
+
+function openSMLImages(doc) {
+    smlImagesDocument.value = doc;
+    smlImagesDialog.value = true;
+}
+
+function setSMLImagesDialogVisible(value) {
+    smlImagesDialog.value = value;
+    if (!value) smlImagesDocument.value = null;
 }
 
 function openDocumentFlowFromRow(doc) {
@@ -872,6 +893,16 @@ function selectInput(event) {
                             aria-label="ดูเอกสารเซ็นครบ"
                             @click="previewDocumentPDF(data, 'current')"
                         />
+                        <Button
+                            v-if="canViewSMLImages(data)"
+                            icon="pi pi-images"
+                            rounded
+                            outlined
+                            severity="secondary"
+                            aria-label="ดูรูปใน SML"
+                            v-tooltip.top="'ดูรูปทั้งหมดที่จัดเก็บใน SML'"
+                            @click="openSMLImages(data)"
+                        />
                         <Button v-if="canCreateSMLCorrection(data)" icon="pi pi-copy" rounded outlined severity="secondary" aria-label="สร้างฉบับแก้ไข" v-tooltip.top="'สร้างฉบับแก้ไขด้วย PDF ใหม่'" @click="createSMLCorrection(data)" />
                         <DocumentAttachmentActionButton :count="attachmentCount(data)" @click="openAttachmentsDialog(data)" />
                         <Button v-if="!isInternalDocument(data)" icon="pi pi-sitemap" rounded outlined severity="secondary" aria-label="ดู Flow เอกสาร" @click="openDocumentFlowFromRow(data)" />
@@ -894,6 +925,13 @@ function selectInput(event) {
         </DataTable>
 
         <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="(documentId) => openDetail({ id: documentId })" />
+        <SmlDocumentImagesDialog
+            :visible="smlImagesDialog"
+            :document-id="smlImagesDocument?.id || ''"
+            :doc-no="smlImagesDocument?.docNo || ''"
+            :document-status="smlImagesDocument?.status || ''"
+            @update:visible="setSMLImagesDialogVisible"
+        />
         <BatchDocumentImportDialog v-model:visible="batchImportDialog" @completed="onBatchImportCompleted" />
         <DocumentAttachmentsDialog
             v-model:visible="attachmentsDialog"
