@@ -592,6 +592,74 @@ function attachmentCount(doc) {
     return Number(doc?.attachmentCount || 0);
 }
 
+const rowMenu = ref(null);
+const rowMenuDocument = ref(null);
+
+// The row's less-used actions, built per row so each entry's availability keeps
+// the exact condition it had as a button.
+function rowMenuItems(doc) {
+    if (!doc) return [];
+    const items = [];
+    if (doc.status === 'draft') {
+        items.push({
+            label: 'ส่งไปเซ็น',
+            icon: 'pi pi-send',
+            disabled: needsLegacyInternalLayout(doc) || isTransitioning(doc.id),
+            command: () => confirmSend(doc)
+        });
+    }
+    if (doc.status === 'draft' && isInternalDocument(doc)) {
+        items.push({ label: 'แก้ไขแบบฟอร์ม', icon: 'pi pi-pencil', command: () => openInternalEdit(doc) });
+        items.push({
+            label: 'พิมพ์ PDF',
+            icon: 'pi pi-print',
+            disabled: needsLegacyInternalLayout(doc) || isTransitioning(doc.id),
+            command: () => printInternalDraft(doc)
+        });
+    }
+    if (canManageLegacyInternalLayout(doc)) {
+        items.push({ label: 'จัดวางกรอบบน PDF', icon: 'pi pi-objects-column', command: () => openInternalLayout(doc) });
+    }
+    if (canGenerateExternalFromList(doc)) {
+        items.push({
+            label: 'สร้างลิงก์ผู้เซ็นภายนอก',
+            icon: 'pi pi-key',
+            disabled: isGeneratingExternalForDocument(doc),
+            command: () => openExternalSignerFromRow(doc)
+        });
+    }
+    if (queue.value === 'history') {
+        items.push({ label: 'ดูเอกสารเซ็นครบ', icon: 'pi pi-file-pdf', command: () => previewDocumentPDF(doc, 'current') });
+    }
+    if (canCreateSMLCorrection(doc)) {
+        items.push({ label: 'สร้างฉบับแก้ไข', icon: 'pi pi-copy', command: () => createSMLCorrection(doc) });
+    }
+    if (!isInternalDocument(doc)) {
+        items.push({ label: 'ดู Flow เอกสาร', icon: 'pi pi-sitemap', command: () => openDocumentFlowFromRow(doc) });
+    }
+    if (queue.value !== 'draft' && !isInternalDocument(doc)) {
+        items.push({ label: 'ตรวจสอบเอกสารอ้างอิง', icon: 'pi pi-list', command: () => openReferenceCheck(doc) });
+    }
+    if (doc.status === 'draft') {
+        items.push({ separator: true });
+        items.push({
+            label: 'ลบแบบร่าง',
+            icon: 'pi pi-trash',
+            class: 'row-menu-danger',
+            disabled: isTransitioning(doc.id),
+            command: () => confirmCancel(doc)
+        });
+    }
+    return items;
+}
+
+const rowMenuModel = computed(() => rowMenuItems(rowMenuDocument.value));
+
+function toggleRowMenu(event, doc) {
+    rowMenuDocument.value = doc;
+    rowMenu.value?.toggle(event);
+}
+
 function formatMoney(value) {
     return Number(value || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
 }
@@ -816,6 +884,9 @@ function selectInput(event) {
             <Column header="ลำดับ" style="min-width: 4rem">
                 <template #body="{ index }">{{ index + 1 }}</template>
             </Column>
+            <Column field="docDate" header="วันที่เอกสาร" sortable frozen style="min-width: 7rem">
+                <template #body="{ data }">{{ formatDocumentDate(data.docDate) }}</template>
+            </Column>
             <Column field="docNo" header="เลขที่เอกสาร" sortable frozen style="min-width: 14rem; max-width: 18rem">
                 <template #body="{ data }">
                     <Button link class="p-0 font-bold text-left" @click="openDetail(data)">
@@ -827,9 +898,6 @@ function selectInput(event) {
             </Column>
             <Column field="departmentName" header="แผนก" sortable style="min-width: 8rem">
                 <template #body="{ data }">{{ data.departmentName || '-' }}</template>
-            </Column>
-            <Column field="docDate" header="วันที่เอกสาร" sortable style="min-width: 8rem">
-                <template #body="{ data }">{{ formatDocumentDate(data.docDate) }}</template>
             </Column>
             <Column field="totalAmount" header="ยอดเงิน" sortable style="min-width: 8rem">
                 <template #body="{ data }">{{ formatMoney(data.totalAmount) }}</template>
@@ -846,54 +914,11 @@ function selectInput(event) {
             <Column field="updatedAt" header="อัปเดตล่าสุด" sortable style="min-width: 9rem">
                 <template #body="{ data }">{{ formatThaiDateTime(data.updatedAt) }}</template>
             </Column>
-            <Column header="จัดการ" :exportable="false" style="min-width: 11rem">
+            <Column header="จัดการ" :exportable="false" style="min-width: 9rem">
                 <template #body="{ data }">
                     <div class="action-cell">
-                        <Button
-                            v-if="data.status === 'draft'"
-                            icon="pi pi-send"
-                            rounded
-                            outlined
-                            severity="success"
-                            aria-label="ส่งไปเซ็น"
-                            :disabled="needsLegacyInternalLayout(data)"
-                            v-tooltip.top="needsLegacyInternalLayout(data) ? 'กรุณาให้ Superadmin กำหนดกรอบก่อนส่ง' : 'ส่งไปเซ็น'"
-                            :loading="isTransitioning(data.id)"
-                            @click="confirmSend(data)"
-                        />
-                        <Button v-if="data.status === 'draft' && isInternalDocument(data)" icon="pi pi-pencil" rounded outlined severity="secondary" aria-label="แก้ไขแบบฟอร์ม" v-tooltip.top="'แก้ไขแบบฟอร์ม'" @click="openInternalEdit(data)" />
-                        <Button v-if="canManageLegacyInternalLayout(data)" icon="pi pi-objects-column" rounded outlined severity="secondary" aria-label="จัดวางกรอบบน PDF" v-tooltip.top="'จัดวางกรอบบน PDF สำหรับเอกสารเดิม'" @click="openInternalLayout(data)" />
-                        <Button
-                            v-if="data.status === 'draft' && isInternalDocument(data)"
-                            icon="pi pi-print"
-                            rounded
-                            outlined
-                            severity="secondary"
-                            aria-label="พิมพ์ PDF"
-                            :disabled="needsLegacyInternalLayout(data)"
-                            v-tooltip.top="needsLegacyInternalLayout(data) ? 'กรุณาให้ Superadmin กำหนดกรอบก่อนพิมพ์' : 'พิมพ์ PDF revision ล่าสุด (ไม่บังคับก่อนส่ง)'"
-                            :loading="isTransitioning(data.id)"
-                            @click="printInternalDraft(data)"
-                        />
-                        <Button
-                            v-if="canGenerateExternalFromList(data)"
-                            icon="pi pi-key"
-                            rounded
-                            outlined
-                            severity="warn"
-                            aria-label="สร้างลิงก์ผู้เซ็นภายนอก"
-                            :loading="isGeneratingExternalForDocument(data)"
-                            @click="openExternalSignerFromRow(data)"
-                        />
-                        <Button
-                            v-if="queue === 'history'"
-                            icon="pi pi-file-pdf"
-                            rounded
-                            outlined
-                            severity="secondary"
-                            aria-label="ดูเอกสารเซ็นครบ"
-                            @click="previewDocumentPDF(data, 'current')"
-                        />
+                        <Button icon="pi pi-eye" rounded outlined severity="secondary" aria-label="ดูเอกสาร" v-tooltip.top="'ดูเอกสาร'" @click="openDetail(data)" />
+                        <DocumentAttachmentActionButton :count="attachmentCount(data)" @click="openAttachmentsDialog(data)" />
                         <Button
                             v-if="canViewSMLImages(data)"
                             icon="pi pi-images"
@@ -904,26 +929,23 @@ function selectInput(event) {
                             v-tooltip.top="'ดูรูปทั้งหมดที่จัดเก็บใน SML'"
                             @click="openSMLImages(data)"
                         />
-                        <Button v-if="canCreateSMLCorrection(data)" icon="pi pi-copy" rounded outlined severity="secondary" aria-label="สร้างฉบับแก้ไข" v-tooltip.top="'สร้างฉบับแก้ไขด้วย PDF ใหม่'" @click="createSMLCorrection(data)" />
-                        <DocumentAttachmentActionButton :count="attachmentCount(data)" @click="openAttachmentsDialog(data)" />
-                        <Button v-if="!isInternalDocument(data)" icon="pi pi-sitemap" rounded outlined severity="secondary" aria-label="ดู Flow เอกสาร" @click="openDocumentFlowFromRow(data)" />
-                        <Button v-if="queue !== 'draft' && !isInternalDocument(data)" icon="pi pi-list" rounded outlined severity="secondary" aria-label="ตรวจสอบเอกสารอ้างอิง" @click="openReferenceCheck(data)" />
-                        <Button icon="pi pi-eye" rounded outlined severity="secondary" aria-label="ดูเอกสาร" @click="openDetail(data)" />
                         <Button
-                            v-if="data.status === 'draft'"
-                            icon="pi pi-trash"
+                            icon="pi pi-ellipsis-v"
                             rounded
-                            outlined
-                            severity="danger"
-                            aria-label="ลบแบบร่าง"
-                            v-tooltip.top="'ลบแบบร่าง'"
-                            :loading="isTransitioning(data.id)"
-                            @click="confirmCancel(data)"
+                            text
+                            severity="secondary"
+                            aria-haspopup="true"
+                            aria-label="การจัดการอื่น"
+                            v-tooltip.top="'การจัดการอื่น'"
+                            :disabled="rowMenuItems(data).length === 0"
+                            @click="toggleRowMenu($event, data)"
                         />
                     </div>
                 </template>
             </Column>
         </DataTable>
+
+        <Menu ref="rowMenu" :model="rowMenuModel" popup />
 
         <DocumentFlowDialog :visible="flowDialog" :document="flowDocument" @update:visible="setFlowDialogVisible" @open-document="(documentId) => openDetail({ id: documentId })" />
         <SmlDocumentImagesDialog
@@ -1042,13 +1064,17 @@ function selectInput(event) {
     line-height: 1.35;
 }
 
-/* Seven actions do not fit one row once the table is narrow enough to fit a
-   1366px screen, so they wrap rather than widening the column. */
 .action-cell {
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
     align-items: center;
+}
+
+/* Menu is teleported out of this component, so the destructive entry has to be
+   reached globally rather than through a scoped attribute. */
+:global(.row-menu-danger .p-menu-item-link) {
+    color: var(--p-red-600, #dc2626);
 }
 
 .status-hint,
