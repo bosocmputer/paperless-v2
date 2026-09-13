@@ -909,7 +909,7 @@ function selectInput(event) {
             </template>
 
             <Column header="ลำดับ" style="min-width: 4rem">
-                <template #body="{ index }">{{ index + 1 }}</template>
+                <template #body="{ index }">{{ firstRecord + index + 1 }}</template>
             </Column>
             <Column field="docDate" header="วันที่เอกสาร" sortable frozen style="min-width: 7rem">
                 <template #body="{ data }">{{ formatDocumentDate(data.docDate) }}</template>
