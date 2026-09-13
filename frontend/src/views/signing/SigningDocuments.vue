@@ -884,6 +884,9 @@ function selectInput(event) {
             <Column header="ลำดับ" style="min-width: 4rem">
                 <template #body="{ index }">{{ index + 1 }}</template>
             </Column>
+            <Column field="docDate" header="วันที่เอกสาร" sortable frozen style="min-width: 7rem">
+                <template #body="{ data }">{{ formatDocumentDate(data.docDate) }}</template>
+            </Column>
             <Column field="docNo" header="เลขที่เอกสาร" sortable frozen style="min-width: 14rem; max-width: 18rem">
                 <template #body="{ data }">
                     <Button link class="p-0 font-bold text-left" @click="openDetail(data)">
@@ -895,9 +898,6 @@ function selectInput(event) {
             </Column>
             <Column field="departmentName" header="แผนก" sortable style="min-width: 8rem">
                 <template #body="{ data }">{{ data.departmentName || '-' }}</template>
-            </Column>
-            <Column field="docDate" header="วันที่เอกสาร" sortable style="min-width: 8rem">
-                <template #body="{ data }">{{ formatDocumentDate(data.docDate) }}</template>
             </Column>
             <Column field="totalAmount" header="ยอดเงิน" sortable style="min-width: 8rem">
                 <template #body="{ data }">{{ formatMoney(data.totalAmount) }}</template>
