@@ -86,6 +86,11 @@ const pageConfig = computed(() => {
     };
 });
 const filteredDocuments = computed(() => documents.value);
+// Server-side paging: the table shows exactly the page the API returned, and
+// totalRecords drives the paginator, so a shop with more documents than one
+// page is no longer silently cut off at the first page.
+const totalRecords = ref(0);
+const firstRecord = ref(0);
 const statusFilterOptions = computed(() => (STATUSES_BY_QUEUE[queue.value] || []).map((status) => ({ label: signingStatusLabel(status), value: status })));
 const dateFieldOptions = [
     { label: 'วันที่อัปเดตล่าสุด', value: 'updatedAt' },
@@ -171,7 +176,7 @@ onMounted(() => {
     queueAtLastRestore = queue.value;
     restoreFiltersFromQuery();
     void loadFormatCodeOptions();
-    void loadPage();
+    void reloadFromFirstPage();
 });
 
 watch(
@@ -188,7 +193,7 @@ watch(
             restoreFiltersFromQuery();
         }
         void loadFormatCodeOptions();
-        void loadPage();
+        void reloadFromFirstPage();
     }
 );
 
@@ -196,13 +201,13 @@ watch(searchQuery, () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
         syncFiltersToQuery();
-        void loadPage();
+        void reloadFromFirstPage();
     }, 300);
 });
 
 watch([statusFilter, docFormatCodeFilter, dateField], () => {
     syncFiltersToQuery();
-    void loadPage();
+    void reloadFromFirstPage();
 });
 
 watch(
@@ -217,7 +222,7 @@ watch(
         const completed = start && end;
         if (cleared || completed) {
             syncFiltersToQuery();
-            void loadPage();
+            void reloadFromFirstPage();
         }
     }
 );
@@ -247,8 +252,8 @@ async function loadPage() {
         const result = await api.listSigningDocuments({
             queue: queue.value,
             search: searchQuery.value,
-            page: 1,
-            size: 100,
+            page: Math.floor(firstRecord.value / rowsPerPage.value) + 1,
+            size: rowsPerPage.value,
             status: statusFilter.value,
             docFormatCode: docFormatCodeFilter.value,
             dateField: dateField.value,
@@ -256,11 +261,28 @@ async function loadPage() {
             dateTo: formatDateForApi(dateRange.value?.[1])
         });
         documents.value = result.documents || [];
+        totalRecords.value = Number(result.total || 0);
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลดเอกสารไม่สำเร็จ', detail: err.message, life: 4000 });
     } finally {
         loading.value = false;
     }
+}
+
+// DataTable emits both page changes and rows-per-page changes here; the stored
+// preference is updated so it survives a reload, then the new page is fetched.
+// Anything that changes which documents match - a search, a filter, switching
+// queue - has to return to the first page, or the viewer can be left on a page
+// number the new result set does not reach.
+function reloadFromFirstPage() {
+    firstRecord.value = 0;
+    return loadPage();
+}
+
+function onTablePage(event) {
+    firstRecord.value = event.first;
+    if (event.rows !== rowsPerPage.value) onRowsPerPageChange(event.rows);
+    loadPage();
 }
 
 async function loadFormatCodeOptions() {
@@ -836,7 +858,7 @@ function selectInput(event) {
             <div class="min-w-0 flex flex-wrap items-baseline gap-x-2 gap-y-1">
                 <div class="font-semibold text-xl whitespace-nowrap truncate">{{ pageConfig.title }}</div>
                 <p class="text-muted-color m-0 min-w-0 truncate">{{ pageConfig.subtitle }}</p>
-                <Tag :value="`${documents.length} รายการ`" :severity="pageConfig.countSeverity" />
+                <Tag :value="`${totalRecords} รายการ`" :severity="pageConfig.countSeverity" />
             </div>
             <div class="flex flex-wrap gap-2 sm:items-center">
                 <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
@@ -870,10 +892,15 @@ function selectInput(event) {
             paginator
             :rows="rowsPerPage"
             :rowsPerPageOptions="rowsPerPageOptions"
+            lazy
+            :totalRecords="totalRecords"
+            :first="firstRecord"
+            currentPageReportTemplate="{first} - {last} จาก {totalRecords} รายการ"
+            paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink RowsPerPageDropdown CurrentPageReport"
             responsiveLayout="scroll"
             scrollable
             stripedRows
-            @update:rows="onRowsPerPageChange"
+            @page="onTablePage"
         >
             <template #empty>
                 <div class="py-8 text-center text-muted-color">
