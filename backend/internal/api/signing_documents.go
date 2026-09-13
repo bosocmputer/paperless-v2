@@ -190,10 +190,14 @@ type signingCreateEventRequest struct {
 
 func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 	actor, _ := currentUser(r)
-	size := parsePositiveQueryInt(r, "size", 100)
-	if size > 100 {
-		size = 100
+	// The list is paged from the client, so a page is at most what the table
+	// can show at once; the cap is a guard against a hand-crafted request, not
+	// the number of documents a shop can have.
+	size := parsePositiveQueryInt(r, "size", 20)
+	if size > 200 {
+		size = 200
 	}
+	page := parsePositiveQueryInt(r, "page", 1)
 	queue := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("queue")))
 	createdByUserID := ""
 	signerUsername := ""
@@ -267,7 +271,7 @@ func (s *Server) listSigningDocuments(w http.ResponseWriter, r *http.Request) {
 	result, err := s.store.ListSigningDocuments(r.Context(), store.SigningDocumentListQuery{
 		Queue:           queue,
 		Search:          r.URL.Query().Get("search"),
-		Page:            parsePositiveQueryInt(r, "page", 1),
+		Page:            page,
 		Size:            size,
 		CreatedByUserID: createdByUserID,
 		SignerUsername:  signerUsername,
