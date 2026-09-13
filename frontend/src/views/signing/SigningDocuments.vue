@@ -803,6 +803,7 @@ function selectInput(event) {
             :rows="rowsPerPage"
             :rowsPerPageOptions="rowsPerPageOptions"
             responsiveLayout="scroll"
+            scrollable
             stripedRows
             @update:rows="onRowsPerPageChange"
         >
@@ -815,25 +816,25 @@ function selectInput(event) {
             <Column header="ลำดับ" style="min-width: 4rem">
                 <template #body="{ index }">{{ index + 1 }}</template>
             </Column>
-            <Column field="docNo" header="เลขที่เอกสาร" sortable style="min-width: 16rem">
+            <Column field="docNo" header="เลขที่เอกสาร" sortable frozen style="min-width: 14rem; max-width: 18rem">
                 <template #body="{ data }">
                     <Button link class="p-0 font-bold text-left" @click="openDetail(data)">
-                        <span class="whitespace-nowrap">{{ documentLine(data) }}</span>
+                        <span class="doc-line">{{ documentLine(data) }}</span>
                     </Button>
                     <Tag v-if="isInternalDocument(data)" value="เอกสารภายใน" severity="info" class="ml-2" />
                     <Tag v-if="data.attemptNo > 1" :value="`ฉบับที่ ${data.attemptNo}`" severity="secondary" class="ml-2" />
                 </template>
             </Column>
-            <Column field="departmentName" header="แผนก" sortable style="min-width: 10rem">
+            <Column field="departmentName" header="แผนก" sortable style="min-width: 8rem">
                 <template #body="{ data }">{{ data.departmentName || '-' }}</template>
             </Column>
-            <Column field="docDate" header="วันที่เอกสาร" sortable style="min-width: 10rem">
+            <Column field="docDate" header="วันที่เอกสาร" sortable style="min-width: 8rem">
                 <template #body="{ data }">{{ formatDocumentDate(data.docDate) }}</template>
             </Column>
-            <Column field="totalAmount" header="ยอดเงิน" sortable style="min-width: 10rem">
+            <Column field="totalAmount" header="ยอดเงิน" sortable style="min-width: 8rem">
                 <template #body="{ data }">{{ formatMoney(data.totalAmount) }}</template>
             </Column>
-            <Column field="status" header="สถานะ" sortable style="min-width: 18rem">
+            <Column field="status" header="สถานะ" sortable style="min-width: 11rem">
                 <template #body="{ data }">
                     <div class="status-cell">
                         <Tag :value="documentStatusLabel(data)" :severity="signingStatusSeverity(data.status)" />
@@ -842,12 +843,12 @@ function selectInput(event) {
                     </div>
                 </template>
             </Column>
-            <Column field="updatedAt" header="อัปเดตล่าสุด" sortable style="min-width: 14rem">
+            <Column field="updatedAt" header="อัปเดตล่าสุด" sortable style="min-width: 9rem">
                 <template #body="{ data }">{{ formatThaiDateTime(data.updatedAt) }}</template>
             </Column>
-            <Column header="จัดการ" :exportable="false" style="min-width: 16rem">
+            <Column header="จัดการ" :exportable="false" style="min-width: 11rem">
                 <template #body="{ data }">
-                    <div class="flex gap-2">
+                    <div class="action-cell">
                         <Button
                             v-if="data.status === 'draft'"
                             icon="pi pi-send"
@@ -1030,6 +1031,24 @@ function selectInput(event) {
 .status-cell {
     gap: 0.3rem;
     align-items: start;
+}
+
+/* The party name is long enough to force the table past the viewport on a
+   laptop when kept on one line, so it wraps instead. */
+.doc-line {
+    display: block;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+}
+
+/* Seven actions do not fit one row once the table is narrow enough to fit a
+   1366px screen, so they wrap rather than widening the column. */
+.action-cell {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
 }
 
 .status-hint,
