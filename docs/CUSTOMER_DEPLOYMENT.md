@@ -20,6 +20,27 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Fix - 2026-09-13 (all five shops): document tables unusable on a laptop, and capped at 100 documents
+
+Customer feedback on the document list and history screens. Shipped as `paperless-api:803dbfe` / `paperless-web:3fb7f7a`.
+
+**The table overflowed the screen.** Column minimums totalled 98rem against roughly 57rem of space on a 1366px laptop once the 22rem sidebar and padding are removed, so the table scrolled sideways — and by the time the action column was in view, the document number had scrolled off, leaving no way to tell which row a button belonged to. Widths are now set from what the cells actually hold (สถานะ 18→11rem, อัปเดตล่าสุด 14→9rem, the short fields 10→8rem), and the document line dropped `whitespace-nowrap`, which had been forcing a long party name to widen its column past its stated minimum no matter what was set. Total: **98rem → 70rem**.
+
+**วันที่เอกสาร and เลขที่เอกสาร now lead the table and are both frozen** — they are read as a pair and reached for first, and they stay pinned while the rest of the row scrolls, so whatever scrolling remains no longer costs the reader their place.
+
+**Row actions collapsed into a menu.** Up to seven icon buttons per row became three — view, attachments (which carries a count badge worth seeing without opening anything), SML images — plus an overflow menu for the rest. Each menu entry keeps the exact condition its button had, so a row offers the same actions as before; entries also gained text labels, and deleting a draft sits below a separator in red rather than being one more circle in a row.
+
+**The list only ever showed the first 100 documents.** It fetched page 1 at size 100 and never requested another page, so anything past the hundredth was unreachable — on Damrong that was **222 documents in the history queue with 122 invisible**, growing with every document signed. Worse, the rows-per-page control made the table look navigable while only paging through the 100 already in memory, so a user stepping through pages would reasonably believe they had seen everything. The table is now `lazy`: it requests the page being viewed, `totalRecords` drives the paginator, and the payload shrinks rather than always fetching a hundred rows to show ten. Search, filters and queue changes reset to page 1; reloads after a row action stay put. The header count reads the server total, and the row number continues across pages instead of restarting at 1 — DataTable's slot index is the position within the rows it was handed, which under lazy paging is one page.
+
+Server-side the size cap went 100 → 200 (a guard against a hand-crafted request, not a limit on how many documents a shop can have) and the default 100 → 20. **`DocumentFlow.vue` called `listSigningDocuments()` with no size and relied on that default** — it is currently unreachable (`/document-flow` redirects to the list and nothing imports it), so nothing broke, but it now asks explicitly rather than carrying a latent bug.
+
+Deployed to all five shops. Each release directory holds a `compose.yml.bak` for rollback to `e3ee542`:
+- Damrong Homeplus: `/data/paperless/releases/20260913081738-row-number/`
+- Pui: `/data/paperless/releases/20260913081901-table-ux-and-pagination/`
+- Wirat Home Mart: `/data/paperless/releases/20260913081954-table-ux-and-pagination/`
+- Insee Construction: `/data/paperless/releases/20260913082048-table-ux-and-pagination/`
+- Amata: `/data/paperless-amata/releases/20260913082129-table-ux-and-pagination/`
+
 ## Feature - 2026-09-12 (all five shops): SML image gallery, and department in the admin signing views
 
 Shipped together as `sml-api-bybos:e5113cb` / `paperless-api:e3ee542` / `paperless-web:e3ee542`.
