@@ -100,7 +100,9 @@ async function search() {
 async function loadDocuments() {
     loadingDocuments.value = true;
     try {
-        const result = await api.listSigningDocuments();
+        // Asks for a size explicitly: this screen matches PaperLess documents
+        // against an SML flow, so it wants a broad set, not the list default.
+        const result = await api.listSigningDocuments({ size: 200 });
         documents.value = result.documents || [];
     } catch (err) {
         toast.add({ severity: 'error', summary: 'โหลดเอกสารใน PaperLess ไม่สำเร็จ', detail: err.message, life: 4000 });
