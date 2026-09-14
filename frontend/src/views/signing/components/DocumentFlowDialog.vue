@@ -32,6 +32,10 @@ const flowCache = new Map();
 const flowSessionId = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
 const openedAt = ref(Date.now());
 
+// A Dialog closes itself on Escape regardless of what is stacked above it, so
+// this stops listening while the viewer has an overlay of its own open.
+const viewerOverlayOpen = ref(false);
+
 const dialogVisible = computed({
     get: () => props.visible,
     set: (value) => emit('update:visible', value)
@@ -147,6 +151,7 @@ function touchFlowCache(key, value) {
 }
 
 function closeFlowDialog() {
+    viewerOverlayOpen.value = false;
     flowError.value = '';
     flowNotice.value = '';
     pdfDialog.value = false;
@@ -229,6 +234,7 @@ function recordFlowEvent(event, extra = {}) {
         :style="{ width: 'min(1280px, 96vw)', height: 'min(820px, 90vh)' }"
         :breakpoints="{ '640px': '100vw' }"
         :header="flowHeader"
+        :closeOnEscape="!viewerOverlayOpen"
         @hide="closeFlowDialog"
     >
         <div class="flow-dialog-layout">
@@ -263,6 +269,7 @@ function recordFlowEvent(event, extra = {}) {
                     show-table
                     :open-pdf-on-select="openPdfOnSelect"
                     :show-detail-panel="false"
+                    @overlay-open="(value) => (viewerOverlayOpen = value)"
                     @open-document="(documentId) => emit('open-document', documentId)"
                     @node-click="handleFlowNodeClick"
                     @preview-pdf="previewFlowPDF"
