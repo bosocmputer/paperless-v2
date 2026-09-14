@@ -237,11 +237,31 @@ function docFormatValue(node = {}) {
     return node.doc_format_code || node.docFormatCode || '';
 }
 
+// Says what a click will actually do, which now differs per node.
+function nodeActionLabel(node = {}) {
+    const docNo = docNoValue(node) || '';
+    if (!props.openPdfOnSelect) return `เลือกเอกสาร ${docNo}`;
+    if (canViewSMLImages(node)) return `ดูรูปใน SML ของเอกสาร ${docNo}`;
+    if (canPreviewCurrentPDF(node)) return `ดู PDF เอกสาร ${docNo}`;
+    return `เลือกเอกสาร ${docNo}`;
+}
+
 function selectFlowNode(node) {
     activeNodeKey.value = flowNodeKey(node);
-    if (props.openPdfOnSelect && canPreviewCurrentPDF(node)) {
-        previewCurrentPDF(node);
-        return;
+    if (props.openPdfOnSelect) {
+        // The SML images hold the signed pages and the attachments together,
+        // which is what someone opening a flow node wants to see; the signed
+        // PDF alone shows the document without anything attached to it. Falls
+        // back to the PDF for a document that never reached SML.
+        if (canViewSMLImages(node)) {
+            openSMLImages(node);
+            emit('node-click', node);
+            return;
+        }
+        if (canPreviewCurrentPDF(node)) {
+            previewCurrentPDF(node);
+            return;
+        }
     }
     emit('node-click', node);
 }
@@ -377,7 +397,7 @@ function previewCurrentPDF(node) {
                             class="flow-node"
                             :class="[`flow-${referenceStatusClass(item)}`, { selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }]"
                             :style="{ left: `${item._flowX}px`, top: `${item._flowY}px`, width: `${flowLayout.nodeWidth}px`, minHeight: `${flowLayout.nodeHeight}px` }"
-                            :aria-label="openPdfOnSelect ? `ดู PDF เอกสาร ${docNoValue(item) || ''}` : `เลือกเอกสาร ${docNoValue(item) || ''}`"
+                            :aria-label="nodeActionLabel(item)"
                             @click="selectFlowNode(item)"
                         >
                             <span class="flow-node-topline">
@@ -403,7 +423,7 @@ function previewCurrentPDF(node) {
                         type="button"
                         class="flow-mobile-node"
                         :class="[`flow-${referenceStatusClass(item)}`, { selected: selectedFlowNodeKey === flowNodeKey(item), root: item.isRoot }]"
-                        :aria-label="openPdfOnSelect ? `ดู PDF เอกสาร ${docNoValue(item) || ''}` : `เลือกเอกสาร ${docNoValue(item) || ''}`"
+                        :aria-label="nodeActionLabel(item)"
                         @click="selectFlowNode(item)"
                     >
                         <span class="flow-mobile-index">{{ index + 1 }}</span>
