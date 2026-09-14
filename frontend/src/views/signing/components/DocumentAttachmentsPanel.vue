@@ -582,11 +582,13 @@ function revokeImageUrl() {
 
 /* Dialog is teleported out of this component, so its body is reachable only
    with :global - the same constraint the SML gallery dialog runs into. */
-/* The dialog is a flex column so the body takes whatever the header, the zoom
-   bar and the footer leave, instead of a hand-tuned height that would drift
-   whenever any of those change. Global because Dialog is teleported out of
-   this component. */
+/* PrimeVue caps .p-dialog at max-height:90%, so a taller height on the root is
+   silently clipped while the flex body keeps sizing to the height that was
+   asked for - which is what cut the image off. Lifting the cap lets the dialog
+   be exactly as tall as it says, and the body then fits inside it.
+   Global because Dialog is teleported out of this component. */
 :global(.attachment-image-dialog) {
+    max-height: 94dvh;
     display: flex;
     flex-direction: column;
 }

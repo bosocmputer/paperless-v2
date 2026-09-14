@@ -56,10 +56,24 @@ watch(
    Pinning the content height is what lets the gallery size to the space left
    over; without it the content grows past the dialog and the whole dialog
    scrolls, which is wrong for a viewer you page through. */
-:global(.sml-images-dialog .p-dialog-content) {
-    height: calc(96dvh - 5rem);
+/* PrimeVue caps .p-dialog at max-height:90%, so the height asked for on the
+   root is clipped while the body keeps sizing to it. Lifting the cap and
+   letting the body flex means the two always agree. */
+:global(.sml-images-dialog) {
+    max-height: 96dvh;
     display: flex;
     flex-direction: column;
+}
+
+:global(.sml-images-dialog .p-dialog-header) {
+    flex: 0 0 auto;
+}
+
+:global(.sml-images-dialog .p-dialog-content) {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     overflow: hidden;
     padding-top: 0.5rem;
 }
