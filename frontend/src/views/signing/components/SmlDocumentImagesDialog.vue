@@ -13,6 +13,10 @@ const emit = defineEmits(['update:visible']);
 
 const imageCount = ref(0);
 
+// No dismissableMask: this opens on top of the flow dialog, and a click on the
+// backdrop would carry through and close that one too - leaving the viewer to
+// reopen the flow for every node they want to inspect. Closing is the X or Esc.
+
 const title = computed(() => {
     const base = props.docNo ? `รูปใน SML · ${props.docNo}` : 'รูปใน SML';
     return imageCount.value > 0 ? `${base} (${imageCount.value} รูป)` : base;
@@ -38,7 +42,6 @@ watch(
         v-model:visible="open"
         :header="title"
         modal
-        dismissableMask
         class="sml-images-dialog"
         :style="{ width: '98vw', height: '96dvh' }"
         contentClass="sml-images-dialog-content"
