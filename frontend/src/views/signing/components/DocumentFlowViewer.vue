@@ -1,6 +1,7 @@
 <script setup>
 import { formatDocumentDate } from '@/utils/signingFormatters';
 import { computed, ref } from 'vue';
+import SmlDocumentImagesDialog from '@/views/signing/components/SmlDocumentImagesDialog.vue';
 
 const props = defineProps({
     graph: { type: Object, default: null },
@@ -15,6 +16,27 @@ const props = defineProps({
 const emit = defineEmits(['open-document', 'preview-pdf', 'node-click']);
 
 const activeNodeKey = ref('');
+
+// A document's images in SML already contain its attachments alongside the
+// signed pages, so this one dialog answers "what was attached" without needing
+// a separate attachment view here.
+const smlImagesDialog = ref(false);
+const smlImagesNode = ref(null);
+
+// Only a document that reached SML has images; anything earlier has none.
+function canViewSMLImages(node) {
+    return !!node?.paperlessDocumentId && String(node?.paperlessStatus || '').startsWith('completed');
+}
+
+function openSMLImages(node) {
+    smlImagesNode.value = node;
+    smlImagesDialog.value = true;
+}
+
+function onSMLImagesVisible(value) {
+    smlImagesDialog.value = value;
+    if (!value) smlImagesNode.value = null;
+}
 
 const missingPaperLessPdfMessage = 'เอกสารนี้มีข้อมูลจาก SML แต่ยังไม่มี PDF ใน PaperLess';
 const nodes = computed(() => props.graph?.nodes || []);
@@ -435,6 +457,16 @@ function previewCurrentPDF(node) {
 
                 <div v-if="admin" class="flow-detail-actions">
                     <Button v-if="canPreviewCurrentPDF(selectedFlowNode)" icon="pi pi-file-pdf" label="ดูเอกสาร" size="small" outlined severity="secondary" @click="previewCurrentPDF(selectedFlowNode)" />
+                    <Button
+                        v-if="canViewSMLImages(selectedFlowNode)"
+                        icon="pi pi-images"
+                        label="รูปใน SML"
+                        size="small"
+                        outlined
+                        severity="secondary"
+                        v-tooltip.top="'ดูเอกสารและไฟล์แนบทั้งหมดที่จัดเก็บใน SML'"
+                        @click="openSMLImages(selectedFlowNode)"
+                    />
                     <Button v-if="selectedFlowNode.canOpenPaperless" icon="pi pi-external-link" label="รายละเอียด" size="small" outlined severity="secondary" @click="openPaperless(selectedFlowNode)" />
                 </div>
             </aside>
@@ -462,6 +494,14 @@ function previewCurrentPDF(node) {
                 </Column>
             </DataTable>
         </details>
+
+        <SmlDocumentImagesDialog
+            :visible="smlImagesDialog"
+            :document-id="smlImagesNode?.paperlessDocumentId || ''"
+            :doc-no="smlImagesNode?.doc_no || smlImagesNode?.docNo || ''"
+            :document-status="smlImagesNode?.paperlessStatus || ''"
+            @update:visible="onSMLImagesVisible"
+        />
     </div>
 </template>
 

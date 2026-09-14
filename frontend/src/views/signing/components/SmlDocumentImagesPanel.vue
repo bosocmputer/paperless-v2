@@ -1,5 +1,6 @@
 <script setup>
 import { api } from '@/services/api';
+import { useImageZoom } from '@/composables/useImageZoom';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 
 const props = defineProps({
@@ -201,73 +202,14 @@ function urlFor(pageNo) {
 
 // Thumbnail counts follow the sakai-vue Galleria reference so the strip degrades
 // the same way the rest of the UI kit does on narrow screens.
-const SML_ZOOM_MIN = 1;
-const SML_ZOOM_MAX = 4;
-const SML_ZOOM_STEP = 0.25;
-
-// Page scans are shown fit-to-dialog, which is too small to read a bank slip or
-// a signature block - so the viewer needs to magnify and then move around.
-const zoom = ref(1);
-const panX = ref(0);
-const panY = ref(0);
-const zoomed = computed(() => zoom.value > 1);
-let panFrom = null;
-
-function clampZoom(value) {
-    return Math.min(SML_ZOOM_MAX, Math.max(SML_ZOOM_MIN, Math.round(value * 100) / 100));
-}
-
-function resetZoom() {
-    zoom.value = 1;
-    panX.value = 0;
-    panY.value = 0;
-}
-
-function setZoom(value) {
-    const next = clampZoom(value);
-    if (next === 1) {
-        resetZoom();
-        return;
-    }
-    zoom.value = next;
-}
-
-function onWheelZoom(event) {
-    // Plain scrolling is left alone; only a deliberate ctrl/⌘ + wheel zooms, the
-    // gesture browsers already use for zooming.
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    setZoom(zoom.value + (event.deltaY < 0 ? SML_ZOOM_STEP : -SML_ZOOM_STEP));
-}
+// Shared with the attachment preview so both behave the same way.
+const { zoom, zoomed, setZoom, resetZoom, onWheelZoom, onPanStart, onPanEnd, imageTransform } = useImageZoom();
 
 // While magnified, a drag pans the page - so the touch stream must not also
 // reach Galleria, which reads a swipe there as "change page".
 function onTouchGuard(event) {
     if (zoomed.value) event.stopPropagation();
 }
-
-function onPanStart(event) {
-    if (!zoomed.value || event.button !== 0) return;
-    event.preventDefault();
-    panFrom = { x: event.clientX - panX.value, y: event.clientY - panY.value };
-    window.addEventListener('pointermove', onPanMove);
-    window.addEventListener('pointerup', onPanEnd, { once: true });
-}
-
-function onPanMove(event) {
-    if (!panFrom) return;
-    panX.value = event.clientX - panFrom.x;
-    panY.value = event.clientY - panFrom.y;
-}
-
-function onPanEnd() {
-    panFrom = null;
-    window.removeEventListener('pointermove', onPanMove);
-}
-
-const imageTransform = computed(() => ({
-    transform: `translate(${panX.value}px, ${panY.value}px) scale(${zoom.value})`
-}));
 
 // Galleria shifts the thumbnail strip by (numVisible - value.length) when that
 // is positive, which pushes the active thumbnail off screen whenever numVisible
