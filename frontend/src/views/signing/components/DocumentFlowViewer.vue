@@ -13,7 +13,7 @@ const props = defineProps({
     showDetailPanel: { type: Boolean, default: true }
 });
 
-const emit = defineEmits(['open-document', 'preview-pdf', 'node-click']);
+const emit = defineEmits(['open-document', 'preview-pdf', 'node-click', 'overlay-open']);
 
 const activeNodeKey = ref('');
 
@@ -31,11 +31,16 @@ function canViewSMLImages(node) {
 function openSMLImages(node) {
     smlImagesNode.value = node;
     smlImagesDialog.value = true;
+    // Every open Dialog closes itself on Escape without checking whether it is
+    // the topmost one, so a host dialog has to be told to stop listening while
+    // this sits on top of it.
+    emit('overlay-open', true);
 }
 
 function onSMLImagesVisible(value) {
     smlImagesDialog.value = value;
     if (!value) smlImagesNode.value = null;
+    emit('overlay-open', value);
 }
 
 const missingPaperLessPdfMessage = 'เอกสารนี้มีข้อมูลจาก SML แต่ยังไม่มี PDF ใน PaperLess';
