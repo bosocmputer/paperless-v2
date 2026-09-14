@@ -550,11 +550,19 @@ function revokeImageUrl() {
     color: var(--text-color-secondary);
 }
 
+/* flex, not grid: in a grid the image's max-height:100% resolves against a
+   track that grows to the image's own height, so a tall scan is never scaled
+   down. Flex with an explicit height is what the SML gallery frame uses, and
+   what actually bounds the image. */
 .attachment-image-preview {
-    display: grid;
-    place-items: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex: 1;
     min-height: 0;
+    min-width: 0;
+    height: 100%;
+    width: 100%;
     background: var(--surface-ground);
     border-radius: 10px;
     /* Magnifying uses a transform rather than scrolling, so the frame clips
