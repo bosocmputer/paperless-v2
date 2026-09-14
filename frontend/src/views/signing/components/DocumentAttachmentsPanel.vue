@@ -1,6 +1,7 @@
 <script setup>
 import { formatThaiDateTimeNumeric } from '@/utils/signingFormatters';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
+import { useImageZoom } from '@/composables/useImageZoom';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useConfirm } from 'primevue/useconfirm';
 import { useToast } from 'primevue/usetoast';
@@ -32,6 +33,10 @@ const deletingId = ref('');
 const pdfVisible = ref(false);
 const pdfUrl = ref('');
 const pdfTitle = ref('ดูไฟล์แนบ');
+// An attached slip or receipt is shown fit-to-dialog, which is too small to
+// read the detail people open it for - so it zooms and pans like the SML
+// gallery, using the same controls.
+const { zoom, zoomed, setZoom, resetZoom, onWheelZoom, onPanStart, imageTransform } = useImageZoom();
 const imageVisible = ref(false);
 const imageUrl = ref('');
 const imageTitle = ref('ดูไฟล์แนบ');
@@ -63,6 +68,9 @@ const attachmentsByRequirement = computed(() => {
 watch(
     () => imageVisible.value,
     (visible) => {
+        // Each image opens unmagnified, so a zoom left behind on one attachment
+        // does not carry into the next.
+        resetZoom();
         if (!visible) revokeImageUrl();
     }
 );
@@ -290,9 +298,16 @@ function revokeImageUrl() {
         </div>
 
         <ReadOnlyPdfDialog v-model:visible="pdfVisible" :url="pdfUrl" :headers="headers" :title="pdfTitle" full-height />
-        <Dialog v-model:visible="imageVisible" modal :header="imageTitle" :style="{ width: 'min(72rem, 96vw)' }">
-            <div class="attachment-image-preview">
-                <img v-if="imageUrl" :src="imageUrl" :alt="imageTitle" />
+        <Dialog v-model:visible="imageVisible" modal :header="imageTitle" class="attachment-image-dialog" :style="{ width: '96vw', height: '94dvh' }">
+            <div class="attachment-zoom-bar">
+                <Button icon="pi pi-search-minus" severity="secondary" text rounded :disabled="zoom <= 1" aria-label="ซูมออก" @click="setZoom(zoom - 0.25)" />
+                <span class="attachment-zoom-value">{{ Math.round(zoom * 100) }}%</span>
+                <Button icon="pi pi-search-plus" severity="secondary" text rounded :disabled="zoom >= 4" aria-label="ซูมเข้า" @click="setZoom(zoom + 0.25)" />
+                <Button label="พอดีจอ" icon="pi pi-arrows-alt" severity="secondary" text size="small" :disabled="zoom === 1" @click="resetZoom" />
+                <span class="attachment-zoom-hint">ลากเพื่อเลื่อน · Ctrl/⌘ + ล้อเมาส์ เพื่อซูม</span>
+            </div>
+            <div class="attachment-image-preview" :class="{ 'attachment-image-preview-zoomed': zoomed }" @wheel="onWheelZoom" @pointerdown="onPanStart">
+                <img v-if="imageUrl" :src="imageUrl" :alt="imageTitle" :style="imageTransform" draggable="false" />
             </div>
             <template #footer>
                 <Button label="ปิด" severity="secondary" outlined @click="imageVisible = false" />
@@ -515,19 +530,63 @@ function revokeImageUrl() {
     cursor: not-allowed;
 }
 
+.attachment-zoom-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.attachment-zoom-value {
+    min-width: 3.25rem;
+    text-align: center;
+    font-size: 0.875rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.attachment-zoom-hint {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: var(--text-color-secondary);
+}
+
 .attachment-image-preview {
     display: grid;
     place-items: center;
-    min-height: 55vh;
+    flex: 1;
+    min-height: 0;
     background: var(--surface-ground);
     border-radius: 10px;
-    overflow: auto;
+    /* Magnifying uses a transform rather than scrolling, so the frame clips
+       instead of growing a scrollbar. */
+    overflow: hidden;
+    touch-action: none;
+}
+
+.attachment-image-preview-zoomed {
+    cursor: grab;
+}
+
+.attachment-image-preview-zoomed:active {
+    cursor: grabbing;
 }
 
 .attachment-image-preview img {
     max-width: 100%;
-    max-height: 78vh;
+    max-height: 100%;
     object-fit: contain;
+    transform-origin: center center;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+/* Dialog is teleported out of this component, so its body is reachable only
+   with :global - the same constraint the SML gallery dialog runs into. */
+:global(.attachment-image-dialog .p-dialog-content) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
 }
 
 @media (max-width: 640px) {
