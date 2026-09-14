@@ -20,6 +20,30 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Feature - 2026-09-14 (all five shops): zoom an attached image, and reach SML images from the flow
+
+Customer feedback, frontend only. Shipped as `paperless-web:149bbd6`.
+
+**An attached image could not be zoomed.** A `.jpg` attachment opened in a preview that could only be looked at, so reading an amount or a reference number meant downloading the file and opening it elsewhere — the same problem the SML gallery had before it gained zoom. It now carries the same controls (100–400%, magnifier buttons, percentage readout, ctrl/⌘ + wheel, drag to pan) and opens at 96vw × 94dvh. The zoom and pan logic moved into a shared `useImageZoom` composable so both views use one implementation rather than the second copying the first. `DocumentAttachmentsPanel` renders in three places — document detail, signing workspace, and the attachments dialog — so all three are covered.
+
+**Clicking a node in ตรวจสอบ Flow opened the signed PDF**, which shows the document but not what was attached to it. The images stored in SML hold both, so a click now opens those; a node never pushed to SML still opens its PDF. On Damrong, `1PV2609-00011` has **6 images in SML against a one-page signed PDF** — that gap was the report.
+
+**The flow dialog closed along with the gallery**, so checking several nodes meant reopening the flow between each one. Two separate causes, found one after the other:
+
+- The gallery carried `dismissableMask`; opened over the flow dialog, a backdrop click to dismiss the gallery passed through and closed the flow underneath.
+- Escape closed both. **PrimeVue's z-index stack does not scope Escape** — every open `Dialog` binds its own `keydown` listener on `document` and calls `close()` without checking whether it is topmost, so one keypress reached both. The flow dialog now suspends `closeOnEscape` while the viewer has an overlay open.
+
+### Pitfall worth adding to the list
+
+**Check what a parent passes before adding UI to a child.** The `รูปใน SML` button was first added to the flow viewer's node detail panel — which the flow dialog switches off with `:show-detail-panel="false"` while opening the PDF directly on click. The button was unreachable there and only surfaced in testing. Knowing which components render a child is not enough; the props those parents pass can disable the very surface being extended.
+
+Deployed to all five shops. Each release directory holds a `compose.yml.bak` for rollback to `3fb7f7a`:
+- Damrong Homeplus: `/data/paperless/releases/20260914060849-escape-scope/`
+- Pui: `/data/paperless/releases/20260914072301-attachment-zoom-and-flow-gallery/`
+- Wirat Home Mart: `/data/paperless/releases/20260914072339-attachment-zoom-and-flow-gallery/`
+- Insee Construction: `/data/paperless/releases/20260914072428-attachment-zoom-and-flow-gallery/`
+- Amata: `/data/paperless-amata/releases/20260914072429-attachment-zoom-and-flow-gallery/`
+
 ## Fix - 2026-09-13 (all five shops): document tables unusable on a laptop, and capped at 100 documents
 
 Customer feedback on the document list and history screens. Shipped as `paperless-api:803dbfe` / `paperless-web:3fb7f7a`.
