@@ -582,7 +582,22 @@ function revokeImageUrl() {
 
 /* Dialog is teleported out of this component, so its body is reachable only
    with :global - the same constraint the SML gallery dialog runs into. */
+/* The dialog is a flex column so the body takes whatever the header, the zoom
+   bar and the footer leave, instead of a hand-tuned height that would drift
+   whenever any of those change. Global because Dialog is teleported out of
+   this component. */
+:global(.attachment-image-dialog) {
+    display: flex;
+    flex-direction: column;
+}
+
+:global(.attachment-image-dialog .p-dialog-header),
+:global(.attachment-image-dialog .p-dialog-footer) {
+    flex: 0 0 auto;
+}
+
 :global(.attachment-image-dialog .p-dialog-content) {
+    flex: 1;
     display: flex;
     flex-direction: column;
     min-height: 0;
