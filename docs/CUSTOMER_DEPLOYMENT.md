@@ -20,6 +20,29 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Fix - 2026-09-14 (all five shops, second release): ส่งไปเซ็น hidden in a menu, and an attached image cut off
+
+Shipped as `paperless-web:73419a5`, frontend only.
+
+**ส่งไปเซ็น was buried in the overflow menu.** Collapsing the row actions into a `⋮` menu had hidden the primary action of the เอกสารเตรียมส่ง queue — my mistake in picking one fixed set of primary buttons for a screen serving three queues with different jobs. Counting what a row *actually* renders (not the 13 conditional buttons in the template), the column was never as crowded as it looked: draft shows **5** buttons, เอกสารรอเซ็น **4–5**, ประวัติเอกสาร **6–7** — the crowded case that prompted the menu was only ever the history queue. Every action is a button again, ordered by importance: send (filled green) → edit/print/layout/external link → view → the inspection actions → delete, behind a divider so it is not clicked by reflex. The other list screens were checked and never used a menu.
+
+**An attached image was cut off at the bottom** (reported on Wirat, `PS6909-0022`). The preview frame was `display: grid`, and in a grid a child's `max-height: 100%` resolves against a track that grows to the image's own height — the constraint is circular, so a tall scan is never scaled down. DevTools on the running page showed the `<img>` computing to its natural **2051px**, which is what settled it. The frame is now `flex` with an explicit `height`, matching the SML gallery frame that renders the same scans correctly.
+
+Two earlier attempts aimed at the dialog's height instead. One of them did find a real mismatch — **PrimeVue caps `.p-dialog` at `max-height: 90%`** while the dialog asked for 94dvh, so the flex body kept sizing to a height taller than the visible box — and that fix is kept (both image dialogs now raise the cap to the height they request). But it was not what clipped this image.
+
+Checked for the same pattern elsewhere before rolling out: the SML gallery frame is already flex; the user guide's preview bounds itself with `max-height: 78dvh` against the viewport; the saved-signature shell uses a fixed 170px height; the remaining grid containers hold panels with `overflow: auto`, not images.
+
+### Pitfall worth adding to the list
+
+**`max-height: 100%` does nothing inside a `display: grid` parent whose track sizes to the content.** Use flex with an explicit height when an image must be bounded by its frame. And when an image is the wrong size, read its computed height in DevTools before theorising about the container — that one number pointed straight at the frame after two rounds of guessing at the dialog.
+
+Deployed to all five shops. Each release directory holds a `compose.yml.bak` for rollback to `149bbd6`:
+- Damrong Homeplus: `/data/paperless/releases/20260914093602-row-buttons-and-image-fit/`
+- Pui: `/data/paperless/releases/20260914093625-row-buttons-and-image-fit/`
+- Wirat Home Mart: `/data/paperless/releases/20260914093246-attachment-frame-flex/`
+- Insee Construction: `/data/paperless/releases/20260914093651-row-buttons-and-image-fit/`
+- Amata: `/data/paperless-amata/releases/20260914093652-row-buttons-and-image-fit/`
+
 ## Feature - 2026-09-14 (all five shops): zoom an attached image, and reach SML images from the flow
 
 Customer feedback, frontend only. Shipped as `paperless-web:149bbd6`.
