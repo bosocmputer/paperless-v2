@@ -136,6 +136,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/signing-documents/{id}/print-copies/{printCopyId}/pdf", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.getSigningDocumentPrintCopyPDF)))
 	mux.Handle("POST /api/signing-documents/external-token/{signerId}/regenerate", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.regenerateExternalToken)))
 	mux.Handle("GET /api/my/signing-tasks", s.requireAuth(http.HandlerFunc(s.listMySigningTasks)))
+	mux.Handle("GET /api/my/signing-tasks/filter-options", s.requireAuth(http.HandlerFunc(s.listMySigningTaskFilterOptions)))
 	mux.Handle("GET /api/my/signing-history", s.requireAuth(http.HandlerFunc(s.listMySigningHistory)))
 	mux.Handle("GET /api/my/signing-history/{taskId}/pdf", s.requireAuth(http.HandlerFunc(s.getMySigningHistoryPDF)))
 	mux.Handle("GET /api/my/signing-history/{taskId}", s.requireAuth(http.HandlerFunc(s.getMySigningHistory)))

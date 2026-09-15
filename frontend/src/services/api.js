@@ -535,12 +535,22 @@ export const api = {
     regenerateExternalToken(signerId) {
         return request(`/api/signing-documents/external-token/${signerId}/regenerate`, { method: 'POST' });
     },
+    listMySigningTaskFilterOptions() {
+        return request('/api/my/signing-tasks/filter-options');
+    },
+
     listMySigningTasks(params = {}) {
         return request(
             withQuery('/api/my/signing-tasks', {
                 readyPage: params.readyPage,
                 waitingPage: params.waitingPage,
-                size: params.size
+                size: params.size,
+                search: params.search,
+                docFormatCode: params.docFormatCode,
+                departmentCode: params.departmentCode,
+                partyCode: params.partyCode,
+                dateFrom: params.dateFrom,
+                dateTo: params.dateTo
             })
         );
     },

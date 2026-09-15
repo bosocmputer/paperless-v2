@@ -2498,12 +2498,34 @@ func (s *Server) listMySigningTasks(w http.ResponseWriter, r *http.Request) {
 	if size > 50 {
 		size = 50
 	}
-	queue, err := s.store.ListMySigningTaskQueue(r.Context(), user.Username, readyPage, waitingPage, size)
+	filter := store.MySigningTaskFilter{
+		Search:         r.URL.Query().Get("search"),
+		DocFormatCode:  r.URL.Query().Get("docFormatCode"),
+		DepartmentCode: r.URL.Query().Get("departmentCode"),
+		PartyCode:      r.URL.Query().Get("partyCode"),
+		DateFrom:       r.URL.Query().Get("dateFrom"),
+		DateTo:         r.URL.Query().Get("dateTo"),
+	}
+	queue, err := s.store.ListMySigningTaskQueue(r.Context(), user.Username, readyPage, waitingPage, size, filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "signing_tasks_failed", "Cannot load signing tasks right now.")
 		return
 	}
 	writeJSON(w, http.StatusOK, queue)
+}
+
+// listMySigningTaskFilterOptions feeds the queue's filter dropdowns from the
+// signer's own queue, so the options can never reveal documents they are not
+// already able to see.
+func (s *Server) listMySigningTaskFilterOptions(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r)
+	options, err := s.store.ListMySigningTaskFilterOptions(r.Context(), user.Username)
+	if err != nil {
+		s.logger.Error("list signing task filter options failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "signing_task_filters_failed", "Cannot load filter options right now.")
+		return
+	}
+	writeJSON(w, http.StatusOK, options)
 }
 
 func (s *Server) listMySigningHistory(w http.ResponseWriter, r *http.Request) {
