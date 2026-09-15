@@ -1,6 +1,15 @@
 const API_BASE = '';
 let authRedirecting = false;
 
+// A body rejected by the proxy comes back as nginx's HTML error page, not JSON,
+// so payload.message is empty and the generic fallback read as a connection
+// problem - which sent people looking at the network instead of the file.
+function errorMessageFor(status, payload) {
+    if (payload.message) return payload.message;
+    if (status === 413) return 'ไฟล์ใหญ่เกินกว่าที่ระบบรับได้ กรุณาลดขนาดไฟล์แล้วลองใหม่';
+    return 'Cannot connect to PaperLess API.';
+}
+
 async function request(path, options = {}) {
     const headers = new Headers(options.headers || {});
     const isFormData = options.body instanceof FormData;
@@ -17,8 +26,7 @@ async function request(path, options = {}) {
 
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-        const message = payload.message || 'Cannot connect to PaperLess API.';
-        const error = new Error(message);
+        const error = new Error(errorMessageFor(response.status, payload));
         error.status = response.status;
         error.payload = payload;
         if (response.status === 401) handleUnauthorized(path);
@@ -39,7 +47,7 @@ async function requestBlob(path, options = {}) {
     });
     if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        const error = new Error(payload.message || 'Cannot connect to PaperLess API.');
+        const error = new Error(errorMessageFor(response.status, payload));
         error.status = response.status;
         error.payload = payload;
         if (response.status === 401) handleUnauthorized(path);
