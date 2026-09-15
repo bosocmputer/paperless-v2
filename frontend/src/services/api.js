@@ -560,12 +560,21 @@ export const api = {
     getMySavedSignatureBlob(taskId, version) {
         return requestBlob(withQuery(`/api/my/signing-tasks/${taskId}/saved-signature`, { version }));
     },
+    listMySigningHistoryFilterOptions() {
+        return request('/api/my/signing-history/filter-options');
+    },
+
     listMySigningHistory(params = {}) {
         return request(
             withQuery('/api/my/signing-history', {
                 page: params.page,
                 size: params.size,
-                search: params.search
+                search: params.search,
+                docFormatCode: params.docFormatCode,
+                departmentCode: params.departmentCode,
+                partyCode: params.partyCode,
+                dateFrom: params.dateFrom,
+                dateTo: params.dateTo
             })
         );
     },

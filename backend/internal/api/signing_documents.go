@@ -2528,13 +2528,33 @@ func (s *Server) listMySigningTaskFilterOptions(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, options)
 }
 
+// listMySigningHistoryFilterOptions feeds the history filters from the signer's
+// own history, so the options can only name documents they already signed.
+func (s *Server) listMySigningHistoryFilterOptions(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r)
+	options, err := s.store.ListMySigningHistoryFilterOptions(r.Context(), user.Username)
+	if err != nil {
+		s.logger.Error("list signing history filter options failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "signing_history_filters_failed", "Cannot load filter options right now.")
+		return
+	}
+	writeJSON(w, http.StatusOK, options)
+}
+
 func (s *Server) listMySigningHistory(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r)
 	size := parsePositiveQueryInt(r, "size", 20)
 	if size > 50 {
 		size = 50
 	}
-	result, err := s.store.ListMySigningHistory(r.Context(), user.Username, r.URL.Query().Get("search"), parsePositiveQueryInt(r, "page", 1), size)
+	filter := store.MySigningTaskFilter{
+		DocFormatCode:  r.URL.Query().Get("docFormatCode"),
+		DepartmentCode: r.URL.Query().Get("departmentCode"),
+		PartyCode:      r.URL.Query().Get("partyCode"),
+		DateFrom:       r.URL.Query().Get("dateFrom"),
+		DateTo:         r.URL.Query().Get("dateTo"),
+	}
+	result, err := s.store.ListMySigningHistory(r.Context(), user.Username, r.URL.Query().Get("search"), parsePositiveQueryInt(r, "page", 1), size, filter)
 	if err != nil {
 		s.logger.Error("list signing history failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "signing_history_failed", "Cannot load signing history right now.")

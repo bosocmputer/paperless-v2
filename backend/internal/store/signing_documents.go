@@ -1572,7 +1572,7 @@ func (s *Store) ListMySigningTaskQueue(ctx context.Context, username string, rea
 	return queue, nil
 }
 
-func (s *Store) ListMySigningHistory(ctx context.Context, username, search string, page, size int) (models.MySigningHistoryResult, error) {
+func (s *Store) ListMySigningHistory(ctx context.Context, username, search string, page, size int, filter MySigningTaskFilter) (models.MySigningHistoryResult, error) {
 	username = strings.TrimSpace(username)
 	search = strings.ToLower(strings.TrimSpace(search))
 	if page < 1 {
@@ -1608,6 +1608,29 @@ WHERE lower(sg.signer_user) = lower($1)
     lower(sg.reject_reason) LIKE $%d
   )
 `, len(args), len(args), len(args), len(args), len(args), len(args), len(args))
+	}
+
+	// Same filters the signing queue takes, appended to the WHERE both the count
+	// and the page already share.
+	if v := strings.TrimSpace(filter.DocFormatCode); v != "" {
+		args = append(args, v)
+		where += fmt.Sprintf("  AND d.doc_format_code = $%d\n", len(args))
+	}
+	if v := strings.TrimSpace(filter.DepartmentCode); v != "" {
+		args = append(args, v)
+		where += fmt.Sprintf("  AND COALESCE(d.department_code, '') = $%d\n", len(args))
+	}
+	if v := strings.TrimSpace(filter.PartyCode); v != "" {
+		args = append(args, v)
+		where += fmt.Sprintf("  AND COALESCE(d.party_code, '') = $%d\n", len(args))
+	}
+	if v := strings.TrimSpace(filter.DateFrom); v != "" {
+		args = append(args, v)
+		where += fmt.Sprintf("  AND d.doc_date >= $%d::date\n", len(args))
+	}
+	if v := strings.TrimSpace(filter.DateTo); v != "" {
+		args = append(args, v)
+		where += fmt.Sprintf("  AND d.doc_date <= $%d::date\n", len(args))
 	}
 
 	countArgs := append([]any(nil), args...)
@@ -3418,5 +3441,70 @@ WHERE d.status = 'in_progress'
 	sort.Slice(options.Parties, func(i, j int) bool {
 		return options.Parties[i]["name"] < options.Parties[j]["name"]
 	})
+	return options, nil
+}
+
+
+// ListMySigningHistoryFilterOptions lists the values present in a user's own
+// signing history, so its filter dropdowns only offer choices that can match.
+func (s *Store) ListMySigningHistoryFilterOptions(ctx context.Context, username string) (MySigningTaskFilterOptions, error) {
+	options := MySigningTaskFilterOptions{
+		DocFormatCodes: []string{},
+		Departments:    []map[string]string{},
+		Parties:        []map[string]string{},
+	}
+	tenant := tenantFilterValue(ctx)
+	rows, err := s.pool.Query(ctx, `
+SELECT DISTINCT
+       COALESCE(d.doc_format_code, ''),
+       COALESCE(d.department_code, ''),
+       COALESCE(d.department_name, ''),
+       COALESCE(d.party_code, ''),
+       COALESCE(d.party_name, '')
+FROM signing_documents d
+JOIN signing_document_signers sg ON sg.document_id = d.id
+WHERE lower(sg.signer_user) = lower($1)
+  AND sg.status IN ('signed', 'rejected')
+  AND ($2 = '' OR d.sml_tenant = $2)
+`, strings.TrimSpace(username), tenant)
+	if err != nil {
+		return options, err
+	}
+	defer rows.Close()
+
+	formats := map[string]struct{}{}
+	departments := map[string]string{}
+	parties := map[string]string{}
+	for rows.Next() {
+		var formatCode, deptCode, deptName, partyCode, partyName string
+		if err := rows.Scan(&formatCode, &deptCode, &deptName, &partyCode, &partyName); err != nil {
+			return options, err
+		}
+		if formatCode != "" {
+			formats[formatCode] = struct{}{}
+		}
+		if deptCode != "" {
+			departments[deptCode] = deptName
+		}
+		if partyCode != "" {
+			parties[partyCode] = partyName
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return options, err
+	}
+
+	for code := range formats {
+		options.DocFormatCodes = append(options.DocFormatCodes, code)
+	}
+	sort.Strings(options.DocFormatCodes)
+	for code, name := range departments {
+		options.Departments = append(options.Departments, map[string]string{"code": code, "name": name})
+	}
+	sort.Slice(options.Departments, func(i, j int) bool { return options.Departments[i]["code"] < options.Departments[j]["code"] })
+	for code, name := range parties {
+		options.Parties = append(options.Parties, map[string]string{"code": code, "name": name})
+	}
+	sort.Slice(options.Parties, func(i, j int) bool { return options.Parties[i]["name"] < options.Parties[j]["name"] })
 	return options, nil
 }
