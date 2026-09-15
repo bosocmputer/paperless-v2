@@ -253,20 +253,25 @@ function formatMoney(value) {
                     <Tag :value="`รอคิว ${counts.waiting || 0}`" severity="secondary" />
                     <Tag :value="`ทั้งหมด ${totalTasks}`" severity="contrast" />
                 </div>
-                <IconField class="w-full sm:w-80">
-                    <InputIcon><i class="pi pi-search" /></InputIcon>
-                    <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร คู่ค้า หรือตำแหน่ง" class="w-full" />
-                </IconField>
                 <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadTasks" />
             </div>
         </div>
 
-        <div class="task-filters">
-            <DatePicker v-model="dateRange" selectionMode="range" :manualInput="false" showIcon iconDisplay="input" dateFormat="dd/mm/yy" placeholder="เลือกช่วงวันที่เอกสาร" showButtonBar class="filter-field" />
-            <Select v-model="docFormatCodeFilter" :options="docFormatCodeOptions" optionLabel="label" optionValue="value" placeholder="ทุกประเภท" showClear class="filter-field" />
-            <Select v-model="departmentCodeFilter" :options="departmentOptions" optionLabel="label" optionValue="value" placeholder="ทุกแผนก" showClear filter class="filter-field" />
-            <Select v-model="partyCodeFilter" :options="partyOptions" optionLabel="label" optionValue="value" placeholder="ทุกคู่ค้า" showClear filter class="filter-field" />
-            <Button v-if="hasActiveFilters" label="ล้างตัวกรอง" icon="pi pi-filter-slash" severity="secondary" text @click="clearFilters" />
+        <div class="border border-surface rounded-lg bg-surface-50 dark:bg-surface-900 p-3 mb-6 flex flex-col gap-3">
+            <IconField class="w-full">
+                <InputIcon><i class="pi pi-search" /></InputIcon>
+                <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร คู่ค้า หรือตำแหน่ง" class="w-full" />
+            </IconField>
+
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+                <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 flex-1 min-w-0">
+                    <DatePicker v-model="dateRange" selectionMode="range" :manualInput="false" showIcon iconDisplay="input" dateFormat="dd/mm/yy" placeholder="เลือกช่วงวันที่เอกสาร" showButtonBar class="w-full" />
+                    <Select v-model="docFormatCodeFilter" :options="docFormatCodeOptions" optionLabel="label" optionValue="value" placeholder="ทุกประเภท" showClear class="w-full" />
+                    <Select v-model="departmentCodeFilter" :options="departmentOptions" optionLabel="label" optionValue="value" placeholder="ทุกแผนก" showClear filter class="w-full" />
+                    <Select v-model="partyCodeFilter" :options="partyOptions" optionLabel="label" optionValue="value" placeholder="ทุกคู่ค้า" showClear filter class="w-full" />
+                </div>
+                <Button v-if="hasActiveFilters" label="ล้างตัวกรอง" icon="pi pi-filter-slash" severity="secondary" text class="shrink-0" @click="clearFilters" />
+            </div>
         </div>
 
         <Tabs v-model:value="activeTab">

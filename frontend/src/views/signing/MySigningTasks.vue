@@ -262,16 +262,19 @@ function attachmentCount(doc) {
         </header>
 
         <div class="task-search">
-            <IconField class="search-field">
+            <IconField class="w-full">
                 <InputIcon><i class="pi pi-search" /></InputIcon>
-                <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร, คู่ค้า หรือตำแหน่ง" />
+                <InputText v-model="searchQuery" type="search" placeholder="ค้นหาเลขเอกสาร, คู่ค้า หรือตำแหน่ง" class="w-full" />
             </IconField>
-            <div class="task-filters">
-                <DatePicker v-model="dateRange" selectionMode="range" :manualInput="false" showIcon iconDisplay="input" dateFormat="dd/mm/yy" placeholder="เลือกช่วงวันที่เอกสาร" showButtonBar class="filter-field" />
-                <Select v-model="docFormatCodeFilter" :options="docFormatCodeOptions" optionLabel="label" optionValue="value" placeholder="ทุกประเภท" showClear class="filter-field" />
-                <Select v-model="departmentCodeFilter" :options="departmentOptions" optionLabel="label" optionValue="value" placeholder="ทุกแผนก" showClear filter class="filter-field" />
-                <Select v-model="partyCodeFilter" :options="partyOptions" optionLabel="label" optionValue="value" placeholder="ทุกคู่ค้า" showClear filter class="filter-field" />
-                <Button v-if="hasActiveFilters" label="ล้างตัวกรอง" icon="pi pi-filter-slash" severity="secondary" text @click="clearFilters" />
+
+            <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+                <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 flex-1 min-w-0">
+                    <DatePicker v-model="dateRange" selectionMode="range" :manualInput="false" showIcon iconDisplay="input" dateFormat="dd/mm/yy" placeholder="เลือกช่วงวันที่เอกสาร" showButtonBar class="w-full" />
+                    <Select v-model="docFormatCodeFilter" :options="docFormatCodeOptions" optionLabel="label" optionValue="value" placeholder="ทุกประเภท" showClear class="w-full" />
+                    <Select v-model="departmentCodeFilter" :options="departmentOptions" optionLabel="label" optionValue="value" placeholder="ทุกแผนก" showClear filter class="w-full" />
+                    <Select v-model="partyCodeFilter" :options="partyOptions" optionLabel="label" optionValue="value" placeholder="ทุกคู่ค้า" showClear filter class="w-full" />
+                </div>
+                <Button v-if="hasActiveFilters" label="ล้างตัวกรอง" icon="pi pi-filter-slash" severity="secondary" text class="shrink-0" @click="clearFilters" />
             </div>
         </div>
 
@@ -457,29 +460,22 @@ function attachmentCount(doc) {
     justify-content: flex-end;
 }
 
-.task-filters {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    align-items: center;
-}
-
-.filter-field {
-    min-width: 12rem;
-    flex: 1 1 12rem;
-}
-
+/* Same card treatment as the document history screen, so the two filter bars
+   read as one component rather than two designs. */
 .task-search {
-    display: grid;
-    gap: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    background: var(--surface-50);
 }
 
-.search-field {
-    width: 100%;
-}
-
-.search-field :deep(.p-inputtext) {
-    width: 100%;
+/* 44px and 16px keep the field comfortable to tap and stop iOS zooming in on
+   focus - this queue is used on phones. */
+.task-search :deep(.p-inputtext) {
     min-height: 44px;
     font-size: 16px;
 }
