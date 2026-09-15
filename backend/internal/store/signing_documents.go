@@ -1524,7 +1524,7 @@ ORDER BY d.id::text
 	return out, nil
 }
 
-func (s *Store) ListMySigningTaskQueue(ctx context.Context, username string, readyPage, waitingPage, size int) (models.MySigningTaskQueue, error) {
+func (s *Store) ListMySigningTaskQueue(ctx context.Context, username string, readyPage, waitingPage, size int, filter MySigningTaskFilter) (models.MySigningTaskQueue, error) {
 	username = strings.TrimSpace(username)
 	if readyPage < 1 {
 		readyPage = 1
@@ -1543,21 +1543,21 @@ func (s *Store) ListMySigningTaskQueue(ctx context.Context, username string, rea
 	queue.Pagination.Ready = models.PageMeta{Page: readyPage, Size: size}
 	queue.Pagination.Waiting = models.PageMeta{Page: waitingPage, Size: size}
 
-	readyCount, err := s.countMySigningTasksByStatus(ctx, username, "pending")
+	readyCount, err := s.countMySigningTasksByStatus(ctx, username, "pending", filter)
 	if err != nil {
 		return queue, err
 	}
-	waitingCount, err := s.countMySigningTasksByStatus(ctx, username, "waiting")
+	waitingCount, err := s.countMySigningTasksByStatus(ctx, username, "waiting", filter)
 	if err != nil {
 		return queue, err
 	}
 	queue.Counts = models.MySigningTaskCounts{Ready: readyCount, Waiting: waitingCount}
 
-	ready, readyHasMore, err := s.listMySigningTaskDocumentsByStatus(ctx, username, "pending", readyPage, size)
+	ready, readyHasMore, err := s.listMySigningTaskDocumentsByStatus(ctx, username, "pending", readyPage, size, filter)
 	if err != nil {
 		return queue, err
 	}
-	waiting, waitingHasMore, err := s.listMySigningTaskDocumentsByStatus(ctx, username, "waiting", waitingPage, size)
+	waiting, waitingHasMore, err := s.listMySigningTaskDocumentsByStatus(ctx, username, "waiting", waitingPage, size, filter)
 	if err != nil {
 		return queue, err
 	}
@@ -1697,8 +1697,57 @@ func scanMySigningHistoryDocument(row rowScanner) (models.MySigningHistoryDocume
 	return item, err
 }
 
-func (s *Store) countMySigningTasksByStatus(ctx context.Context, username, status string) (int, error) {
+// MySigningTaskFilter narrows the signing-task queue. Empty fields mean "no
+// filter", so a caller that passes a zero value gets the queue unfiltered.
+type MySigningTaskFilter struct {
+	Search         string
+	DocFormatCode  string
+	DepartmentCode string
+	PartyCode      string
+	DateFrom       string
+	DateTo         string
+}
+
+// mySigningTaskFilterSQL builds the shared WHERE fragment and its arguments so
+// the count and the page always apply identical criteria - a count that used
+// different rules would show a total the list could never reach.
+func mySigningTaskFilterSQL(f MySigningTaskFilter, nextArg int) (string, []any) {
+	clauses := ""
+	args := []any{}
+	add := func(sql string, value any) {
+		clauses += sql
+		args = append(args, value)
+		nextArg++
+	}
+	if v := strings.TrimSpace(f.Search); v != "" {
+		add(fmt.Sprintf(`
+  AND (d.doc_no ILIKE '%%' || $%d || '%%'
+       OR d.party_name ILIKE '%%' || $%d || '%%'
+       OR d.party_code ILIKE '%%' || $%d || '%%'
+       OR sg.position_name ILIKE '%%' || $%d || '%%')`, nextArg, nextArg, nextArg, nextArg), v)
+	}
+	if v := strings.TrimSpace(f.DocFormatCode); v != "" {
+		add(fmt.Sprintf("\n  AND d.doc_format_code = $%d", nextArg), v)
+	}
+	if v := strings.TrimSpace(f.DepartmentCode); v != "" {
+		add(fmt.Sprintf("\n  AND COALESCE(d.department_code, '') = $%d", nextArg), v)
+	}
+	if v := strings.TrimSpace(f.PartyCode); v != "" {
+		add(fmt.Sprintf("\n  AND COALESCE(d.party_code, '') = $%d", nextArg), v)
+	}
+	if v := strings.TrimSpace(f.DateFrom); v != "" {
+		add(fmt.Sprintf("\n  AND d.doc_date >= $%d::date", nextArg), v)
+	}
+	if v := strings.TrimSpace(f.DateTo); v != "" {
+		add(fmt.Sprintf("\n  AND d.doc_date <= $%d::date", nextArg), v)
+	}
+	return clauses, args
+}
+
+func (s *Store) countMySigningTasksByStatus(ctx context.Context, username, status string, filter MySigningTaskFilter) (int, error) {
 	tenant := tenantFilterValue(ctx)
+	where, filterArgs := mySigningTaskFilterSQL(filter, 4)
+	args := append([]any{strings.TrimSpace(username), status, tenant}, filterArgs...)
 	var count int
 	err := s.pool.QueryRow(ctx, `
 SELECT COUNT(sg.id)::int
@@ -1707,14 +1756,15 @@ JOIN signing_document_signers sg ON sg.document_id = d.id
 WHERE d.status = 'in_progress'
   AND sg.status = $2
   AND lower(sg.signer_user) = lower($1)
-  AND ($3 = '' OR d.sml_tenant = $3)
-`, strings.TrimSpace(username), status, tenant).Scan(&count)
+  AND ($3 = '' OR d.sml_tenant = $3)`+where, args...).Scan(&count)
 	return count, err
 }
 
-func (s *Store) listMySigningTaskDocumentsByStatus(ctx context.Context, username, status string, page, size int) ([]models.MySigningTaskDocument, bool, error) {
+func (s *Store) listMySigningTaskDocumentsByStatus(ctx context.Context, username, status string, page, size int, filter MySigningTaskFilter) ([]models.MySigningTaskDocument, bool, error) {
 	offset := (page - 1) * size
 	tenant := tenantFilterValue(ctx)
+	where, filterArgs := mySigningTaskFilterSQL(filter, 6)
+	args := append([]any{strings.TrimSpace(username), status, size + 1, offset, tenant}, filterArgs...)
 	rows, err := s.pool.Query(ctx, `
 SELECT d.id::text,
        d.doc_no,
@@ -1751,10 +1801,10 @@ LEFT JOIN (
 WHERE d.status = 'in_progress'
   AND sg.status = $2
   AND lower(sg.signer_user) = lower($1)
-  AND ($5 = '' OR d.sml_tenant = $5)
+  AND ($5 = '' OR d.sml_tenant = $5)`+where+`
 ORDER BY d.updated_at DESC, d.created_at DESC, sg.sequence_no, sg.position_code, sg.signer_slot
 LIMIT $3 OFFSET $4
-`, strings.TrimSpace(username), status, size+1, offset, tenant)
+`, args...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -3293,4 +3343,80 @@ INSERT INTO signing_document_events (document_id, actor_user_id, actor_label, ac
 VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, $6, $7, $8::jsonb)
 `, documentID, actorUserID, actorLabel, action, message, ipAddress, userAgent, string(data))
 	return err
+}
+
+// MySigningTaskFilterOptions lists the values that actually appear in a user's
+// own signing queue, so the filter dropdowns only ever offer choices that can
+// return something.
+type MySigningTaskFilterOptions struct {
+	DocFormatCodes []string          `json:"docFormatCodes"`
+	Departments    []map[string]string `json:"departments"`
+	Parties        []map[string]string `json:"parties"`
+}
+
+func (s *Store) ListMySigningTaskFilterOptions(ctx context.Context, username string) (MySigningTaskFilterOptions, error) {
+	options := MySigningTaskFilterOptions{
+		DocFormatCodes: []string{},
+		Departments:    []map[string]string{},
+		Parties:        []map[string]string{},
+	}
+	tenant := tenantFilterValue(ctx)
+	rows, err := s.pool.Query(ctx, `
+SELECT DISTINCT
+       COALESCE(d.doc_format_code, ''),
+       COALESCE(d.department_code, ''),
+       COALESCE(d.department_name, ''),
+       COALESCE(d.party_code, ''),
+       COALESCE(d.party_name, '')
+FROM signing_documents d
+JOIN signing_document_signers sg ON sg.document_id = d.id
+WHERE d.status = 'in_progress'
+  AND sg.status IN ('pending', 'waiting')
+  AND lower(sg.signer_user) = lower($1)
+  AND ($2 = '' OR d.sml_tenant = $2)
+`, strings.TrimSpace(username), tenant)
+	if err != nil {
+		return options, err
+	}
+	defer rows.Close()
+
+	formats := map[string]struct{}{}
+	departments := map[string]string{}
+	parties := map[string]string{}
+	for rows.Next() {
+		var formatCode, deptCode, deptName, partyCode, partyName string
+		if err := rows.Scan(&formatCode, &deptCode, &deptName, &partyCode, &partyName); err != nil {
+			return options, err
+		}
+		if formatCode != "" {
+			formats[formatCode] = struct{}{}
+		}
+		if deptCode != "" {
+			departments[deptCode] = deptName
+		}
+		if partyCode != "" {
+			parties[partyCode] = partyName
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return options, err
+	}
+
+	for code := range formats {
+		options.DocFormatCodes = append(options.DocFormatCodes, code)
+	}
+	sort.Strings(options.DocFormatCodes)
+
+	for code, name := range departments {
+		options.Departments = append(options.Departments, map[string]string{"code": code, "name": name})
+	}
+	sort.Slice(options.Departments, func(i, j int) bool { return options.Departments[i]["code"] < options.Departments[j]["code"] })
+
+	for code, name := range parties {
+		options.Parties = append(options.Parties, map[string]string{"code": code, "name": name})
+	}
+	sort.Slice(options.Parties, func(i, j int) bool {
+		return options.Parties[i]["name"] < options.Parties[j]["name"]
+	})
+	return options, nil
 }

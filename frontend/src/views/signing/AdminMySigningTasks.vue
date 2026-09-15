@@ -4,7 +4,7 @@ import { formatDocumentDate, formatThaiDateTime, signingStatusLabel, signingStat
 import DocumentAttachmentActionButton from '@/views/signing/components/DocumentAttachmentActionButton.vue';
 import DocumentAttachmentsDialog from '@/views/signing/components/DocumentAttachmentsDialog.vue';
 import { useTableRowsPerPage } from '@/composables/useTableRowsPerPage';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 
@@ -26,6 +26,24 @@ const pagination = ref({
 });
 const activeTab = ref('ready');
 const searchQuery = ref('');
+// Filters are applied by the API rather than over the loaded rows: this queue
+// pages 20 at a time, so filtering in memory would miss the tasks a viewer has
+// not loaded yet.
+const docFormatCodeFilter = ref('');
+const departmentCodeFilter = ref('');
+const partyCodeFilter = ref('');
+const dateRange = ref(null);
+const filterOptions = ref({ docFormatCodes: [], departments: [], parties: [] });
+let searchTimer = null;
+
+const docFormatCodeOptions = computed(() => (filterOptions.value.docFormatCodes || []).map((code) => ({ label: code, value: code })));
+const departmentOptions = computed(() =>
+    (filterOptions.value.departments || []).map((item) => ({ label: item.name ? `${item.name} (${item.code})` : item.code, value: item.code }))
+);
+const partyOptions = computed(() => (filterOptions.value.parties || []).map((item) => ({ label: item.name || item.code, value: item.code })));
+const hasActiveFilters = computed(
+    () => Boolean(docFormatCodeFilter.value || departmentCodeFilter.value || partyCodeFilter.value || dateRange.value?.[0] || searchQuery.value)
+);
 const loading = ref(false);
 const loadingReadyMore = ref(false);
 const loadingWaitingMore = ref(false);
@@ -36,8 +54,8 @@ let requestSequence = 0;
 
 const readyRows = computed(() => readyDocuments.value.map(normalizeQueueRow).filter(Boolean));
 const waitingRows = computed(() => waitingDocuments.value.map(normalizeQueueRow).filter(Boolean));
-const filteredReadyRows = computed(() => filterRows(readyRows.value));
-const filteredWaitingRows = computed(() => filterRows(waitingRows.value));
+const filteredReadyRows = computed(() => readyRows.value);
+const filteredWaitingRows = computed(() => waitingRows.value);
 const totalTasks = computed(() => Number(counts.value.ready || 0) + Number(counts.value.waiting || 0));
 const attachmentsDialogTitle = computed(() => {
     const docNo = attachmentsRow.value?.doc?.docNo || '';
@@ -50,13 +68,68 @@ const attachmentsDialogSubtitle = computed(() => {
 });
 const attachmentsDialogKey = computed(() => attachmentsRow.value?.task?.id || '');
 
-onMounted(() => loadTasks());
+function filterParams() {
+    return {
+        search: searchQuery.value,
+        docFormatCode: docFormatCodeFilter.value,
+        departmentCode: departmentCodeFilter.value,
+        partyCode: partyCodeFilter.value,
+        dateFrom: formatDateForApi(dateRange.value?.[0]),
+        dateTo: formatDateForApi(dateRange.value?.[1])
+    };
+}
+
+function formatDateForApi(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function clearFilters() {
+    searchQuery.value = '';
+    docFormatCodeFilter.value = '';
+    departmentCodeFilter.value = '';
+    partyCodeFilter.value = '';
+    dateRange.value = null;
+    loadTasks();
+}
+
+async function loadFilterOptions() {
+    try {
+        filterOptions.value = await api.listMySigningTaskFilterOptions();
+    } catch {
+        filterOptions.value = { docFormatCodes: [], departments: [], parties: [] };
+    }
+}
+
+onMounted(() => {
+    loadTasks();
+    loadFilterOptions();
+});
+
+onBeforeUnmount(() => clearTimeout(searchTimer));
+
+watch(searchQuery, () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(loadTasks, 300);
+});
+
+watch([docFormatCodeFilter, departmentCodeFilter, partyCodeFilter], () => loadTasks());
+
+watch(
+    () => (dateRange.value ? [dateRange.value[0], dateRange.value[1]] : [null, null]),
+    ([start, end], [prevStart, prevEnd]) => {
+        const cleared = !start && !end && (prevStart || prevEnd);
+        if (cleared || (start && end)) loadTasks();
+    }
+);
 
 async function loadTasks() {
     const sequence = ++requestSequence;
     loading.value = true;
     try {
-        const result = await api.listMySigningTasks({ readyPage: 1, waitingPage: 1, size: 20 });
+        const result = await api.listMySigningTasks({ readyPage: 1, waitingPage: 1, size: 20, ...filterParams() });
         if (sequence !== requestSequence) return;
         readyDocuments.value = result.documents || [];
         waitingDocuments.value = result.waitingDocuments || [];
@@ -74,7 +147,7 @@ async function loadMoreReady() {
     loadingReadyMore.value = true;
     try {
         const nextPage = Number(pagination.value.ready.page || 1) + 1;
-        const result = await api.listMySigningTasks({ readyPage: nextPage, waitingPage: pagination.value.waiting.page, size: pagination.value.ready.size || 20 });
+        const result = await api.listMySigningTasks({ readyPage: nextPage, waitingPage: pagination.value.waiting.page, size: pagination.value.ready.size || 20, ...filterParams() });
         if (sequence !== requestSequence) return;
         readyDocuments.value = [...readyDocuments.value, ...(result.documents || [])];
         pagination.value = { ...pagination.value, ready: result.pagination?.ready || { page: nextPage, size: 20, hasMore: false } };
@@ -92,7 +165,7 @@ async function loadMoreWaiting() {
     loadingWaitingMore.value = true;
     try {
         const nextPage = Number(pagination.value.waiting.page || 1) + 1;
-        const result = await api.listMySigningTasks({ readyPage: pagination.value.ready.page, waitingPage: nextPage, size: pagination.value.waiting.size || 20 });
+        const result = await api.listMySigningTasks({ readyPage: pagination.value.ready.page, waitingPage: nextPage, size: pagination.value.waiting.size || 20, ...filterParams() });
         if (sequence !== requestSequence) return;
         waitingDocuments.value = [...waitingDocuments.value, ...(result.waitingDocuments || [])];
         pagination.value = { ...pagination.value, waiting: result.pagination?.waiting || { page: nextPage, size: 20, hasMore: false } };
@@ -118,27 +191,6 @@ function normalizeQueueRow(doc) {
     return { rowKey: task.id, doc, task };
 }
 
-function filterRows(rows) {
-    const query = normalizeSearch(searchQuery.value);
-    if (!query) return rows;
-    return rows.filter(({ doc, task }) =>
-        normalizeSearch(
-            [
-                doc.docNo,
-                doc.docFormatCode,
-                doc.partyName,
-                doc.partyCode,
-                task.positionName,
-                task.signerName,
-                task.signerUser,
-                doc.blockSummary,
-                ...(doc.blockedBy || []).flatMap((blocker) => [blocker.positionName, blocker.summary, ...(blocker.signers || []).map((signer) => signer.signerName || signer.signerUser)])
-            ]
-                .filter(Boolean)
-                .join(' ')
-        ).includes(query)
-    );
-}
 
 function openTask(row) {
     if (!row?.task?.id || openingTaskId.value) return;
@@ -186,9 +238,6 @@ function formatMoney(value) {
     return new Intl.NumberFormat('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
 }
 
-function normalizeSearch(value) {
-    return String(value || '').toLowerCase().trim();
-}
 </script>
 
 <template>
@@ -212,6 +261,14 @@ function normalizeSearch(value) {
             </div>
         </div>
 
+        <div class="task-filters">
+            <DatePicker v-model="dateRange" selectionMode="range" :manualInput="false" showIcon iconDisplay="input" dateFormat="dd/mm/yy" placeholder="เลือกช่วงวันที่เอกสาร" showButtonBar class="filter-field" />
+            <Select v-model="docFormatCodeFilter" :options="docFormatCodeOptions" optionLabel="label" optionValue="value" placeholder="ทุกประเภท" showClear class="filter-field" />
+            <Select v-model="departmentCodeFilter" :options="departmentOptions" optionLabel="label" optionValue="value" placeholder="ทุกแผนก" showClear filter class="filter-field" />
+            <Select v-model="partyCodeFilter" :options="partyOptions" optionLabel="label" optionValue="value" placeholder="ทุกคู่ค้า" showClear filter class="filter-field" />
+            <Button v-if="hasActiveFilters" label="ล้างตัวกรอง" icon="pi pi-filter-slash" severity="secondary" text @click="clearFilters" />
+        </div>
+
         <Tabs v-model:value="activeTab">
             <TabList>
                 <Tab value="ready">เซ็นได้ตอนนี้ ({{ counts.ready || 0 }})</Tab>
@@ -232,7 +289,7 @@ function normalizeSearch(value) {
                     >
                         <template #empty>
                             <div class="py-8 text-center text-muted-color">
-                                {{ searchQuery ? 'ไม่พบงานที่เซ็นได้จากคำค้นนี้' : 'ยังไม่มีงานที่ต้องเซ็นในฐานข้อมูลนี้' }}
+                                {{ hasActiveFilters ? 'ไม่พบงานที่ตรงกับตัวกรอง' : 'ยังไม่มีงานที่ต้องเซ็นในฐานข้อมูลนี้' }}
                             </div>
                         </template>
                         <Column header="เลขที่เอกสาร" style="min-width: 15rem">
