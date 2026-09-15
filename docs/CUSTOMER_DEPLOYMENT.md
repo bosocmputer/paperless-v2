@@ -20,6 +20,34 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Fix - 2026-09-15 (all five shops): attachments larger than 1MB were refused by the proxy
+
+Reported on Damrong. Attaching a file failed with **"แนบไฟล์ไม่สำเร็จ — Cannot connect to PaperLess API"** while the reference count stayed at 0/2, so the document could not be sent. Shipped as `paperless-web:533de7d`.
+
+The nginx log named the cause exactly:
+
+```
+client intended to send too large body: 1226465 bytes
+POST /api/my/signing-tasks/.../attachments → 413
+```
+
+**The config never set `client_max_body_size`**, so nginx used its **1MB default** and refused the upload before it reached the API — which itself accepts up to `MAX_UPLOAD_MB` (15 by default). Present on **all five shops since the first deploy**, and hit whenever someone attaches a photo of a document, which is routine. The proxy now allows `20m`, above the API's own limit, so the API is what reports an oversized file with a message the UI can show.
+
+**The misleading message was the second half of it.** nginx returns its 413 as an HTML page, so `response.json()` fails, `payload.message` is empty, and the generic fallback claimed a connection problem — which sent people looking at the network instead of the file. A 413 with no JSON body now says the file is too large.
+
+**Verified on every shop after deploy** by POSTing a 1,226,465-byte body — the exact size that had been refused — to the attachments endpoint: all five now return **401** (no token) rather than **413**, so the request reaches the API. Before the deploy, Pui and Wirat were confirmed still returning 413, which is what established this was fleet-wide rather than one shop's misconfiguration.
+
+### Pitfall worth adding to the list
+
+**A limit enforced by the proxy is invisible to the application.** The API's own `MAX_UPLOAD_MB` was never the binding constraint, and no application log recorded the failure — only nginx's did. When an upload fails with no trace in the API log, read the proxy's log before the application's. Related: an error response that is not JSON collapses to whatever fallback message the client uses, so a proxy-level rejection can surface as something unrelated.
+
+Deployed to all five shops. Each release directory holds a `compose.yml.bak` for rollback to `73419a5`:
+- Damrong Homeplus: `/data/paperless/releases/20260915051123-upload-body-limit/`
+- Pui: `/data/paperless/releases/20260915051403-upload-body-limit/`
+- Wirat Home Mart: `/data/paperless/releases/20260915051435-upload-body-limit/`
+- Insee Construction: `/data/paperless/releases/20260915051529-upload-body-limit/`
+- Amata: `/data/paperless-amata/releases/20260915051530-upload-body-limit/`
+
 ## Fix - 2026-09-14 (all five shops, second release): ส่งไปเซ็น hidden in a menu, and an attached image cut off
 
 Shipped as `paperless-web:73419a5`, frontend only.
