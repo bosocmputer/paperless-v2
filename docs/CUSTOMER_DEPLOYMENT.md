@@ -20,6 +20,27 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Feature - 2026-09-15 (all five shops): filters for the signing queue and signing history
+
+Customer feedback: *"ตรงหน้ารอเซ็นของฉัน อยากให้มีการกรองแบบประวัติด้วยครับ เพราะบางทีต้องรอเวลา มันเลยมากองรวมกันเยอะเลย"*. Shipped as `paperless-api:e579955` / `paperless-web:e579955`.
+
+Work waiting to be signed piles up while people wait on each other, and both the queue and its history offered **only a search box** — the document list had four filters. All four list screens now take the same set: a document-date range, document type, department and party, alongside search.
+
+**Applied by the API, not over the loaded rows.** The queue pages 20 at a time behind a "load more" button, so filtering in memory would have missed whatever had not been loaded — the very pile being cut through, and the same trap as the 100-document cap fixed on 2026-09-13. The count and the page share one `WHERE` fragment (`mySigningTaskFilterSQL`), so a total can never describe a different set than the list shows, and paging carries the filters. A filter change returns to page 1.
+
+**Dropdown options** come from two new endpoints — `GET /api/my/signing-tasks/filter-options` and `GET /api/my/signing-history/filter-options` — each reading the signer's *own* queue or history, so they only offer values that can match and can never name a document the signer cannot already see. Both sit above their sibling `/{taskId}` routes; Go 1.22's ServeMux prefers the literal path, verified with a standalone mux test rather than assumed.
+
+**Layout.** The filters were first dropped into each screen's existing header, which left them looking unrelated to the document history they were modelled on — reported with a side-by-side screenshot. All four now use that screen's arrangement: one bordered card with a full-width search field above a four-column grid, with ล้างตัวกรอง beside it. The search box moved out of each header into that card, which was the main thing making them differ.
+
+Screens covered: `/signing/documents/*` (already had it), `/my/signing/tasks`, `/admin/signing/tasks`, `/admin/signing/history`.
+
+Deployed to all five shops. Each release directory holds a `compose.yml.bak` for rollback to `api 803dbfe` / `web 533de7d`:
+- Damrong Homeplus: `/data/paperless/releases/20260915080538-history-filters/`
+- Pui: `/data/paperless/releases/20260915084111-queue-and-history-filters/`
+- Wirat Home Mart: `/data/paperless/releases/20260915084148-queue-and-history-filters/`
+- Insee Construction: `/data/paperless/releases/20260915084237-queue-and-history-filters/`
+- Amata: `/data/paperless-amata/releases/20260915084238-queue-and-history-filters/`
+
 ## Fix - 2026-09-15 (all five shops): attachments larger than 1MB were refused by the proxy
 
 Reported on Damrong. Attaching a file failed with **"แนบไฟล์ไม่สำเร็จ — Cannot connect to PaperLess API"** while the reference count stayed at 0/2, so the document could not be sent. Shipped as `paperless-web:533de7d`.
