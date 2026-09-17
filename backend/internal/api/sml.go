@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bosocmputer/paperless-v2/backend/internal/config"
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 	"github.com/bosocmputer/paperless-v2/backend/internal/store"
 )
@@ -143,8 +144,24 @@ func (s *Server) hasSMLAPIConfig(ctx context.Context) (string, bool) {
 		strings.TrimSpace(tenant) != ""
 }
 
-// verifySMLDocumentSource compares the immutable PaperLess snapshot with one
-// exact SML lookup. It intentionally never runs in the broad search path.
+// verifySMLDocumentSource checks whether the SML document behind a signing
+// job still matches what PaperLess started from. It intentionally never runs
+// in the broad search path.
+//
+// Two independent things must hold, and they are checked by different means
+// because no single source covers both:
+//
+//  1. The document still exists. SML's cancel path sets last_status without
+//     writing an audit-log row — verified against production, 143 of 143
+//     cancelled documents had no delete log — so deletion is detected by the
+//     candidate lookup, whose query filters cancelled rows out and therefore
+//     reports the document as missing.
+//
+//  2. Nobody edited it. This is answered by SML's own audit trail (erp_logs),
+//     the same source the ERP ประวัติ screen reads.
+//
+// SML_SOURCE_CHECK_MODE=hash restores the previous fingerprint comparison for
+// (2) without a redeploy, kept only as a rollback path.
 func (s *Server) verifySMLDocumentSource(ctx context.Context, document models.SigningDocument) error {
 	if !requiresSMLFinalization(document) {
 		return nil
@@ -157,6 +174,18 @@ func (s *Server) verifySMLDocumentSource(ctx context.Context, document models.Si
 			return &smlSourceStateError{State: "sml_source_missing", Message: "ไม่พบเอกสารนี้ใน SML แล้ว กรุณายกเลิกเอกสารและนำเข้า PDF ฉบับล่าสุดใหม่"}
 		}
 		return err
+	}
+	if s.cfg.SMLSourceCheckMode != config.SMLSourceCheckModeHash {
+		err := s.verifySMLDocumentSourceViaERPLogs(ctx, checkCtx, document)
+		// A shop with no audit database (an SML database restored from backup
+		// arrives without its _logs sibling) can never answer the audit-trail
+		// question. Fall through to the fingerprint check so those shops keep
+		// working as they do today instead of blocking every document.
+		if !errors.Is(err, errSMLAuditLogUnsupported) {
+			return err
+		}
+		s.logger.Info("SML tenant has no audit log database, using source fingerprint instead",
+			"documentID", document.ID, "docNo", document.DocNo, "tenant", document.SMLTenant)
 	}
 	revision := strings.TrimSpace(candidate.SourceRevision)
 	if revision == "" {

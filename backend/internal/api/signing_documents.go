@@ -943,6 +943,11 @@ func (s *Server) createSigningDocumentWithMode(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusInternalServerError, "signing_document_create_failed", "Cannot create signing document right now.")
 		return
 	}
+	// Record where SML's audit trail stood for this document right now, so a
+	// later check can tell "edited since we started" from edits that predate
+	// this job. Best-effort by design: see captureSMLSourceBaseline.
+	s.captureSMLSourceBaseline(r.Context(), document)
+
 	payload := map[string]any{"document": s.withExternalURLs(r, document)}
 	if batchMode {
 		_ = s.store.WriteAuditWithMetadata(r.Context(), actor.ID, "signing_document.batch_import", "signing_document", document.ID, clientIP(r), r.UserAgent(), map[string]any{

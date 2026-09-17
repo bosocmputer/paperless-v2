@@ -12,6 +12,7 @@ import DocumentReferenceCheck from '@/views/signing/components/DocumentReference
 import DocumentWorkflowTimeline from '@/views/signing/components/DocumentWorkflowTimeline.vue';
 import ReadOnlyPdfDialog from '@/views/signing/components/ReadOnlyPdfDialog.vue';
 import SmlDocumentImagesDialog from '@/views/signing/components/SmlDocumentImagesDialog.vue';
+import SmlEditHistoryDialog from '@/views/signing/components/SmlEditHistoryDialog.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useConfirm } from 'primevue/useconfirm';
@@ -108,6 +109,13 @@ const canCancelDocument = computed(() => {
 const canCreateSMLCorrection = computed(() => !isInternalDocument.value && ['rejected', 'cancelled'].includes(document.value?.status));
 const cancelRequiresReason = computed(() => document.value?.status !== 'draft');
 const cancellationActionLabel = computed(() => (document.value?.status === 'draft' ? 'ลบแบบร่าง' : 'ยกเลิกเอกสาร'));
+// The audit-trail history only exists for SML-backed documents, and only
+// matters while the document is actually blocked by a source-state warning.
+const canViewSMLEditHistory = computed(() => {
+    const status = document.value?.status || '';
+    return (status === 'sml_source_changed' || status === 'sml_source_missing') && !!document.value?.docNo;
+});
+const smlEditHistoryVisible = ref(false);
 const sourceAttentionMessage = computed(() => {
     if (document.value?.status === 'sml_source_changed') return 'ข้อมูลเอกสารใน SML ถูกแก้ไขหลังเริ่มงาน กรุณายกเลิกเอกสารฉบับนี้ แล้วนำเข้า PDF ฉบับล่าสุดใหม่';
     if (document.value?.status === 'sml_source_missing') return 'ไม่พบเอกสารนี้ใน SML แล้ว จึงหยุดก่อนส่งรูปและ Lock กรุณายกเลิกเอกสารฉบับนี้ก่อนนำเข้าใหม่';
@@ -857,7 +865,22 @@ function movementEventView(event) {
             <Button icon="pi pi-refresh" severity="secondary" outlined rounded aria-label="โหลดใหม่" :loading="loading" @click="loadPage" />
         </div>
 
-        <Message v-if="sourceAttentionMessage" severity="warn" :closable="false" class="source-attention-banner">{{ sourceAttentionMessage }}</Message>
+        <Message v-if="sourceAttentionMessage" severity="warn" :closable="false" class="source-attention-banner">
+            <div class="source-attention-content">
+                <span>{{ sourceAttentionMessage }}</span>
+                <Button
+                    v-if="canViewSMLEditHistory"
+                    label="ดูรายละเอียดการแก้ไข"
+                    icon="pi pi-history"
+                    size="small"
+                    severity="warn"
+                    outlined
+                    @click="smlEditHistoryVisible = true"
+                />
+            </div>
+        </Message>
+
+        <SmlEditHistoryDialog v-model:visible="smlEditHistoryVisible" :document-id="document?.id || route.params.id" />
 
         <div class="detail-grid">
             <section class="pdf-panel">
@@ -1075,6 +1098,15 @@ function movementEventView(event) {
 }
 .source-attention-banner {
     margin: 0;
+}
+/* The evidence button sits beside the warning on desktop and wraps under it on
+   a phone, so the message text is never squeezed to one word per line. */
+.source-attention-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
 }
 .bar-title {
     min-width: 0;

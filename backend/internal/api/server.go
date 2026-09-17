@@ -120,6 +120,9 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/signing-documents/{id}", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.getSigningDocument)))
 	mux.Handle("GET /api/signing-documents/{id}/related-documents", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.getSigningDocumentRelatedDocuments)))
 	mux.Handle("GET /api/signing-documents/{id}/reference-check", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.getSigningDocumentReferenceCheck)))
+	// Shows who changed an SML document and what they changed, read from
+	// SML's own audit trail so PaperLess and the SML ประวัติ screen agree.
+	mux.Handle("GET /api/signing-documents/{id}/sml-edit-history", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.getSigningDocumentSMLEditHistory)))
 	mux.Handle("GET /api/signing-documents/{id}/attachments", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.listSigningDocumentAttachments)))
 	mux.Handle("GET /api/signing-documents/{id}/attachments/{attachmentId}/file", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.getSigningDocumentAttachmentFile)))
 	mux.Handle("GET /api/signing-documents/{id}/sml-images", s.requireMenuPermission("signing-documents")(http.HandlerFunc(s.listSigningDocumentSMLImages)))
