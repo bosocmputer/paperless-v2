@@ -20,6 +20,82 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Fix - 2026-09-17 (all five shops): "ข้อมูลเอกสารใน SML ถูกแก้ไข" fired on documents nobody had edited
+
+Damrong reported document `2PUV2609-00085` blocked with "ข้อมูลเอกสารใน SML
+ถูกแก้ไขหลังเริ่มงาน" while insisting nobody had touched it. They were right:
+SML's audit log holds only the creation row, `lastedit_datetime` is empty, and
+every business field still matched what PaperLess stored.
+
+The check hashed the raw `ic_trans`/`ap_ar_trans` rows, so it also covered
+columns SML rewrites on its own — `used_status` when a purchase order gets
+consumed, stock recalculation, transient edit markers. Documents nobody had
+opened came back as "edited", and the warning could not say which field
+changed, so users read it as a system error. This was the third false-positive
+incident from the same root cause (see the `guid_code` and numeric-formatting
+entries in `candidateSourceRevisionBatchQuery`'s comments).
+
+Ask SML's own audit trail instead (`erp_logs`), the table the SML ERP ประวัติ
+screen reads, so PaperLess and SML tell a user the same story.
+
+Blocking now requires one of three things, because no single source covers all:
+
+| Condition | Checked by | Why separately |
+|---|---|---|
+| Document gone | existing candidate lookup | SML's cancel path writes no audit row — 143/143 verified |
+| `doc_no` recreated | `function_code=1` after baseline | 33 cases in six weeks, e.g. 743.00 then 12,469.00 by two different users, no edit row between |
+| Edited | non-empty normalized diff | the main case |
+
+A re-save that changed nothing no longer blocks — 57% of production edit rows
+are exactly that. When a document *is* blocked, the banner now opens a dialog
+naming who changed what, from which value to which.
+
+The baseline is an `erp_logs.roworder`, not a timestamp: `date_time` is local
+wall-clock on the SML server while PaperLess stores UTC, and any timezone
+assumption silently drops edits landing inside the skew window.
+
+Audit-log completeness verified on every shop before deploying — every document
+with a real edit had a log row, and every edit row carried both payloads:
+
+| Shop | tenant | edited docs | missing log | payloads |
+|---|---|---|---|---|
+| Damrong | drh | 2080 | 0 | 5805/5805 |
+| Wirat | vrh | 2136 | 0 | 4003/4003 |
+| Insee | inseevat | 1851 | 0 | 3516/3516 |
+| Amata | amatavat | 1227 | 0 | 2015/2015 |
+| Pui | stpt | — | no `_logs` database | — |
+
+Pui's `stpt` tenant was restored from a backup and has no `stpt_logs` database
+(622k documents, none). sml-api returns `501 erp_logs_not_available` for that
+case — distinct from a 503 outage — and PaperLess falls back to the previous
+hash check automatically. Handled in code rather than per-shop env so other
+tenants on the same server (`ampaccount`, which does have logs) still get the
+audit-trail check, and so a future tenant with logs needs no config change.
+
+Index added on all 65 `*_logs` databases with `CONCURRENTLY` (no table lock):
+`erp_logs (doc_no, trans_flag, roworder) INCLUDE (function_code)`. On Damrong's
+936MB table this took a 72ms parallel seq scan (46,633 buffers) down to a
+0.103ms Index Only Scan (7 buffers).
+
+Cleared the stuck documents on Damrong after verifying each against the new
+rule: 8 of 10 had no edit after their signing job started (false positives,
+including the reported `2PUV2609-00085`) and were returned to `in_progress`;
+the 2 with real edits stayed blocked (`2POV2609-00014` — item/qty/price changed
+by user 10392; `2POV2609-00031` — warehouse/shelf and remark changed by 03018).
+
+Known limitation: documents already in flight at deploy time carry baseline -1,
+and the API adopts the current audit position on their first check. Edits made
+*before* this deploy are therefore not detected for those documents. Chosen
+deliberately — comparing against baseline 0 would have blocked all 91 in-flight
+Damrong documents at once.
+
+Rollback: set `SML_SOURCE_CHECK_MODE=hash` and restart the api service;
+`sml_source_revision` is still written, so the old path works unchanged.
+
+Images: `paperless-api:67a3674`, `paperless-web:67a3674`,
+`sml-api-bybos:92e69ab`. Evidence:
+`/data/paperless/releases/20260917104922/postdeploy-checks.txt` (Damrong).
+
 ## Feature - 2026-09-15 (all five shops): filters for the signing queue and signing history
 
 Customer feedback: *"ตรงหน้ารอเซ็นของฉัน อยากให้มีการกรองแบบประวัติด้วยครับ เพราะบางทีต้องรอเวลา มันเลยมากองรวมกันเยอะเลย"*. Shipped as `paperless-api:e579955` / `paperless-web:e579955`.
