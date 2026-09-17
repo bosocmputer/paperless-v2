@@ -89,6 +89,14 @@ and the API adopts the current audit position on their first check. Edits made
 deliberately — comparing against baseline 0 would have blocked all 91 in-flight
 Damrong documents at once.
 
+Verified on Damrong after deploy, all three cases passing: the reported
+document `2PUV2609-00085` signs normally with no warning; a genuinely edited
+document still warns and its change dialog names the editor and the changed
+fields; and a newly created document edited in SML ERP raised the warning as
+intended. Within the first hour, Damrong, Wirat and Amata all recorded real
+baselines on live documents and completed signings, with zero ERROR lines on
+any of the five shops. Pui recorded none, as expected for the hash fallback.
+
 Rollback: set `SML_SOURCE_CHECK_MODE=hash` and restart the api service;
 `sml_source_revision` is still written, so the old path works unchanged.
 
