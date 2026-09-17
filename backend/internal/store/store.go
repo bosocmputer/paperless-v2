@@ -703,6 +703,23 @@ ADD COLUMN IF NOT EXISTS sml_source_revision TEXT NOT NULL DEFAULT '';
 ALTER TABLE signing_documents
 ADD COLUMN IF NOT EXISTS sml_source_checked_at TIMESTAMPTZ;
 
+-- The SML audit trail (erp_logs) baseline for this document: the newest log
+-- roworder that existed when the signing job started. "Has anyone edited this
+-- since?" becomes "is there a log row newer than this?".
+--
+-- This is a roworder rather than a timestamp on purpose. erp_logs.date_time is
+-- a timestamp WITHOUT time zone written in SML server local time while
+-- PaperLess stores UTC, so any timestamp comparison needs a timezone
+-- assumption that silently drops edits landing inside the skew window.
+-- roworder is the erp_logs primary key, monotonic, and needs no clock.
+--
+-- -1 means "not captured yet" and is distinct from 0, which legitimately means
+-- "the document had no log rows at baseline time". Collapsing the two would
+-- make an uncaptured document compare against the start of the log table and
+-- report every historical edit as new.
+ALTER TABLE signing_documents
+ADD COLUMN IF NOT EXISTS sml_source_baseline_row BIGINT NOT NULL DEFAULT -1;
+
 -- A previous deployment may contain multiple terminal attempts for the same
 -- SML document. Give the historical chain deterministic numbers before the
 -- uniqueness guard is created. Re-running this statement produces the same

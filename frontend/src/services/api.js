@@ -473,6 +473,11 @@ export const api = {
     getSigningDocumentReferenceCheck(id) {
         return request(`/api/signing-documents/${id}/reference-check`);
     },
+    // Who changed this SML document and what they changed, read from SML's
+    // own audit trail so it matches the ประวัติ screen in SML ERP.
+    getSigningDocumentSMLEditHistory(id) {
+        return request(`/api/signing-documents/${id}/sml-edit-history`);
+    },
     signingDocumentPDFCacheKey(document, version = 'current') {
         return signingDocumentPDFCacheKey(document, version);
     },

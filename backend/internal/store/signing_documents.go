@@ -2086,6 +2086,43 @@ WHERE id = $1
 
 // RecordSMLSourceCheck stores only the opaque source revision so later workflow
 // transitions can tell an SML edit from PaperLess's own image/lock updates.
+// RecordSMLSourceBaseline stores the SML audit-trail marker captured when a
+// signing job starts. Every later "was this edited?" check compares against
+// this value.
+//
+// Unlike RecordSMLSourceCheck it accepts a zero value, because zero is a real
+// baseline: a document with no erp_logs rows yet. Only -1 means "not
+// captured", so the check can tell "verified clean" apart from "never
+// measured" instead of treating an unmeasured document as edited.
+func (s *Store) RecordSMLSourceBaseline(ctx context.Context, documentID string, baselineRow int64) error {
+	_, err := s.pool.Exec(ctx, `
+UPDATE signing_documents
+SET sml_source_baseline_row=$2, sml_source_checked_at=now(), updated_at=now()
+WHERE id=$1
+`, documentID, baselineRow)
+	return err
+}
+
+// AdvanceSMLSourceBaseline moves a document's baseline forward after a check
+// confirmed the newer log rows contained no user-visible change (a plain
+// re-save, which over half of production edit rows turn out to be).
+//
+// Without this, one harmless re-save would be re-examined on every subsequent
+// signature step for the life of the document, repeatedly decoding the same
+// payloads. The guard on the old value keeps a concurrent check from moving
+// the baseline backwards.
+func (s *Store) AdvanceSMLSourceBaseline(ctx context.Context, documentID string, fromRow, toRow int64) error {
+	if toRow <= fromRow {
+		return nil
+	}
+	_, err := s.pool.Exec(ctx, `
+UPDATE signing_documents
+SET sml_source_baseline_row=$3, sml_source_checked_at=now(), updated_at=now()
+WHERE id=$1 AND sml_source_baseline_row=$2
+`, documentID, fromRow, toRow)
+	return err
+}
+
 func (s *Store) RecordSMLSourceCheck(ctx context.Context, documentID, revision string) error {
 	revision = strings.TrimSpace(revision)
 	if revision == "" {
@@ -3158,7 +3195,7 @@ func splitSignerUser(value string) (string, string) {
 
 func signingDocumentSelect() string {
 	return `
-SELECT d.id::text, d.attempt_no, COALESCE(d.previous_document_id::text,''), COALESCE(nd.id::text,''), COALESCE(d.sml_source_revision,''), d.sml_source_checked_at,
+SELECT d.id::text, d.attempt_no, COALESCE(d.previous_document_id::text,''), COALESCE(nd.id::text,''), COALESCE(d.sml_source_revision,''), d.sml_source_checked_at, COALESCE(d.sml_source_baseline_row,-1),
        d.document_source, COALESCE(d.internal_document_id::text,''), d.sml_tenant, d.sml_data_group, d.sml_data_code,
        d.screen_code, d.doc_format_code, d.doc_no, d.sml_table, d.trans_flag,
        d.party_code, d.party_name, d.party_type, d.department_code, d.department_name, COALESCE(d.doc_date::text,''), d.total_amount,
@@ -3217,7 +3254,7 @@ func scanSigningDocument(row rowScanner) (models.SigningDocument, error) {
 	var original, current, final models.UploadedFile
 	var originalCreated, currentCreated, finalCreated sql.NullTime
 	err := row.Scan(
-		&doc.ID, &doc.AttemptNo, &doc.PreviousDocumentID, &doc.NextDocumentID, &doc.SMLSourceRevision, &sourceCheckedAt,
+		&doc.ID, &doc.AttemptNo, &doc.PreviousDocumentID, &doc.NextDocumentID, &doc.SMLSourceRevision, &sourceCheckedAt, &doc.SMLSourceBaselineRow,
 		&doc.DocumentSource, &doc.InternalDocumentID, &doc.SMLTenant, &doc.SMLDataGroup, &doc.SMLDataCode,
 		&doc.ScreenCode, &doc.DocFormatCode, &doc.DocNo, &doc.SMLTable, &doc.TransFlag,
 		&doc.PartyCode, &doc.PartyName, &doc.PartyType, &doc.DepartmentCode, &doc.DepartmentName, &doc.DocDate, &doc.TotalAmount,

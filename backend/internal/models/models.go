@@ -715,6 +715,12 @@ type SigningDocument struct {
 	NextDocumentID      string                       `json:"nextDocumentId,omitempty"`
 	SMLSourceRevision   string                       `json:"smlSourceRevision,omitempty"`
 	SMLSourceCheckedAt  *time.Time                   `json:"smlSourceCheckedAt,omitempty"`
+	// SMLSourceBaselineRow is the newest erp_logs.roworder that existed for
+	// this document when the signing job started. -1 means no baseline was
+	// captured (SML unreachable at creation time, or a document created
+	// before this feature shipped); 0 legitimately means the document had no
+	// audit-log rows yet. See the column comment in store.EnsureSchema.
+	SMLSourceBaselineRow int64 `json:"smlSourceBaselineRow,omitempty"`
 	DocumentSource      string                       `json:"documentSource"`
 	InternalDocumentID  string                       `json:"internalDocumentId,omitempty"`
 	InternalRevision    int                          `json:"internalRevision,omitempty"`

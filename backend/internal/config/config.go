@@ -27,6 +27,14 @@ type Config struct {
 	SMLPaperlessTimeout  time.Duration
 	SMLAuthProvider      string
 	SMLAuthDataGroup     string
+	// SMLSourceCheckMode selects how "was this SML document edited after we
+	// started?" is answered: "erp_logs" (SML's own audit trail, the same
+	// source the ERP ประวัติ screen reads) or "hash" (the previous content
+	// fingerprint). The hash covered SML-internal columns that change on
+	// their own, which caused repeated false "user edited this" reports, so
+	// erp_logs is the default. "hash" is kept purely as a rollback switch
+	// that needs no redeploy.
+	SMLSourceCheckMode string
 	LocalAuthFallback    bool
 	SMLSignatureSync     bool
 	SMLReadinessRegistry bool
@@ -57,6 +65,7 @@ func Load() (Config, error) {
 		SMLPaperlessTenant:   strings.ToLower(getenv("SML_PAPERLESS_TENANT", "sml1_2026")),
 		SMLAuthProvider:      strings.ToLower(getenv("SML_AUTH_PROVIDER", "data")),
 		SMLAuthDataGroup:     strings.ToLower(getenv("SML_AUTH_DATAGROUP", "sml")),
+		SMLSourceCheckMode:   normalizeSMLSourceCheckMode(getenv("SML_SOURCE_CHECK_MODE", "erp_logs")),
 		LocalAuthFallback:    parseBool(getenv("PAPERLESS_LOCAL_AUTH_FALLBACK_ENABLED", "false")),
 		SMLSignatureSync:     parseBool(getenv("SML_SIGNATURE_SYNC_ENABLED", "true")),
 		SMLReadinessRegistry: parseBool(getenv("SML_TENANT_READINESS_REGISTRY_ENABLED", "true")),
@@ -161,6 +170,25 @@ func getenv(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+// SMLSourceCheckModeERPLogs verifies against SML's erp_logs audit trail.
+// SMLSourceCheckModeHash verifies against the legacy content fingerprint.
+const (
+	SMLSourceCheckModeERPLogs = "erp_logs"
+	SMLSourceCheckModeHash    = "hash"
+)
+
+// normalizeSMLSourceCheckMode falls back to the erp_logs mode for any
+// unrecognized value rather than failing startup. A typo in one shop's env
+// file must not take that shop's API down, and erp_logs is the safe default:
+// it still blocks real edits, it just stops reporting SML's own internal
+// column updates as user edits.
+func normalizeSMLSourceCheckMode(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), SMLSourceCheckModeHash) {
+		return SMLSourceCheckModeHash
+	}
+	return SMLSourceCheckModeERPLogs
 }
 
 func splitCSV(value string) []string {
