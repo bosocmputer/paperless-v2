@@ -20,6 +20,37 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Fix - 2026-10-07 (all five shops, sml-api only): blank placeholder rows no longer count as an edit
+
+SML appends empty detail rows when a document is re-saved, and the audit-trail
+diff counted each as an added line, so a re-save that only gained blank rows
+blocked a document nobody had edited. `sml-api-bybos` PR #5 skips an added or
+removed row that has no item code, no name, and a zero quantity, price and
+amount. A row with a name, quantity, price or amount but no code is still
+reported, and filling a blank line in is still reported as an added row.
+
+Deployed `sml-api-bybos:22ab47c` to all five shops (sml-api only; paperless api
+and web unchanged). Every sml-api container is healthy with zero ERROR lines.
+Per shop: Damrong, Wirat, Insee and Amata use the audit trail; on Pui, `stpt`
+still returns 501 and falls back to the hash check, and `ampaccount` still
+returns its normal response, so the fallback is intact.
+
+Before/after on Damrong with real documents, same baselines, old image then new:
+
+| Document | Before | After |
+|---|---|---|
+| 2PSS2609-17008 | blocked (2 changes) | not blocked |
+| 1PUV2609-00018 | blocked (2 changes) | not blocked |
+| 2POV2609-00091 | blocked (284) | blocked (245), has real edits too |
+| 2PU2609-00023 (real remark edit) | blocked | still blocked (1 change) |
+| 2POV2609-00014 (real item edit) | blocked | still blocked (186) |
+
+Over all 1,393 audit rows since 2026-09-17 the share of edits with an empty diff
+rose from 14% to 23%.
+
+Rollback: restore `compose.yml.bak-*` and `up -d --no-deps sml-api`, previous
+tag `92e69ab`.
+
 ## Current Customer Status - 2026-10-07 (Damrong): healthy, and what three weeks of the audit-trail check showed
 
 Damrong Homeplus is running normally: api `a45af23`, web `890bdf9`, sml-api
