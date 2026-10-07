@@ -20,6 +20,36 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Current Customer Status - 2026-10-07 (Damrong): healthy, and what three weeks of the audit-trail check showed
+
+Damrong Homeplus is running normally: api `a45af23`, web `890bdf9`, sml-api
+`92e69ab`, all up and healthy, `/health/ready` ok, zero ERROR lines, no trial
+limit, and no banner on the login or main page.
+
+Measured against production on 2026-10-07:
+
+- 697 signing documents were created after the 2026-09-17 deploy; 681 of them
+  carry a real audit baseline. Exactly one was blocked as edited
+  (`2PU2609-00023`), and it was a genuine edit: user 353127 removed text from the
+  remark on 2026-09-21.
+- Documents in `sml_source_changed`: 3. `2POV2609-00014` and `2POV2609-00031` are
+  the two real edits from the original cleanup; `2PU2609-00023` is the new one.
+  Nothing has been blocked on a document nobody edited since the deploy.
+
+Corrections to claims made at the time of the 2026-09-17 rollout:
+
+- "57% of edit rows are plain re-saves" was wrong. Of 1,166 edit log rows since
+  the deploy, 46% have an unchanged total, but most of those still change items
+  or prices. Only 11% (131 rows) differ by nothing a person could have typed.
+- Those 131 rows differ only by blank detail rows that SML appends (an added row
+  with no item code, quantity 0, price 0). The shipped diff counts an added blank
+  row as a change, so a re-save that does nothing but gain blank rows would still
+  block the document. The "re-save no longer blocks" behaviour therefore holds
+  for a byte-identical re-save, not for one that also gains blank rows. Not yet
+  fixed; it is a small change in `sml-api-bybos` `erp_log_diff.go` (ignore added
+  or removed rows that are blank). No document has been wrongly blocked by it so
+  far.
+
 ## Change - 2026-10-07 (Damrong only): trial lifted after payment
 
 Damrong Homeplus paid, so the trial limit was removed one day before its
@@ -103,8 +133,10 @@ Blocking now requires one of three things, because no single source covers all:
 | `doc_no` recreated | `function_code=1` after baseline | 33 cases in six weeks, e.g. 743.00 then 12,469.00 by two different users, no edit row between |
 | Edited | non-empty normalized diff | the main case |
 
-A re-save that changed nothing no longer blocks — 57% of production edit rows
-are exactly that. When a document *is* blocked, the banner now opens a dialog
+A re-save that changed nothing no longer blocks. (An earlier version of this
+note said 57% of edit rows were exactly that; that was wrong — it counted rows
+whose total was unchanged, and most of those still change items or prices. The
+measured share on Damrong is 11%, see the 2026-10-07 status entry.) When a document *is* blocked, the banner now opens a dialog
 naming who changed what, from which value to which.
 
 The baseline is an `erp_logs.roworder`, not a timestamp: `date_time` is local
