@@ -20,6 +20,63 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Change - 2026-10-07 (Damrong only): trial lifted after payment
+
+Damrong Homeplus paid, so the trial limit was removed one day before its
+2026-10-08 end date.
+
+- Deleted `TRIAL_EXPIRES_AT` from `/data/paperless/config/.env.prod` and changed
+  the compose line to `${TRIAL_EXPIRES_AT:-}`, matching the repo's
+  `docker-compose.yml`, so an unset value no longer warns on every compose
+  command. Backups: `.env.prod.bak-20261007113619` and
+  `compose.yml.bak-20261007113619`.
+- Restarted only the api service (web and sml-api untouched, images unchanged).
+- Verified: `GET /api/public/trial` returns `{"trialExpiresAt":null}`, the api
+  container carries an empty `TRIAL_EXPIRES_AT`, and the banner is gone from
+  both the login page and the main page. The signed-in browser's cached trial
+  date cleared itself on the next `/api/auth/me`.
+
+Rollback: set `TRIAL_EXPIRES_AT=<YYYY-MM-DD>` in `.env.prod` and run
+`up -d --no-deps api`.
+
+## Fix - 2026-10-07 (Damrong only): trial banner hidden behind the topbar, missing on the login page, and late to show "ended"
+
+Damrong's trial ends 2026-10-08, and the warning had three defects.
+
+- **Main page:** `AppTrialBanner` was rendered outside `.layout-main-container`.
+  That container's top padding is what clears the fixed topbar, so the banner
+  sat at y=0 behind it and showed only while scrolled to the very top. Moved
+  inside the container. Measured after deploy: banner top 67px, topbar bottom
+  46px, scrollY 0.
+- **Login page:** no banner at all, because the end date only arrived in the
+  login/me responses, after the sign-in it was meant to warn about. Added
+  public `GET /api/public/trial` returning only `trialExpiresAt` (no tenant or
+  user data; signed-in users already receive it). The login page fetches it and
+  a failure never blocks signing in.
+- **"Ended" state:** the day count used `Math.ceil`, which stays at 0 for the
+  whole first 24 hours after the deadline. An ended trial read "ends today" in
+  amber while the server was already refusing logins, and turned red a day
+  late. "Ended" is now decided from remaining time <= 0.
+
+Only api and web were redeployed; sml-api stays at `92e69ab`. The api image is
+`a45af23` (public endpoint) and the web image is `890bdf9` (banner fixes). The
+second fix touched only `frontend/`, so the API workflow, which triggers on
+`backend/**`, correctly did not build a new api image.
+
+Verified on the live Damrong site: warning banner on both the login page and
+the main page ("อีก 2 วัน"). The ended state was checked by overriding the
+`/api/public/trial` response in the browser to a past date, with nothing
+changed on the server, and rendered the red "สิ้นสุดแล้ว" banner.
+
+Behaviour once the trial ends: login is refused by the server (existing
+sessions keep working until their token expires), so the red banner is what a
+blocked user sees on the login page.
+
+To end the trial after Damrong pays, remove `TRIAL_EXPIRES_AT` from
+`/data/paperless/config/.env.prod` and restart the api service.
+
+Rollback: restore `compose.yml.bak-*` on the server and `up -d --no-deps api web`.
+
 ## Fix - 2026-09-17 (all five shops): "ข้อมูลเอกสารใน SML ถูกแก้ไข" fired on documents nobody had edited
 
 Damrong reported document `2PUV2609-00085` blocked with "ข้อมูลเอกสารใน SML
