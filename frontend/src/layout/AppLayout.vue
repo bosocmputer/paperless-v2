@@ -22,8 +22,10 @@ const containerClass = computed(() => {
     <div class="layout-wrapper" :class="containerClass">
         <AppTopbar />
         <AppSidebar />
-        <AppTrialBanner />
         <div class="layout-main-container">
+            <!-- Inside the container, not before it: the container's top padding is what
+                 clears the fixed topbar. Placed outside, the banner sat behind the topbar. -->
+            <AppTrialBanner />
             <div class="layout-main">
                 <router-view />
             </div>

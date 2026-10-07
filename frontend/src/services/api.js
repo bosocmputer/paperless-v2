@@ -126,6 +126,10 @@ function splitIdempotencyPayload(payload = {}) {
 }
 
 export const api = {
+    // Public: the login page shows the trial warning before anyone has a session.
+    getTrialStatus() {
+        return request('/api/public/trial');
+    },
     login(username, password, databaseName = '', authSource = '') {
         return request('/api/auth/login', {
             method: 'POST',

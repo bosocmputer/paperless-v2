@@ -2,7 +2,8 @@
 import FloatingConfigurator from '@/components/FloatingConfigurator.vue';
 import { api } from '@/services/api';
 import { authStore } from '@/stores/auth';
-import { computed, ref } from 'vue';
+import AppTrialBanner from '@/layout/AppTrialBanner.vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 
@@ -19,6 +20,18 @@ const repairApplying = ref(false);
 const repairDialogVisible = ref(false);
 const repairPlans = ref([]);
 const error = ref('');
+// undefined = not fetched yet (banner stays hidden); null = this shop has no trial.
+const trialExpiresAt = ref(undefined);
+
+// Informational only: a failure here must never get in the way of signing in.
+onMounted(async () => {
+    try {
+        const status = await api.getTrialStatus();
+        trialExpiresAt.value = status?.trialExpiresAt || null;
+    } catch {
+        trialExpiresAt.value = undefined;
+    }
+});
 const step = ref('credentials');
 const databases = ref([]);
 const selectedDatabase = ref('');
@@ -419,6 +432,7 @@ async function applyRepairSelectedDatabase() {
     <FloatingConfigurator />
     <div class="bg-surface-50 dark:bg-surface-950 flex items-center justify-center min-h-screen min-w-[100vw] overflow-x-hidden overflow-y-auto px-4 py-6">
         <div class="flex flex-col items-center justify-center w-full">
+            <AppTrialBanner v-if="trialExpiresAt" :expires-at="trialExpiresAt" class="w-full max-w-[38rem]" />
             <div class="w-full max-w-[38rem]" style="border-radius: 24px; padding: 0.25rem; background: linear-gradient(180deg, var(--primary-color) 8%, rgba(33, 150, 243, 0) 32%)">
                 <div class="w-full bg-surface-0 dark:bg-surface-900 py-10 px-5 sm:px-8 md:py-14 md:px-14" style="border-radius: 20px">
                     <div class="text-center mb-8">

@@ -646,6 +646,16 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// trialStatus tells an unauthenticated visitor when this shop's trial ends.
+//
+// The login page needs it: a customer on trial who has not signed in yet is
+// exactly who must be warned, and /api/auth/me is behind the login it would be
+// warning them about. It exposes only the end date, which every signed-in user
+// already receives, and no tenant or user data.
+func (s *Server) trialStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"trialExpiresAt": s.cfg.TrialExpiresAt})
+}
+
 func (s *Server) clientFeatureFlags() map[string]bool {
 	return map[string]bool{"internalDocuments": s.cfg.InternalDocuments}
 }

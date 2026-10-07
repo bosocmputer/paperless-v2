@@ -2,11 +2,13 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/bosocmputer/paperless-v2/backend/internal/config"
 	"github.com/bosocmputer/paperless-v2/backend/internal/models"
 )
 
@@ -77,5 +79,44 @@ func TestTenantReadinessCanRepairSchemaColumns(t *testing.T) {
 				t.Fatalf("tenantReadinessCanRepairSchemaColumns = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// The login page calls this before anyone is signed in, so it must work without
+// a session and must report both states: a trial date, and no trial at all.
+func TestTrialStatusReportsConfiguredExpiry(t *testing.T) {
+	expires := time.Date(2026, 10, 8, 23, 59, 59, 0, time.UTC)
+	s := &Server{cfg: config.Config{TrialExpiresAt: &expires}}
+
+	recorder := httptest.NewRecorder()
+	s.trialStatus(recorder, httptest.NewRequest(http.MethodGet, "/api/public/trial", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body struct {
+		TrialExpiresAt *time.Time `json:"trialExpiresAt"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.TrialExpiresAt == nil || !body.TrialExpiresAt.Equal(expires) {
+		t.Fatalf("trialExpiresAt = %v, want %v", body.TrialExpiresAt, expires)
+	}
+}
+
+func TestTrialStatusReportsNullWhenNoTrial(t *testing.T) {
+	s := &Server{cfg: config.Config{}}
+
+	recorder := httptest.NewRecorder()
+	s.trialStatus(recorder, httptest.NewRequest(http.MethodGet, "/api/public/trial", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	// Explicit null, not a missing key: the client distinguishes "no trial"
+	// from "response was malformed".
+	if !bytes.Contains(recorder.Body.Bytes(), []byte(`"trialExpiresAt":null`)) {
+		t.Fatalf("body = %s, want trialExpiresAt:null", recorder.Body.String())
 	}
 }
