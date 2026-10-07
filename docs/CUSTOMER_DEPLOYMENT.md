@@ -142,10 +142,13 @@ Blocking now requires one of three things, because no single source covers all:
 | Edited | non-empty normalized diff | the main case |
 
 A re-save that changed nothing no longer blocks. (An earlier version of this
-note said 57% of edit rows were exactly that; that was wrong — it counted rows
-whose total was unchanged, and most of those still change items or prices. The
-measured share on Damrong is 11%, see the 2026-10-07 status entry.) When a document *is* blocked, the banner now opens a dialog
-naming who changed what, from which value to which.
+note said 57% of edit rows were exactly that; that was wrong. Measured on
+Damrong, 14% of edit rows have an empty diff and 53% have an unchanged total,
+and most of the latter still change items or prices. See the 2026-10-07 status
+entry.)
+
+When a document *is* blocked, the banner now opens a dialog naming who changed
+what, from which value to which.
 
 The baseline is an `erp_logs.roworder`, not a timestamp: `date_time` is local
 wall-clock on the SML server while PaperLess stores UTC, and any timezone
