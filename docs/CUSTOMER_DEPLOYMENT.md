@@ -20,6 +20,25 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Change - 2026-10-07 (Damrong only): trial lifted after payment
+
+Damrong Homeplus paid, so the trial limit was removed one day before its
+2026-10-08 end date.
+
+- Deleted `TRIAL_EXPIRES_AT` from `/data/paperless/config/.env.prod` and changed
+  the compose line to `${TRIAL_EXPIRES_AT:-}`, matching the repo's
+  `docker-compose.yml`, so an unset value no longer warns on every compose
+  command. Backups: `.env.prod.bak-20261007113619` and
+  `compose.yml.bak-20261007113619`.
+- Restarted only the api service (web and sml-api untouched, images unchanged).
+- Verified: `GET /api/public/trial` returns `{"trialExpiresAt":null}`, the api
+  container carries an empty `TRIAL_EXPIRES_AT`, and the banner is gone from
+  both the login page and the main page. The signed-in browser's cached trial
+  date cleared itself on the next `/api/auth/me`.
+
+Rollback: set `TRIAL_EXPIRES_AT=<YYYY-MM-DD>` in `.env.prod` and run
+`up -d --no-deps api`.
+
 ## Fix - 2026-10-07 (Damrong only): trial banner hidden behind the topbar, missing on the login page, and late to show "ended"
 
 Damrong's trial ends 2026-10-08, and the warning had three defects.
