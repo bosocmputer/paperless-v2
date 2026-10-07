@@ -36,19 +36,27 @@ Measured against production on 2026-10-07:
   the two real edits from the original cleanup; `2PU2609-00023` is the new one.
   Nothing has been blocked on a document nobody edited since the deploy.
 
-Corrections to claims made at the time of the 2026-09-17 rollout:
+Corrections to claims made at the time of the 2026-09-17 rollout, measured on
+all 1,393 audit-log edit rows since the deploy by running the shipped diff:
 
-- "57% of edit rows are plain re-saves" was wrong. Of 1,166 edit log rows since
-  the deploy, 46% have an unchanged total, but most of those still change items
-  or prices. Only 11% (131 rows) differ by nothing a person could have typed.
-- Those 131 rows differ only by blank detail rows that SML appends (an added row
-  with no item code, quantity 0, price 0). The shipped diff counts an added blank
-  row as a change, so a re-save that does nothing but gain blank rows would still
-  block the document. The "re-save no longer blocks" behaviour therefore holds
-  for a byte-identical re-save, not for one that also gains blank rows. Not yet
-  fixed; it is a small change in `sml-api-bybos` `erp_log_diff.go` (ignore added
-  or removed rows that are blank). No document has been wrongly blocked by it so
-  far.
+- "57% of edit rows are plain re-saves" was not what the data showed. 53% of
+  rows have an unchanged document total, but most of those still change items or
+  prices, so an unchanged total does not mean nothing changed. Rows whose diff is
+  actually empty, and so do not block, are 14% (197).
+- A further 131 rows (9 points) are blocked today only because SML appends blank
+  placeholder rows on re-save and the shipped diff counted each as an added line.
+  That is a bug: a re-save that does nothing but gain blank rows blocks a
+  document nobody edited. No document has been wrongly blocked by it so far (one
+  document has been blocked since the deploy, and it was a real edit).
+- Fix: `sml-api-bybos` PR #5 skips added or removed rows with no item code, no
+  name and zero quantity, price and amount. On the same 1,393 rows it takes the
+  empty-diff share from 14% to 23%, and no real edit is lost. Until it is
+  deployed, the "a re-save does not block" behaviour holds only for re-saves that
+  do not gain blank rows.
+- An earlier revision of this entry gave 11% of 1,166 rows. That figure came from
+  a throwaway analysis script that split the export on carriage returns and
+  silently dropped 227 rows, so it described a biased subset. The 1,393-row
+  Go-based figures above replace it.
 
 ## Change - 2026-10-07 (Damrong only): trial lifted after payment
 
@@ -134,10 +142,13 @@ Blocking now requires one of three things, because no single source covers all:
 | Edited | non-empty normalized diff | the main case |
 
 A re-save that changed nothing no longer blocks. (An earlier version of this
-note said 57% of edit rows were exactly that; that was wrong — it counted rows
-whose total was unchanged, and most of those still change items or prices. The
-measured share on Damrong is 11%, see the 2026-10-07 status entry.) When a document *is* blocked, the banner now opens a dialog
-naming who changed what, from which value to which.
+note said 57% of edit rows were exactly that; that was wrong. Measured on
+Damrong, 14% of edit rows have an empty diff and 53% have an unchanged total,
+and most of the latter still change items or prices. See the 2026-10-07 status
+entry.)
+
+When a document *is* blocked, the banner now opens a dialog naming who changed
+what, from which value to which.
 
 The baseline is an `erp_logs.roworder`, not a timestamp: `date_time` is local
 wall-clock on the SML server while PaperLess stores UTC, and any timezone
