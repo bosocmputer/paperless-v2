@@ -1,5 +1,6 @@
 <script setup>
 import { authStore } from '@/stores/auth';
+import { trialBannerMessage, trialBannerState } from '@/utils/trialBanner';
 import Message from 'primevue/message';
 import { computed } from 'vue';
 
@@ -13,24 +14,12 @@ const props = defineProps({
 
 const effectiveExpiresAt = computed(() => (props.expiresAt !== undefined ? props.expiresAt : authStore.trialExpiresAt));
 
-const daysLeft = computed(() => {
-    if (!effectiveExpiresAt.value) return null;
-    const expiresAt = new Date(effectiveExpiresAt.value);
-    if (Number.isNaN(expiresAt.getTime())) return null;
-    const diffMs = expiresAt.getTime() - Date.now();
-    return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
-});
-
-// Past the end date still shows, as an error: on the login page it explains why
+const state = computed(() => trialBannerState(effectiveExpiresAt.value));
+const visible = computed(() => state.value.visible);
+// Past the end date it shows as an error: on the login page it explains why
 // signing in is refused, instead of leaving the user with only a rejected form.
-const visible = computed(() => daysLeft.value !== null && daysLeft.value <= 3);
-const expired = computed(() => daysLeft.value !== null && daysLeft.value < 0);
-
-const message = computed(() => {
-    if (expired.value) return 'ระยะเวลาทดลองใช้งานสิ้นสุดแล้ว กรุณาติดต่อทีมงานเพื่อต่ออายุการใช้งาน';
-    if (daysLeft.value === 0) return 'ระยะเวลาทดลองใช้งานจะสิ้นสุดวันนี้ กรุณาติดต่อทีมงานเพื่อต่ออายุการใช้งาน';
-    return `ระยะเวลาทดลองใช้งานจะสิ้นสุดในอีก ${daysLeft.value} วัน กรุณาติดต่อทีมงานเพื่อต่ออายุการใช้งาน`;
-});
+const expired = computed(() => state.value.expired);
+const message = computed(() => trialBannerMessage(state.value));
 </script>
 
 <template>
