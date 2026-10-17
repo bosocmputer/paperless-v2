@@ -510,7 +510,7 @@ CREATE TABLE IF NOT EXISTS internal_documents (
     position_name TEXT NOT NULL DEFAULT '',
     department_name TEXT NOT NULL DEFAULT '',
     purpose TEXT NOT NULL,
-    total_amount NUMERIC(18,2) NOT NULL CHECK (total_amount > 0),
+    total_amount NUMERIC(18,2) NOT NULL CHECK (total_amount <> 0),
     company_snapshot JSONB NOT NULL,
     status TEXT NOT NULL DEFAULT 'generating' CHECK (status IN ('generating', 'draft', 'in_progress', 'completed', 'rejected', 'cancelled', 'generation_failed')),
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
@@ -539,13 +539,40 @@ CREATE TABLE IF NOT EXISTS internal_document_items (
     revision INTEGER NOT NULL CHECK (revision > 0),
     sequence_no INTEGER NOT NULL CHECK (sequence_no > 0),
     description TEXT NOT NULL,
-    amount NUMERIC(18,2) NOT NULL CHECK (amount > 0),
+    amount NUMERIC(18,2) NOT NULL CHECK (amount <> 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (document_id, revision, sequence_no)
 );
 
 CREATE INDEX IF NOT EXISTS internal_document_items_lookup_idx
 ON internal_document_items (document_id, revision, sequence_no);
+
+-- Internal document lines may be deductions and the total may be negative (a
+-- refund), so the amount checks forbid zero rather than non-positive values.
+-- Existing databases were created with "> 0"; swap that exact definition once.
+-- The definition is compared first so a restart does not drop and re-add the
+-- constraint (and rescan the table under a lock) every time it boots.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'internal_documents'::regclass
+          AND conname = 'internal_documents_total_amount_check'
+          AND pg_get_constraintdef(oid) = 'CHECK ((total_amount > (0)::numeric))'
+    ) THEN
+        ALTER TABLE internal_documents DROP CONSTRAINT internal_documents_total_amount_check;
+        ALTER TABLE internal_documents ADD CONSTRAINT internal_documents_total_amount_check CHECK (total_amount <> 0);
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'internal_document_items'::regclass
+          AND conname = 'internal_document_items_amount_check'
+          AND pg_get_constraintdef(oid) = 'CHECK ((amount > (0)::numeric))'
+    ) THEN
+        ALTER TABLE internal_document_items DROP CONSTRAINT internal_document_items_amount_check;
+        ALTER TABLE internal_document_items ADD CONSTRAINT internal_document_items_amount_check CHECK (amount <> 0);
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS internal_document_versions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -177,12 +177,19 @@ func drawInternalSummary(pdf *gofpdf.Fpdf, document models.InternalDocument) {
 
 func thaiBahtText(value string) string {
 	cents, err := parseAmountCents(value)
-	if err != nil || cents < 0 {
+	if err != nil {
 		return ""
+	}
+	// A negative total reads "ลบ" first, as on a credit note. It used to return an
+	// empty string, which left the words box blank next to a real amount.
+	prefix := ""
+	if cents < 0 {
+		prefix = "ลบ"
+		cents = -cents
 	}
 	baht := cents / 100
 	satang := cents % 100
-	result := thaiIntegerText(baht) + "บาท"
+	result := prefix + thaiIntegerText(baht) + "บาท"
 	if satang == 0 {
 		return result + "ถ้วน"
 	}
@@ -232,8 +239,16 @@ func thaiIntegerText(value int64) string {
 	return text
 }
 
+// parseAmountCents reads a stored amount ("-1500.50", "1234.5") as signed cents.
+//
+// The sign belongs to the whole value. Parsing the integer and fraction parts
+// separately and adding them gives -50 for "-1.50" (-100 + 50), and drops the
+// sign for "-0.50" (-0 is 0), so a negative amount printed as the wrong number.
 func parseAmountCents(value string) (int64, error) {
-	parts := strings.Split(strings.TrimSpace(value), ".")
+	value = strings.TrimSpace(value)
+	negative := strings.HasPrefix(value, "-")
+	value = strings.TrimPrefix(value, "-")
+	parts := strings.Split(value, ".")
 	if len(parts) > 2 {
 		return 0, fmt.Errorf("invalid amount")
 	}
@@ -242,14 +257,18 @@ func parseAmountCents(value string) (int64, error) {
 		frac = (parts[1] + "00")[:2]
 	}
 	whole, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		return 0, err
+	if err != nil || whole < 0 {
+		return 0, fmt.Errorf("invalid amount")
 	}
 	decimal, err := strconv.ParseInt(frac, 10, 64)
-	if err != nil {
-		return 0, err
+	if err != nil || decimal < 0 {
+		return 0, fmt.Errorf("invalid amount")
 	}
-	return whole*100 + decimal, nil
+	cents := whole*100 + decimal
+	if negative {
+		cents = -cents
+	}
+	return cents, nil
 }
 
 func formatInternalAmount(value string) string {
@@ -257,13 +276,18 @@ func formatInternalAmount(value string) string {
 	if err != nil {
 		return value
 	}
+	sign := ""
+	if cents < 0 {
+		sign = "-"
+		cents = -cents
+	}
 	whole := cents / 100
 	frac := cents % 100
 	raw := strconv.FormatInt(whole, 10)
 	for i := len(raw) - 3; i > 0; i -= 3 {
 		raw = raw[:i] + "," + raw[i:]
 	}
-	return fmt.Sprintf("%s.%02d", raw, frac)
+	return fmt.Sprintf("%s%s.%02d", sign, raw, frac)
 }
 
 func formatInternalDate(value string) string {

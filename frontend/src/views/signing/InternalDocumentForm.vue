@@ -146,8 +146,11 @@ function validateForm() {
     if (!form.requesterName.trim()) return 'กรุณากรอกชื่อผู้ขอเบิก';
     if (!form.purpose.trim()) return 'กรุณากรอกวัตถุประสงค์';
     if (form.items.length > maxItemsPerForm) return `แบบฟอร์ม A4 รองรับสูงสุด ${maxItemsPerForm} รายการ`;
-    const invalidIndex = form.items.findIndex((item) => !String(item.description || '').trim() || Number(item.amount || 0) <= 0);
-    if (invalidIndex >= 0) return `กรุณาตรวจสอบรายการที่ ${invalidIndex + 1}`;
+    // A line may be a deduction, so negative is fine; only zero (or empty) is not.
+    const invalidIndex = form.items.findIndex((item) => !String(item.description || '').trim() || !Number(item.amount || 0));
+    if (invalidIndex >= 0) return `กรุณาตรวจสอบรายการที่ ${invalidIndex + 1} (ต้องมีรายละเอียดและจำนวนเงินที่ไม่เป็นศูนย์)`;
+    // Compared in whole satang: 0.1 + 0.2 - 0.3 is not exactly 0 in floating point.
+    if (Math.round(totalAmount.value * 100) === 0) return 'ยอดรวมของเอกสารต้องไม่เป็นศูนย์';
     return '';
 }
 
@@ -240,7 +243,7 @@ function formatMoney(value) {
             <DataTable :value="form.items" dataKey="clientKey" responsiveLayout="scroll" class="items-table">
                 <Column header="ลำดับ" style="width: 5rem"><template #body="{ index }"><span class="sequence">{{ index + 1 }}</span></template></Column>
                 <Column header="รายการ" style="min-width: 24rem"><template #body="{ data }"><InputText v-model="data.description" maxlength="500" placeholder="รายละเอียดรายการ" class="w-full" @input="markDirty" /></template></Column>
-                <Column header="จำนวนเงิน (บาท)" style="min-width: 13rem"><template #body="{ data }"><InputNumber v-model="data.amount" mode="decimal" :min="0" :maxFractionDigits="2" :minFractionDigits="2" fluid @input="markDirty" /></template></Column>
+                <Column header="จำนวนเงิน (บาท)" style="min-width: 13rem"><template #body="{ data }"><InputNumber v-model="data.amount" mode="decimal" placeholder="0.00 (ติดลบได้)" :maxFractionDigits="2" :minFractionDigits="2" fluid @input="markDirty" /></template></Column>
                 <Column header="" style="width: 5rem"><template #body="{ index }"><Button icon="pi pi-trash" rounded text severity="danger" aria-label="ลบรายการ" @click="removeItem(index)" /></template></Column>
                 <template #footer><div class="total-row"><span>รวมทั้งสิ้น</span><strong>{{ formatMoney(totalAmount) }} บาท</strong></div></template>
             </DataTable>

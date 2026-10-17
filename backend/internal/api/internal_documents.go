@@ -679,6 +679,7 @@ func normalizeInternalDocumentCreateRequest(req models.InternalDocumentCreateReq
 		issues = append(issues, fmt.Sprintf("แบบฟอร์ม A4 รองรับรายการ %d-%d รายการ", 1, internalDocumentMaxItems))
 	}
 	total := int64(0)
+	itemsValid := true
 	for i := range req.Items {
 		req.Items[i].SequenceNo = i + 1
 		req.Items[i].Description = strings.TrimSpace(req.Items[i].Description)
@@ -687,19 +688,47 @@ func normalizeInternalDocumentCreateRequest(req models.InternalDocumentCreateReq
 			issues = append(issues, fmt.Sprintf("รายการที่ %d ต้องมีรายละเอียดไม่เกิน 500 ตัวอักษร", i+1))
 		}
 		cents, e := store.ParseInternalAmount(req.Items[i].Amount)
-		if e != nil || cents <= 0 {
-			issues = append(issues, fmt.Sprintf("จำนวนเงินรายการที่ %d ต้องมากกว่า 0 และมีทศนิยมไม่เกิน 2 ตำแหน่ง", i+1))
-		} else if total > 999999999999999999-cents {
+		switch {
+		case e != nil:
+			itemsValid = false
+			issues = append(issues, fmt.Sprintf("จำนวนเงินรายการที่ %d ไม่ถูกต้อง (ติดลบได้ และมีทศนิยมไม่เกิน 2 ตำแหน่ง)", i+1))
+		case cents == 0:
+			// A line worth nothing says nothing; a negative line is a deduction
+			// and is fine, so the rule is "not zero", not "above zero".
+			itemsValid = false
+			issues = append(issues, fmt.Sprintf("จำนวนเงินรายการที่ %d ต้องไม่เป็นศูนย์", i+1))
+		case total > internalAmountLimitCents-cents || total < -internalAmountLimitCents-cents:
+			itemsValid = false
 			issues = append(issues, "ยอดรวมสูงเกินกำหนด")
-		} else {
+		default:
 			total += cents
 			req.Items[i].Amount = centsToAmount(cents)
 		}
 	}
+	// A zero total (a charge exactly cancelled by a deduction) leaves nothing to
+	// approve, and the database refuses it. Say so here instead of letting the
+	// insert fail. Only when every line parsed, so a bad line is not buried under
+	// a second complaint about the total it caused.
+	if itemsValid && len(req.Items) > 0 && total == 0 {
+		issues = append(issues, "ยอดรวมของเอกสารต้องไม่เป็นศูนย์")
+	}
 	return req, total, issues
 }
 
-func centsToAmount(cents int64) string { return fmt.Sprintf("%d.%02d", cents/100, cents%100) }
+// internalAmountLimitCents is the largest magnitude a NUMERIC(18,2) column holds.
+const internalAmountLimitCents = int64(999999999999999999)
+
+// centsToAmount formats signed cents as "-1.50". The sign is taken off first:
+// formatting cents/100 and cents%100 separately gives "-1.-50" for -150, because
+// Go's remainder keeps the sign of the dividend.
+func centsToAmount(cents int64) string {
+	sign := ""
+	if cents < 0 {
+		sign = "-"
+		cents = -cents
+	}
+	return fmt.Sprintf("%s%d.%02d", sign, cents/100, cents%100)
+}
 
 func internalCompanySnapshot(p models.SMLCompanyProfile) models.InternalDocumentCompanySnapshot {
 	return models.InternalDocumentCompanySnapshot{DisplayName: p.DisplayName, CompanyName1: p.CompanyName1, BusinessName1: p.BusinessName1, Address1: p.Address1, Address2: p.Address2, TelephoneNumber: p.TelephoneNumber, FaxNumber: p.FaxNumber, TaxNumber: p.TaxNumber, BranchStatus: p.BranchStatus, BranchType: p.BranchType, BranchCode: p.BranchCode}

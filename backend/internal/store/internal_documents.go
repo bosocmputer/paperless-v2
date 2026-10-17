@@ -609,11 +609,24 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// ParseInternalAmount parses a money string into signed cents.
+//
+// A leading "-" is allowed: an internal document line can be a deduction (a
+// discount, an advance being netted off) and the document total can be negative
+// (a refund). The sign is applied to the whole value, so "-0.50" is -50 cents.
+// It used to be dropped silently - "-0" parses to 0, so "-0.50" came out as
+// +50 - which made a deduction look like a charge.
+//
+// Zero is returned as 0 rather than rejected here: whether a zero line or total
+// is acceptable is a rule of the document, not of the number format, and the
+// caller enforces it.
 func ParseInternalAmount(value string) (int64, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return 0, errors.New("amount is required")
 	}
+	negative := strings.HasPrefix(value, "-")
+	value = strings.TrimPrefix(value, "-")
 	parts := strings.Split(value, ".")
 	if len(parts) > 2 {
 		return 0, errors.New("amount is invalid")
@@ -626,6 +639,12 @@ func ParseInternalAmount(value string) (int64, error) {
 	if len(frac) > 2 {
 		return 0, errors.New("amount supports at most 2 decimals")
 	}
+	// Digits only, and at least one. strconv.ParseInt would also accept a second
+	// sign ("--5", "-+5" after the one stripped above, or "+5"), and a bare "." or
+	// "-" has no number in it at all.
+	if !isDecimalDigits(whole) || !isDecimalDigits(frac) || whole+frac == "" {
+		return 0, errors.New("amount is invalid")
+	}
 	for len(frac) < 2 {
 		frac += "0"
 	}
@@ -633,7 +652,7 @@ func ParseInternalAmount(value string) (int64, error) {
 		whole = "0"
 	}
 	wholeValue, err := strconv.ParseInt(whole, 10, 64)
-	if err != nil || wholeValue < 0 {
+	if err != nil {
 		return 0, errors.New("amount is invalid")
 	}
 	fracValue, err := strconv.ParseInt(frac, 10, 64)
@@ -643,5 +662,20 @@ func ParseInternalAmount(value string) (int64, error) {
 	if wholeValue > 9999999999999999 {
 		return 0, errors.New("amount is too large")
 	}
-	return wholeValue*100 + fracValue, nil
+	cents := wholeValue*100 + fracValue
+	if negative {
+		cents = -cents
+	}
+	return cents, nil
+}
+
+// isDecimalDigits reports whether s is made only of ASCII digits. The empty
+// string counts: "1." and ".5" each have one empty side.
+func isDecimalDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

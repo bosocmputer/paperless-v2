@@ -40,6 +40,23 @@ func TestParseInternalAmount(t *testing.T) {
 		"1":         100,
 		"1.5":       150,
 		"123456.78": 12345678,
+		"1.":        100,
+		".5":        50,
+		"0":         0,
+		// Deductions and refunds: the sign applies to the whole value.
+		"-1":         -100,
+		"-1.5":       -150,
+		"-123456.78": -12345678,
+		".5 ":        50,
+		"-.5":        -50,
+		// "-0.50" used to come back as +50: the whole part "-0" parses to 0, so
+		// the sign vanished and a deduction was stored as a charge.
+		"-0.50": -50,
+		"-0.05": -5,
+		// Zero is a valid number; whether a zero line is allowed is the
+		// caller's rule, not the parser's.
+		"-0":    0,
+		"-0.00": 0,
 	}
 	for input, want := range tests {
 		got, err := ParseInternalAmount(input)
@@ -47,7 +64,14 @@ func TestParseInternalAmount(t *testing.T) {
 			t.Fatalf("ParseInternalAmount(%q) = %d, %v; want %d", input, got, err, want)
 		}
 	}
-	for _, input := range []string{"", "0.001", "1.2.3", "abc", "-1"} {
+	for _, input := range []string{
+		"", "0.001", "1.2.3", "abc",
+		// A second sign, or a sign anywhere but the front.
+		"--1", "-+1", "+1", "1-", "- 1", "-1.-5",
+		// Nothing numeric in it at all.
+		"-", ".", "-.",
+		"10000000000000000", "-10000000000000000",
+	} {
 		if _, err := ParseInternalAmount(input); err == nil {
 			t.Fatalf("expected %q to be rejected", input)
 		}
