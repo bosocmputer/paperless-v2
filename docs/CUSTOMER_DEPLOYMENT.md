@@ -20,6 +20,60 @@ The same release is also deployed for Damrong Homeplus at `http://45.122.49.252:
 
 A fifth deployment, Amata, shares the same physical server as Insee Construction (`45.122.49.253`) rather than a new server. It runs as a fully separate stack — its own stack path `/data/paperless-amata`, Compose project `paperless-amata`, own `db`/`api`/`web`/`sml-api` containers and own Docker network — published on a different host port `9096` (Insee keeps `8095` unchanged on the same host). The two stacks only share the pre-existing `sml_postgresql` container (the customer's central SML ERP Postgres, connected via the external `sml_service_network`), same as how Damrong's PaperLess containers share that server's unrelated projects without touching them.
 
+## Feature - 2026-10-17 (all five shops): negative amounts on internal documents
+
+A line on an internal document can now be a deduction, and the document total can
+be negative (a refund). Zero is still refused, for a line and for the total.
+
+The rule "greater than zero" lived in four places, so all four changed together:
+the form (`min=0`), the API, the two CHECK constraints, and the PDF, which could
+not print a negative at all. Latent sign bugs that enabling negatives would have
+exposed were fixed too: `ParseInternalAmount("-0.50")` returned +0.50 (the whole
+part "-0" parses to 0, so the sign vanished), `parseAmountCents("-1.50")` returned
+-50, `centsToAmount(-150)` returned "-1.-50", and `thaiBahtText` returned an empty
+string for any negative. `ParseInternalAmount` is also stricter now: digits only,
+so "+5", "--5" and a bare "." are rejected.
+
+Schema: `internal_documents.total_amount` and `internal_document_items.amount` went
+from `CHECK (> 0)` to `CHECK (<> 0)`. `EnsureSchema` swaps the exact old
+definition once, so a restart does not drop and re-add the constraint. It ran on
+api start at every shop; data counts before and after were identical:
+
+| Shop | internal documents / items before | after | constraint |
+|---|---|---|---|
+| Damrong | 29 / 31 | 29 / 31 | `<> 0` |
+| Wirat | 36 / 53 | 36 / 53 | `<> 0` |
+| Pui | 14 / 25 | 14 / 25 | `<> 0` |
+| Insee | 0 / 0 | 0 / 0 | `<> 0` |
+| Amata | 0 / 0 | 0 / 0 | `<> 0` |
+
+Deployed `paperless-api:85800d6` and `paperless-web:85800d6` to all five shops
+(sml-api stays `22ab47c`). Every api is healthy with zero ERROR lines. Because the
+tag is main, Pui, Wirat, Insee and Amata also picked up the earlier trial-banner
+code (the public `/api/public/trial` endpoint, which returns `null` for them).
+
+Verified before shipping: 11 new tests that fail on the old code; a throwaway
+Postgres 14 run of the migration (old schema, new code twice, then real inserts:
+negative accepted, zero refused, read back as `-1500.50`); and two rendered PDFs
+(a deduction on a positive total, a negative total) that stay on one A4 page and
+read `-1,500.25` and "ลบหนึ่งพันห้าร้อยบาทยี่สิบห้าสตางค์".
+Verified after shipping: the served web bundle contains the new form (negative
+placeholder, the zero-total message, no `min` on the amount field).
+
+Not verified: typing a negative into the live form and saving one. The browser
+available here was not signed in and credentials are not entered on the user's
+behalf, so the form was checked in the served code, not by use. Users are testing
+it. The migration was tested on Postgres 14, not 16 or a copy of production data;
+the tables are small and the DDL does not differ between those versions.
+
+Rollback caution: the constraint stays `<> 0` if the images are rolled back (the
+old code does not change it back). The old code rejects new negative amounts, but
+it prints the PDF of an already-created negative document wrongly (wrong digits,
+empty amount-in-words box). Roll back only while no negative document exists.
+
+Images: api/web `85800d6`; evidence on each server under
+`releases/20261017-negative-amounts/postdeploy-checks.txt`.
+
 ## Fix - 2026-10-07 (all five shops, sml-api only): blank placeholder rows no longer count as an edit
 
 SML appends empty detail rows when a document is re-saved, and the audit-trail
